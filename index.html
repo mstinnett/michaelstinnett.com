@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Michael Stinnett</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400&family=Jost:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --ink: #1a1a1a;
+            --gray: #6b6b6b;
+            --rule: #d4d0c7;
+        }
+
+        body {
+            font-family: 'EB Garamond', Georgia, serif;
+            background-color: #f5f5f5;
+            -webkit-animation: colorChange 100s infinite;
+            animation: colorChange 100s infinite;
+            color: var(--ink);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+            margin: 0;
+            line-height: 1.6;
+        }
+
+        @-webkit-keyframes colorChange {
+            0% {background-color: #f5f5f5;}
+            18% {background-color: #c0cce8;}
+            36% {background-color: #D6D6D6;}
+            54% {background-color: #c0dac0;}
+            72% {background-color: #D6D6D6;}
+            90% {background-color: #e7e0cb;}
+            100% {background-color: #f5f5f5;}
+        }
+
+        @keyframes colorChange {
+            0% {background-color: #f5f5f5;}
+            18% {background-color: #c0cce8;}
+            36% {background-color: #D6D6D6;}
+            54% {background-color: #c0dac0;}
+            72% {background-color: #D6D6D6;}
+            90% {background-color: #e7e0cb;}
+            100% {background-color: #f5f5f5;}
+        }
+
+        .card {
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .name {
+            font-size: 2.25rem;
+            font-weight: 500;
+            letter-spacing: -0.01em;
+            margin-bottom: 0.5rem;
+        }
+
+        .title {
+            font-family: 'EB Garamond', Georgia, serif;
+            font-style: italic;
+            font-size: 1.15rem;
+            color: var(--gray);
+            margin-bottom: 0.25rem;
+            letter-spacing: 0.01em;
+        }
+
+        .company {
+            font-family: 'Jost', 'Futura', sans-serif;
+            font-weight: 400;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--gray);
+            margin-bottom: 2rem;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--rule);
+            margin: 1.5rem 0;
+        }
+
+
+        .contact {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+
+        .contact a {
+            color: var(--ink);
+            text-decoration: none;
+            border-bottom: 1px solid var(--rule);
+            transition: border-color 0.2s ease;
+        }
+
+        .contact a:hover {
+            border-color: var(--ink);
+        }
+
+        .links {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+
+        .links a {
+            color: var(--gray);
+            text-decoration: none;
+            border-bottom: 1px solid var(--rule);
+            transition: all 0.2s ease;
+        }
+
+        .links a:hover {
+            color: var(--ink);
+            border-color: var(--ink);
+        }
+
+        .links .separator {
+            color: var(--rule);
+            margin: 0 0.5rem;
+        }
+
+        .location {
+            font-size: 0.95rem;
+            color: var(--gray);
+            margin-top: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1 class="name">Michael Stinnett</h1>
+        <p class="title">professional amateur</p>
+        <p class="company">Adequate Design</p>
+        
+        <hr>
+
+        <p class="links">
+            <a href="https://architecture.tools">architecture.tools</a>
+            <span class="separator">·</span>
+            <a href="https://adequate.design">adequate.design</a>
+        </p>
+
+        <p class="contact">
+            <a href="#" id="email-link">michael@<!-- -->michaelstinnett.com</a>
+        </p>
+
+        <p class="location">Boston</p>
+    </div>
+
+    <script>
+        document.getElementById('email-link').addEventListener('click', function(e) {
+            e.preventDefault();
+            var user = 'michael';
+            var domain = 'michaelstinnett.com';
+            window.location.href = 'mailto:' + user + '@' + domain;
+        });
+    </script>
+</body>
+</html>
