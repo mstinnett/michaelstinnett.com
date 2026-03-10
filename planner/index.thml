@@ -1,0 +1,1441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1C1917">
+<meta name="description" content="Family year planning dashboard">
+<title>Family Year Planner</title>
+<link rel="manifest" href="manifest.json">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" as="script">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}html,body,#root{height:100%;}body{overflow:hidden;}
+  #loader{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;background:#FAFAF9;}
+  #loader span{font-size:13px;font-weight:600;color:#78716C;letter-spacing:-0.02em;}
+  #loader .bar{width:120px;height:3px;background:#E7E5E4;border-radius:2px;overflow:hidden;}
+  #loader .bar::after{content:'';display:block;width:40%;height:100%;background:#1C1917;border-radius:2px;animation:load 1s ease infinite;}
+  @keyframes load{0%{transform:translateX(-100%)}50%{transform:translateX(200%)}100%{transform:translateX(-100%)}}
+  @supports(padding:env(safe-area-inset-top)){body{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);}}
+</style>
+</head>
+<body>
+<div id="root"><div id="loader"><span>YEAR PLANNER</span><div class="bar"></div></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useMemo, useCallback, useEffect, useRef } = React;
+
+/* ═══ CONFIG ═══ */
+const DOW_L=["M","T","W","T","F","S","S"];
+const MON=["January","February","March","April","May","June","July","August","September","October","November","December"];
+const SHIFTS_REQ=7,ML_TARGET=20;
+const TRAVEL_OPTS=[0,0.5,1,1.5,2,3];
+
+const CATS=[
+  {id:"cultural",label:"Cultural",color:"#7C3AED"},
+  {id:"exploratory",label:"Exploratory",color:"#D97706"},
+  {id:"family",label:"Family",color:"#059669"},
+  {id:"ml_travel",label:"ML Travel",color:"#0891B2"},
+  {id:"holiday",label:"Holiday",color:"#EF4444"},
+];
+
+const PEOPLE=[
+  {id:"lydia",name:"Lydia",child:false},{id:"mike",name:"Mike",child:false},
+  {id:"juniper",name:"Juniper",child:true},{id:"ocean",name:"Ocean",child:true},
+  {id:"other",name:"Other",child:false,customName:true},
+];
+
+const DEF_FAC=[
+  {id:"portland",name:"Portland ED",day:1800,night:2200},
+  {id:"santa_fe",name:"Santa Fe ED",day:1700,night:2100},
+  {id:"abq",name:"Albuquerque ED",day:1600,night:2000},
+  {id:"boston",name:"Boston ED",day:1900,night:2300},
+];
+
+/* ─── Date ─── */
+const ds=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const pd=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
+const ad=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r;};
+const dwM=d=>(d.getDay()+6)%7;
+const isWE=w=>w>=5;
+const inR=(s,a,b)=>s>=a&&s<=b;
+function dim(y,m){return new Date(y,m+1,0).getDate();}
+function fdow(y,m){return dwM(new Date(y,m,1));}
+function wim(y,m){return Math.ceil((fdow(y,m)+dim(y,m))/7);}
+
+function defSch(y){
+  return [{s:`${y}-01-01`,e:`${y}-01-02`,l:"New Year"},{s:`${y}-01-19`,e:`${y}-01-19`,l:"MLK"},
+    {s:`${y}-02-16`,e:`${y}-02-20`,l:"Feb Break"},{s:`${y}-04-20`,e:`${y}-04-24`,l:"Spring Break"},
+    {s:`${y}-05-25`,e:`${y}-05-25`,l:"Memorial"},{s:`${y}-06-18`,e:`${y}-08-31`,l:"Summer"},
+    {s:`${y}-09-07`,e:`${y}-09-07`,l:"Labor"},{s:`${y}-10-12`,e:`${y}-10-12`,l:"Indigenous"},
+    {s:`${y}-11-11`,e:`${y}-11-11`,l:"Veterans"},{s:`${y}-11-26`,e:`${y}-11-28`,l:"Thanksgiving"},
+    {s:`${y}-12-22`,e:`${y}-12-31`,l:"Winter Break"}];
+}
+function isSch(str,w,cal){if(isWE(w))return false;for(const r of cal)if(inR(str,r.s,r.e))return false;return true;}
+
+function bmg(y,m){
+  const d=dim(y,m),f=fdow(y,m),wk=wim(y,m),cells=[];
+  for(let w=0;w<wk;w++)for(let dd=0;dd<7;dd++){
+    const dn=w*7+dd-f+1;
+    if(dn>=1&&dn<=d){const dt=new Date(y,m,dn);cells.push({col:w*7+dd,dn,str:ds(dt),dow:dd,date:dt});}
+  }
+  return {cells,totalCols:wk*7};
+}
+
+/* ─── Stripe pattern CSS for travel days ─── */
+function stripeGrad(color){
+  return `repeating-linear-gradient(45deg,${color} 0px,${color} 3px,transparent 3px,transparent 6px)`;
+}
+
+/* ─── Sample ─── */
+function sampleLib(){return [
+  {id:"lib1",name:"Japan",cat:"cultural",duration:21,tb:1,ta:1,p:["lydia","mike","juniper","ocean"],notes:"3 weeks. Tokyo, Kyoto, Osaka. Cherry blossom season target."},
+  {id:"lib2",name:"Albuquerque Family",cat:"family",duration:14,tb:1,ta:1,p:["lydia","mike","juniper","ocean"],notes:"Two weeks in ABQ. Lydia may do Santa Fe ML side trip during this window."},
+  {id:"lib3",name:"Santa Fe ML Side Trip",cat:"ml_travel",duration:4,tb:0.5,ta:0,p:["lydia"],notes:"Nested inside ABQ trip. 2 shifts at Santa Fe ED."},
+  {id:"lib4",name:"Dad Trip Maine",cat:"family",duration:7,tb:0.5,ta:0.5,p:["lydia","other"],otherName:"Dad",notes:"Father-daughter trip. No school impact."},
+  {id:"lib5",name:"Fall Exploration",cat:"exploratory",duration:14,tb:1,ta:1,p:["lydia","mike","juniper","ocean"],notes:"Destination TBD. Portugal? Morocco?"},
+  {id:"lib6",name:"Portland ML Run",cat:"ml_travel",duration:3,tb:0.5,ta:0.5,p:["lydia"],notes:"Quick moonlighting run to Portland ED."},
+  {id:"lib7",name:"Weekend Grandparents",cat:"family",duration:3,tb:0.5,ta:0.5,p:["mike","juniper","ocean"],notes:"Kids visit grandparents. Lydia stays home to work."},
+  {id:"lib8",name:"Spring City Break",cat:"exploratory",duration:5,tb:1,ta:1,p:["lydia","mike","juniper","ocean"],notes:"Short spring trip. NYC or DC."},
+  {id:"lib9",name:"Boston ML Day",cat:"ml_travel",duration:1,tb:0,ta:0,p:["lydia"],notes:"Local moonlighting, no travel needed."},
+  {id:"lib10",name:"Thanksgiving Family",cat:"family",duration:5,tb:1,ta:1,p:["lydia","mike","juniper","ocean","other"],otherName:"Dad",notes:""},
+  {id:"lib11",name:"Winter Holiday",cat:"family",duration:10,tb:1,ta:1,p:["lydia","mike","juniper","ocean"],notes:""},
+  {id:"lib12",name:"Summer Camp Drop",cat:"family",duration:2,tb:0.5,ta:0.5,p:["mike","juniper","ocean"],notes:""},
+  // Recurring holidays
+  {id:"hol1",name:"4th of July",cat:"holiday",duration:1,tb:0,ta:0,p:["lydia","mike","juniper","ocean"],notes:"",recurring:true,recMonth:7,recDay:4},
+  {id:"hol2",name:"Christmas",cat:"holiday",duration:1,tb:0,ta:0,p:["lydia","mike","juniper","ocean"],notes:"",recurring:true,recMonth:12,recDay:25},
+  {id:"hol3",name:"New Year's Eve",cat:"holiday",duration:1,tb:0,ta:0,p:["lydia","mike","juniper","ocean"],notes:"",recurring:true,recMonth:12,recDay:31},
+  {id:"hol4",name:"New Year's Day",cat:"holiday",duration:1,tb:0,ta:0,p:["lydia","mike","juniper","ocean"],notes:"",recurring:true,recMonth:1,recDay:1},
+  {id:"hol5",name:"Thanksgiving",cat:"holiday",duration:1,tb:0,ta:0,p:["lydia","mike","juniper","ocean","other"],otherName:"Dad",notes:"4th Thursday of November",recurring:true,recMonth:11,recDay:0,recRule:"4thu"},
+];}
+// Compute date for nth-weekday holidays
+function holidayDate(y,lib){
+  if(lib.recRule==="4thu"){
+    // 4th Thursday of month
+    let d=new Date(y,lib.recMonth-1,1);
+    let count=0;
+    while(count<4){if(d.getDay()===4)count++;if(count<4)d=ad(d,1);}
+    return ds(d);
+  }
+  return `${y}-${String(lib.recMonth).padStart(2,'0')}-${String(lib.recDay).padStart(2,'0')}`;
+}
+function samplePl(){return[
+  {id:"p1",libId:"lib1",startDate:"2026-03-14"},
+  {id:"p2",libId:"lib2",startDate:"2026-06-20"},
+  {id:"p3",libId:"lib3",startDate:"2026-06-25"},
+  {id:"p4",libId:"lib4",startDate:"2026-08-10"},
+];}
+function sampleML(){return[
+  {date:"2026-06-26",fac:"santa_fe",shift:"night"},
+  {date:"2026-06-27",fac:"santa_fe",shift:"day"},
+  {date:"2026-08-12",fac:"portland",shift:"night"},
+  {date:"2026-08-13",fac:"portland",shift:"night"},
+];}
+
+/* ═══ UNDO ═══ */
+function useUndo(init){
+  const[state,setState]=useState(init);
+  const hist=useRef([init]),idx=useRef(0);
+  const set=useCallback(updater=>{setState(prev=>{
+    const next=typeof updater==='function'?updater(prev):updater;
+    hist.current=hist.current.slice(0,idx.current+1);
+    hist.current.push(JSON.parse(JSON.stringify(next)));
+    if(hist.current.length>80)hist.current.shift();else idx.current++;
+    return next;
+  });},[]);
+  const undo=useCallback(()=>{if(idx.current>0){idx.current--;setState(JSON.parse(JSON.stringify(hist.current[idx.current])));}},[]);
+  const redo=useCallback(()=>{if(idx.current<hist.current.length-1){idx.current++;setState(JSON.parse(JSON.stringify(hist.current[idx.current])));}},[]);
+  return[state,set,undo,redo,idx.current>0,idx.current<hist.current.length-1];
+}
+
+/* ═══ MAIN ═══ */
+function App(){
+  const startY=2026,endY=2038;
+  const years=useMemo(()=>Array.from({length:endY-startY+1},(_,i)=>startY+i),[]);
+
+  // Grade progression: school year = fall of year to spring of year+1
+  const GRADES=useMemo(()=>{
+    // Juniper: K in fall 2026
+    const jGrades={"2026":"K","2027":"1","2028":"2","2029":"3","2030":"4","2031":"5","2032":"6","2033":"7","2034":"8"};
+    // Ocean: Pre-School through fall 2028, Pre-K fall 2028, K fall 2029
+    const oGrades={"2026":"Pre-S","2027":"Pre-S","2028":"Pre-K","2029":"K","2030":"1","2031":"2","2032":"3","2033":"4","2034":"5","2035":"6","2036":"7","2037":"8"};
+    return {juniper:jGrades,ocean:oGrades};
+  },[]);
+
+  const defaultState={
+    library:sampleLib(),placements:samplePl(),mlShifts:sampleML(),facilities:DEF_FAC,
+    schoolCals:{juniper:[...Array.from({length:endY-startY+1},(_,i)=>defSch(startY+i)).flat()],ocean:[...Array.from({length:endY-startY+1},(_,i)=>defSch(startY+i)).flat()]},
+    colors:null,
+  };
+
+  // Load from localStorage if available, fall back to sample data
+  const init=useMemo(()=>{
+    try{const saved=localStorage.getItem('yearPlannerState');if(saved)return JSON.parse(saved);}catch(e){}
+    return defaultState;
+  },[]);
+
+  const[state,setState,undo,redo,canUndo,canRedo]=useUndo(init);
+  const{library,placements,mlShifts,facilities,schoolCals,colors:customColors}=state;
+
+  // Resolve colors: custom overrides merged into category definitions
+  const cats=useMemo(()=>CATS.map(c=>({...c,color:customColors?.[c.id]||c.color})),[customColors]);
+  const mlColor=customColors?.moonlight||"#DB2777";
+  const setColor=useCallback((id,color)=>{
+    setState(p=>({...p,colors:{...(p.colors||{}), [id]:color}}));
+  },[setState]);
+
+  // Auto-save to localStorage on every state change
+  useEffect(()=>{
+    try{localStorage.setItem('yearPlannerState',JSON.stringify(state));}catch(e){}
+  },[state]);
+
+  const[selDay,setSelDay]=useState(null);
+  const[editTrip,setEditTrip]=useState(null);
+  const[showLib,setShowLib]=useState(false);
+  const[showSch,setShowSch]=useState(false);
+  const[showFac,setShowFac]=useState(false);
+  const[showML,setShowML]=useState(false);
+  const[dragML,setDragML]=useState(null); // {fac,shift} or {shift:'travel'}
+  const[hoverDay,setHoverDay]=useState(null);
+  const[isMobile]=useState(()=>typeof window!=='undefined'&&window.innerWidth<768);
+  const[viewMode,setViewMode]=useState(()=>typeof window!=='undefined'&&window.innerWidth<768?'week':'year');
+  const[showVacation,setShowVacation]=useState(false);
+  const[showMissedDays,setShowMissedDays]=useState(false);
+  const[placedYearFilter,setPlacedYearFilter]=useState(null);
+  // Tap-to-place: user taps library/ML item, then taps a grid cell
+  const[tapPlace,setTapPlace]=useState(null);
+  const[zoom,setZoom]=useState(1); // {type:'lib',libId} or {type:'ml',fac,shift} // null=all // 'year' or 'week'
+  const[dragLib,setDragLib]=useState(null);
+  const[dragPl,setDragPl]=useState(null);
+  const[dragOver,setDragOver]=useState(null);
+  const fileRef=useRef(null);
+  const dragMouseRef=useRef({x:0,y:0});
+  const[dragMouse,setDragMouse]=useState({x:0,y:0});
+
+  // Global undo always works (captures at window level, works over modals)
+  const deleteSelRef=useRef(null);
+  useEffect(()=>{
+    const h=e=>{
+      if((e.metaKey||e.ctrlKey)&&e.key==='z'){
+        const tag=e.target.tagName;
+        if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT')return;
+        e.preventDefault();e.shiftKey?redo():undo();
+      }
+      if((e.key==='Delete'||e.key==='Backspace')&&!e.metaKey&&!e.ctrlKey){
+        const tag=e.target.tagName;
+        if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT')return;
+        if(deleteSelRef.current) deleteSelRef.current();
+      }
+    };
+    window.addEventListener('keydown',h,true);
+    return()=>window.removeEventListener('keydown',h,true);
+  },[undo,redo]);
+
+  const maxCols=useMemo(()=>{let m=0;for(const y of years)for(let i=0;i<12;i++)m=Math.max(m,wim(y,i)*7);return m;},[years]);
+  const allMG=useMemo(()=>{const r={};for(const y of years)r[y]=Array.from({length:12},(_,m)=>bmg(y,m));return r;},[years]);
+
+  // ─── Resolve ───
+  // Auto-generate holiday placements for all years
+  const holidayPlacements=useMemo(()=>{
+    const hols=[];
+    library.filter(l=>l.recurring).forEach(lib=>{
+      for(const y of years){
+        const dateStr=holidayDate(y,lib);
+        hols.push({id:`hol_${lib.id}_${y}`,libId:lib.id,startDate:dateStr,isHoliday:true});
+      }
+    });
+    return hols;
+  },[library,years]);
+
+  const allPlacements=useMemo(()=>[...placements,...holidayPlacements],[placements,holidayPlacements]);
+
+  const resolved=useMemo(()=>allPlacements.map(pl=>{
+    const lib=library.find(l=>l.id===pl.libId);if(!lib)return null;
+    const bC=Math.ceil(lib.tb||0),aC=Math.ceil(lib.ta||0);
+    const bH=(lib.tb||0)%1!==0,aH=(lib.ta||0)%1!==0;
+    const start=pd(pl.startDate);
+    const dS=ds(ad(start,bC)),dE=ds(ad(ad(start,bC),lib.duration-1));
+    const tE=ds(ad(pd(dE),aC));
+    return{...pl,lib,dS,dE,tS:pl.startDate,tE,bC,aC,bH,aH,isHoliday:!!pl.isHoliday};
+  }).filter(Boolean),[allPlacements,library]);
+
+  // ─── Footprint ───
+  const fp=useMemo(()=>{
+    const map={};
+    resolved.forEach(rt=>{
+      const start=pd(rt.tS);
+      for(let i=0;i<rt.bC;i++){const k=ds(ad(start,i));if(!map[k])map[k]=[];map[k].push({plId:rt.id,type:'travel',half:i===0&&rt.bH?'half':'full',rt});}
+      let c=pd(rt.dS);const de=pd(rt.dE);
+      while(c<=de){const k=ds(c);if(!map[k])map[k]=[];map[k].push({plId:rt.id,type:'dest',half:'full',rt});c=ad(c,1);}
+      const as=ad(de,1);
+      for(let i=0;i<rt.aC;i++){const k=ds(ad(as,i));if(!map[k])map[k]=[];map[k].push({plId:rt.id,type:'travel',half:i===rt.aC-1&&rt.aH?'half':'full',rt});}
+    });
+    return map;
+  },[resolved]);
+
+  const mlSet=useMemo(()=>{const s=new Set();mlShifts.forEach(m=>s.add(m.date));return s;},[mlShifts]);
+
+  // ─── Density ───
+  const mDen=useMemo(()=>{
+    const r={};
+    for(const y of years)for(let m=0;m<12;m++){
+      const k=`${y}-${m}`,d=dim(y,m);let avail=0;
+      for(let dd=1;dd<=d;dd++){
+        const dt=new Date(y,m,dd),kk=ds(dt),w=dwM(dt);
+        if(isWE(w))continue;
+        const f=fp[kk];
+        // Holidays don't affect density - only non-holiday trips with Lydia
+        const la=f&&f.some(x=>x.rt.lib.p.includes("lydia")&&x.rt.lib.cat!=='holiday');
+        const hml=mlSet.has(kk)&&!la;
+        if(!la&&!hml)avail++;
+      }
+      const den=avail>0?SHIFTS_REQ/avail:999;
+      r[k]={den:Math.min(den,2),avail,imp:avail<SHIFTS_REQ};
+    }
+    return r;
+  },[years,fp,mlSet]);
+
+  // ─── School ───
+  const schM=useMemo(()=>{
+    const missed={};
+    PEOPLE.filter(p=>p.child).forEach(ch=>{
+      let n=0;const cal=schoolCals[ch.id]||[];
+      for(const y of years)for(let m=0;m<12;m++){const d=dim(y,m);
+        for(let dd=1;dd<=d;dd++){const dt=new Date(y,m,dd),k=ds(dt),w=dwM(dt);
+          if(!isSch(k,w,cal))continue;const f=fp[k];
+          // Only count non-holiday trips
+          if(f&&f.some(x=>x.rt.lib.p.includes(ch.id)&&x.rt.lib.cat!=='holiday'))n++;
+        }}
+      missed[ch.id]=n;
+    });
+    return missed;
+  },[years,fp,schoolCals]);
+
+  // ─── Merged vacation set (union of both children's non-school days, excluding weekends) ───
+  const vacationSet=useMemo(()=>{
+    const s=new Set();
+    const children=PEOPLE.filter(p=>p.child);
+    for(const y of years)for(let m=0;m<12;m++){
+      const d=dim(y,m);
+      for(let dd=1;dd<=d;dd++){
+        const dt=new Date(y,m,dd),k=ds(dt),w=dwM(dt);
+        if(isWE(w))continue;
+        for(const ch of children){
+          if(!isSch(k,w,schoolCals[ch.id]||[])){s.add(k);break;}
+        }
+      }
+    }
+    return s;
+  },[years,schoolCals]);
+
+  // ─── Detailed missed days per child per year ───
+  const missedDaysList=useMemo(()=>{
+    const result={};
+    PEOPLE.filter(p=>p.child).forEach(ch=>{
+      result[ch.id]={};
+      const cal=schoolCals[ch.id]||[];
+      for(const y of years){
+        const days=[];
+        for(let m=0;m<12;m++){const d=dim(y,m);
+          for(let dd=1;dd<=d;dd++){const dt=new Date(y,m,dd),k=ds(dt),w=dwM(dt);
+            if(!isSch(k,w,cal))continue;
+            const f=fp[k];
+            // Only count non-holiday trips
+            const nonHol=f?.filter(x=>x.rt.lib.p.includes(ch.id)&&x.rt.lib.cat!=='holiday');
+            if(nonHol&&nonHol.length>0){
+              const tripName=nonHol[0].rt.lib.name||'?';
+              days.push({date:k,trip:tripName});
+            }
+          }}
+        if(days.length>0) result[ch.id][y]=days;
+      }
+    });
+    return result;
+  },[years,fp,schoolCals]);
+
+  // ─── ML summary ───
+  const mlM=useMemo(()=>{
+    const sum={};facilities.forEach(f=>{sum[f.id]={day:0,night:0,travel:0};});
+    let tot=0,earn=0,travelDays=0;
+    mlShifts.forEach(m=>{const f=facilities.find(x=>x.id===m.fac);if(!f)return;
+      if(!sum[m.fac])sum[m.fac]={day:0,night:0,travel:0};
+      sum[m.fac][m.shift]++;
+      if(m.shift==='travel'){travelDays++;}
+      else{tot++;earn+=m.shift==='day'?f.day:f.night;}
+    });
+    return{sum,tot,earn,travelDays};
+  },[mlShifts,facilities]);
+
+  // ─── Trip labels per month row ───
+  // For each (year,month), find trips that have footprint cells, compute col span
+  const tripLabels=useMemo(()=>{
+    const labels={};
+    for(const y of years){
+      const grids=allMG[y];
+      for(let m=0;m<12;m++){
+        const mg=grids[m];
+        const cellMap={};mg.cells.forEach(c=>{cellMap[c.str]=c.col;});
+        // Group footprints by placement in this month
+        const plSpans={};
+        mg.cells.forEach(c=>{
+          const fList=fp[c.str]||[];
+          fList.forEach(f=>{
+            if(!plSpans[f.plId])plSpans[f.plId]={minCol:c.col,maxCol:c.col,rt:f.rt,types:new Set()};
+            plSpans[f.plId].minCol=Math.min(plSpans[f.plId].minCol,c.col);
+            plSpans[f.plId].maxCol=Math.max(plSpans[f.plId].maxCol,c.col);
+            plSpans[f.plId].types.add(f.type);
+          });
+        });
+        const key=`${y}-${m}`;
+        labels[key]=Object.values(plSpans).filter(s=>s.types.has('dest'));
+      }
+    }
+    return labels;
+  },[years,allMG,fp]);
+
+  // ─── Preview ───
+  const dragPrev=useMemo(()=>{
+    const libItem=dragLib?library.find(l=>l.id===dragLib):null;
+    const lib=libItem||(dragPl?library.find(l=>l.id===placements.find(p=>p.id===dragPl)?.libId):null);
+    if(!lib||!dragOver)return null;
+    const bC=Math.ceil(lib.tb||0),aC=Math.ceil(lib.ta||0);
+    const start=pd(dragOver),total=bC+lib.duration+aC,dates=[];
+    for(let i=0;i<total;i++)dates.push({str:ds(ad(start,i)),type:i<bC?'travel':i<bC+lib.duration?'dest':'travel'});
+    return{dates,cat:cats.find(c=>c.id===lib.cat)};
+  },[dragLib,dragPl,dragOver,library,placements]);
+  const prevSet=useMemo(()=>{if(!dragPrev)return {};const s={};dragPrev.dates.forEach(d=>{s[d.str]=d.type;});return s;},[dragPrev]);
+
+  // ─── Handlers ───
+  const dSL=useCallback((e,id)=>{setDragLib(id);setDragPl(null);e.dataTransfer.effectAllowed="copy";e.dataTransfer.setData("text/plain",`lib:${id}`);},[]);
+  const dSP=useCallback((e,id)=>{setDragPl(id);setDragLib(null);e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",`pl:${id}`);},[]);
+  const dOC=useCallback((e,str)=>{e.preventDefault();e.dataTransfer.dropEffect=(dragLib||dragML)?"copy":"move";setDragOver(str);},[dragLib,dragML]);
+  // Track dragOver in a ref so dEnd always sees latest value
+  const dragOverRef=useRef(null);
+  useEffect(()=>{dragOverRef.current=dragOver;},[dragOver]);
+  const dragLibRef=useRef(null);
+  useEffect(()=>{dragLibRef.current=dragLib;},[dragLib]);
+  const dragPlRef=useRef(null);
+  useEffect(()=>{dragPlRef.current=dragPl;},[dragPl]);
+  const dropHandled=useRef(false);
+  const dragMLRef=useRef(null);
+  useEffect(()=>{dragMLRef.current=dragML;},[dragML]);
+  const dragCancelled=useRef(false);
+
+  // Escape cancels drag
+  useEffect(()=>{
+    const h=e=>{
+      if(e.key==='Escape'&&(dragLibRef.current||dragPlRef.current||dragMLRef.current)){
+        dragCancelled.current=true;
+        setDragLib(null);setDragPl(null);setDragML(null);setDragOver(null);
+      }
+    };
+    window.addEventListener('keydown',h);
+    return()=>window.removeEventListener('keydown',h);
+  },[]);
+
+  const cancelDrag=useCallback(()=>{dragCancelled.current=true;},[]);
+
+  const commitDrop=useCallback((targetStr)=>{
+    if(!targetStr||dragCancelled.current)return;
+    const lib=dragLibRef.current;
+    const pl=dragPlRef.current;
+    const ml=dragMLRef.current;
+    if(ml){
+      setState(p=>({...p,mlShifts:[...p.mlShifts.filter(m=>m.date!==targetStr),{date:targetStr,fac:ml.fac||facilities[0]?.id,shift:ml.shift}]}));
+    }else if(lib){
+      setState(p=>({...p,placements:[...p.placements,{id:`p${Date.now()}`,libId:lib,startDate:targetStr}]}));
+    }else if(pl){
+      setState(p=>({...p,placements:p.placements.map(pp=>pp.id===pl?{...pp,startDate:targetStr}:pp)}));
+    }
+  },[setState,facilities]);
+
+  const dDrop=useCallback((e,str)=>{
+    e.preventDefault();
+    dropHandled.current=true;
+    if(!dragCancelled.current) commitDrop(str);
+    dragCancelled.current=false;
+    setDragLib(null);setDragPl(null);setDragML(null);setDragOver(null);
+  },[commitDrop]);
+
+  const dEnd=useCallback(()=>{
+    if(!dropHandled.current&&!dragCancelled.current){
+      const target=dragOverRef.current;
+      if(target&&(dragLibRef.current||dragPlRef.current||dragMLRef.current)){
+        commitDrop(target);
+      }
+    }
+    dropHandled.current=false;
+    dragCancelled.current=false;
+    setDragLib(null);setDragPl(null);setDragML(null);setDragOver(null);
+  },[commitDrop]);
+
+  const rmPl=useCallback(id=>{setState(p=>({...p,placements:p.placements.filter(pp=>pp.id!==id)}));},[setState]);
+  const reorderPl=useCallback((fromId,toId)=>{
+    setState(p=>{
+      const n=[...p.placements];
+      const fi=n.findIndex(x=>x.id===fromId),ti=n.findIndex(x=>x.id===toId);
+      if(fi<0||ti<0)return p;
+      const[item]=n.splice(fi,1);
+      n.splice(ti,0,item);
+      return{...p,placements:n};
+    });
+  },[setState]);
+  const[dragPlReorder,setDragPlReorder]=useState(null);
+  const[dragPlOverId,setDragPlOverId]=useState(null);
+  const saveLib=useCallback(item=>{
+    const withTs={...item,lastInteracted:Date.now()};
+    if(!withTs.id) withTs.id=`lib${Date.now()}`;
+    setState(p=>{const i=p.library.findIndex(l=>l.id===withTs.id);
+      if(i>=0){const n=[...p.library];n[i]=withTs;return{...p,library:n};}
+      return{...p,library:[withTs,...p.library]};});
+    setEditTrip(null);
+  },[setState]);
+  const delLib=useCallback(id=>{
+    setState(p=>({...p,library:p.library.filter(l=>l.id!==id),placements:p.placements.filter(pp=>pp.libId!==id)}));
+    setEditTrip(null);
+  },[setState]);
+  const reorderLib=useCallback((fromIdx,toIdx)=>{
+    setState(p=>{
+      const n=[...p.library];
+      const[item]=n.splice(fromIdx,1);
+      n.splice(toIdx,0,item);
+      return{...p,library:n};
+    });
+  },[setState]);
+  const addML=useCallback((str,fac,shift)=>{setState(p=>({...p,mlShifts:[...p.mlShifts.filter(m=>m.date!==str),{date:str,fac,shift}]}));},[setState]);
+  const rmML=useCallback(str=>{setState(p=>({...p,mlShifts:p.mlShifts.filter(m=>m.date!==str)}));},[setState]);
+
+  // Tap-to-place: handles cell click when an item is queued for placement
+  const handleCellClick=useCallback((dateStr)=>{
+    if(tapPlace){
+      if(tapPlace.type==='lib'){
+        setState(p=>({...p,placements:[...p.placements,{id:`p${Date.now()}`,libId:tapPlace.libId,startDate:dateStr}]}));
+      }else if(tapPlace.type==='ml'){
+        setState(p=>({...p,mlShifts:[...p.mlShifts.filter(m=>m.date!==dateStr),{date:dateStr,fac:tapPlace.fac,shift:tapPlace.shift}]}));
+      }
+      setTapPlace(null);
+      return;
+    }
+    setSelDay(p=>p===dateStr?null:dateStr);
+  },[tapPlace,setState]);
+
+  const deleteSelected=useCallback(()=>{
+    if(!selDay)return;
+    const fList=fp[selDay]||[];
+    const mlE=mlShifts.find(m=>m.date===selDay);
+    if(fList.length>0){
+      // Remove the first non-holiday placement on this day
+      const target=fList.find(f=>!f.isHoliday);
+      if(target) rmPl(target.plId);
+    } else if(mlE){
+      rmML(selDay);
+    }
+  },[selDay,fp,mlShifts,rmPl,rmML]);
+  useEffect(()=>{deleteSelRef.current=deleteSelected;},[deleteSelected]);
+
+  // ─── Persistence ───
+  const saveFile=useCallback(async()=>{
+    const json=JSON.stringify(state,null,2);
+    const blob=new Blob([json],{type:'application/json'});
+    const file=new File([blob],'year-planner.json',{type:'application/json'});
+    // Use Web Share API if available (iOS share sheet → Save to Files, AirDrop, etc.)
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      try{await navigator.share({files:[file],title:'Year Planner'});return;}catch(e){if(e.name==='AbortError')return;}
+    }
+    // Fallback: standard download
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download='year-planner.json';a.click();
+    URL.revokeObjectURL(url);
+  },[state]);
+  const loadFile=useCallback(e=>{
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{try{const data=JSON.parse(ev.target.result);setState(data);}catch(err){alert('Invalid file');}};
+    reader.readAsText(file);
+    e.target.value='';
+  },[setState]);
+
+  /* ═══ RENDER ═══ */
+  const _vw=typeof window!=='undefined'?window.innerWidth:1200;
+  const LBL_W=isMobile?34:100;
+  const GAP=isMobile?2:4;
+  const CELL=isMobile?Math.max(Math.floor((_vw-LBL_W-20)/37),7):22;
+
+  const tapPlaceName=tapPlace?(tapPlace.type==='lib'?library.find(l=>l.id===tapPlace.libId)?.name||'Trip':`ML ${tapPlace.shift}`):'';
+
+  return (
+    <div style={{fontFamily:"'SF Mono','JetBrains Mono','Fira Code',monospace",backgroundColor:"#FAFAF9",color:"#1C1917",height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+      {/* ═══ TAP-PLACE BANNER ═══ */}
+      {tapPlace&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"6px 14px",backgroundColor:"#3B82F6",color:"#fff",fontSize:10,fontWeight:700,flexShrink:0}}>
+        <span>📌 Placing: {tapPlaceName} — tap a day on the grid</span>
+        <button onClick={()=>setTapPlace(null)} style={{border:"1px solid rgba(255,255,255,0.5)",borderRadius:3,padding:"2px 8px",cursor:"pointer",backgroundColor:"transparent",color:"#fff",fontFamily:"inherit",fontSize:9,fontWeight:700}}>Cancel</button>
+      </div>}
+
+      {/* ═══ TOP BAR ═══ */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:isMobile?"4px 8px":"6px 14px",borderBottom:"2px solid #E7E5E4",backgroundColor:"#fff",flexShrink:0,gap:4,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:isMobile?4:8,flexWrap:"wrap"}}>
+          {!isMobile&&<span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.03em"}}>YEAR PLANNER</span>}
+          <TBtn onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">↩</TBtn>
+          <TBtn onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">↪</TBtn>
+          <TBtn onClick={deleteSelected} disabled={!selDay||(!fp[selDay]?.length&&!mlShifts.find(m=>m.date===selDay))} title="Delete trip/ML on selected day">🗑{!isMobile&&' Delete'}</TBtn>
+          <TBtn onClick={saveFile}>💾{!isMobile&&' Export'}</TBtn>
+          <TBtn onClick={()=>fileRef.current?.click()}>📂{!isMobile&&' Import'}</TBtn>
+          {!isMobile&&<TBtn onClick={()=>{
+            const holIds=new Set(library.filter(l=>l.recurring).map(l=>l.id));
+            const defaults=sampleLib().filter(l=>l.recurring&&!holIds.has(l.id));
+            if(defaults.length===0){alert('All holidays already in library.');}
+            else{setState(p=>({...p,library:[...p.library,...defaults]}));alert(`Added ${defaults.length} holiday(s).`);}
+          }}>🎄 Add Holidays</TBtn>}
+          <input ref={fileRef} type="file" accept=".json" onChange={loadFile} style={{display:'none'}}/>
+        </div>
+        <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+          {PEOPLE.filter(p=>p.child).map(ch=>(
+            <div key={ch.id} style={{position:"relative",display:"inline-block"}}
+              onMouseEnter={()=>setShowMissedDays(ch.id)} onMouseLeave={()=>setShowMissedDays(false)}
+              onClick={isMobile?()=>setShowMissedDays(v=>v===ch.id?false:ch.id):undefined}>
+              <Pill bad={schM[ch.id]>0}>{ch.name.charAt(0)}: {schM[ch.id]}d</Pill>
+              {showMissedDays===ch.id&&schM[ch.id]>0&&(
+                <div style={{position:"absolute",top:"100%",right:0,zIndex:100,backgroundColor:"#fff",border:"1px solid #E7E5E4",borderRadius:6,boxShadow:"0 8px 24px rgba(0,0,0,0.12)",padding:10,minWidth:220,maxHeight:300,overflow:"auto",marginTop:4}}>
+                  <div style={{fontSize:9,fontWeight:800,marginBottom:6}}>{ch.name} — School Days Missed</div>
+                  {Object.entries(missedDaysList[ch.id]||{}).map(([y,days])=>(
+                    <div key={y} style={{marginBottom:6}}>
+                      <div style={{fontSize:8,fontWeight:700,color:"#78716C",marginBottom:2}}>{y} ({days.length}d)</div>
+                      {days.map((d,i)=> <div key={i} style={{fontSize:8,color:"#57534E",padding:"1px 0",display:"flex",justifyContent:"space-between"}}>
+                        <span>{d.date}</span><span style={{color:"#A8A29E"}}>{d.trip}</span>
+                      </div>)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          <Pill bad={mlM.tot<ML_TARGET} good={mlM.tot>=ML_TARGET}>ML: {mlM.tot}/{ML_TARGET}{!isMobile&&mlM.travelDays>0&&` +${mlM.travelDays}t`} · ${mlM.earn.toLocaleString()}</Pill>
+          <TBtn onClick={()=>setShowVacation(v=>!v)}>{showVacation?'🔵':'⚪'}{!isMobile&&' Vacation'}</TBtn>
+          {!isMobile&&<TBtn onClick={()=>setShowSch(true)}>📅 School</TBtn>}
+          <TBtn onClick={()=>setShowLib(true)}>📋{!isMobile&&' Library'}</TBtn>
+          <TBtn onClick={()=>setShowML(true)}>🏥{!isMobile&&' Moonlighting'}</TBtn>
+          <TBtn onClick={()=>setViewMode(v=>v==='year'?'week':'year')}>{viewMode==='year'?'📱':'📅'}</TBtn>
+        </div>
+      </div>
+
+      {/* ═══ GRID (scrollable top) ═══ */}
+      <div style={{flex:1,overflow:"auto",minHeight:0,position:"relative"}}
+        onWheel={e=>{if(e.ctrlKey||e.metaKey){e.preventDefault();setZoom(z=>Math.min(Math.max(z+(e.deltaY<0?0.1:-0.1),0.3),3));}}}
+        onDragOver={e=>{const x=e.clientX,y=e.clientY;dragMouseRef.current={x,y};if(Math.abs(x-dragMouse.x)>8||Math.abs(y-dragMouse.y)>8)setDragMouse({x,y});}}>
+        {/* Zoom controls */}
+        <div style={{position:"sticky",top:0,zIndex:15,display:"flex",justifyContent:"flex-end",padding:"2px 8px",gap:4,pointerEvents:"none"}}>
+          <div style={{pointerEvents:"auto",display:"flex",gap:2,alignItems:"center",backgroundColor:"rgba(255,255,255,0.9)",borderRadius:4,padding:"1px 4px",border:"1px solid #E7E5E4"}}>
+            <button onClick={()=>setZoom(z=>Math.max(z-0.15,0.3))} style={{border:"none",background:"none",cursor:"pointer",fontSize:12,fontFamily:"inherit",color:"#78716C",padding:"0 3px"}}>−</button>
+            <span onClick={()=>setZoom(1)} style={{fontSize:8,fontWeight:700,color:"#78716C",cursor:"pointer",minWidth:28,textAlign:"center"}}>{Math.round(zoom*100)}%</span>
+            <button onClick={()=>setZoom(z=>Math.min(z+0.15,3))} style={{border:"none",background:"none",cursor:"pointer",fontSize:12,fontFamily:"inherit",color:"#78716C",padding:"0 3px"}}>+</button>
+          </div>
+        </div>
+        <div style={{transform:`scale(${zoom})`,transformOrigin:"top left",width:`${100/zoom}%`}}>
+        {viewMode==="year" && years.map(year=>{
+          const children=PEOPLE.filter(p=>p.child);
+          const STRIP_W=20;
+          const ROW_H=CELL+3; // each month row height including gap
+
+          // Compute school year segments for this calendar year
+          // Each segment: {startM, endM, labels:[{name,grade}], extendsUp, extendsDown}
+          const segments=[];
+          // Spring: Jan(0)-Jun(5), grade from prev fall
+          const springLabels=[];
+          children.forEach(ch=>{
+            const g=GRADES[ch.id]?.[String(year-1)];
+            if(g) springLabels.push({name:ch.name.charAt(0),grade:g});
+          });
+          if(springLabels.length>0) segments.push({startM:0,endM:5,labels:springLabels,extendsUp:true,extendsDown:false});
+          // Fall: Sep(8)-Dec(11), grade from this fall
+          const fallLabels=[];
+          children.forEach(ch=>{
+            const g=GRADES[ch.id]?.[String(year)];
+            if(g) fallLabels.push({name:ch.name.charAt(0),grade:g});
+          });
+          if(fallLabels.length>0) segments.push({startM:8,endM:11,labels:fallLabels,extendsUp:false,extendsDown:true});
+
+          return (
+          <div key={year} style={{padding:"0 12px",overflow:"visible"}}>
+            {/* Year header */}
+            <div style={{marginLeft:LBL_W,paddingTop:10,paddingBottom:4}}>
+              <span style={{fontSize:14,fontWeight:900,color:"#1C1917"}}>{year}</span>
+            </div>
+            {/* DOW header */}
+            <div style={{marginLeft:LBL_W,marginBottom:2,display:"flex"}}>
+              {Array.from({length:Math.ceil(maxCols/7)},(_,wi)=>(
+                <div key={wi} style={{display:"flex",marginRight:GAP}}>
+                  {DOW_L.map((d,di)=><div key={di} style={{width:CELL,textAlign:"center",fontSize:isMobile?5:7,fontWeight:700,color:"#A8A29E"}}>{d}</div>)}
+                </div>
+              ))}
+            </div>
+
+            {/* Month rows container with grade strips */}
+            <div style={{position:"relative",overflow:"visible"}}>
+              {/* Grade strips - hidden on mobile */}
+              {!isMobile&&segments.map((seg,si)=>{
+                const HEADER_H=50; // approx year+DOW header height for cross-year extension
+                const top=seg.startM*ROW_H - (seg.extendsUp?HEADER_H:0);
+                const bot=(seg.endM+1)*ROW_H - 3;
+                const height=bot-top + (seg.extendsDown?HEADER_H:0);
+                const labelText=seg.labels.map(l=>`${l.name}:${l.grade}`).join(' ');
+                const rTop=seg.extendsUp?0:3;
+                const rBot=seg.extendsDown?0:3;
+                return <div key={si} style={{
+                  position:"absolute",left:4,top,width:STRIP_W,height,
+                  borderRadius:`${rTop}px ${rTop}px ${rBot}px ${rBot}px`,
+                  backgroundColor:"#D4D0CB",zIndex:5,pointerEvents:"none",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                }}>
+                  <span style={{writingMode:"vertical-rl",textOrientation:"mixed",fontSize:7,fontWeight:800,color:"#fff",whiteSpace:"nowrap",letterSpacing:"0.03em",textShadow:"0 0 2px rgba(0,0,0,0.25)"}}>
+                    {labelText}
+                  </span>
+                </div>;
+              })}
+
+              {/* Month rows */}
+              {allMG[year].map((mg,mi)=>{
+              const den=mDen[`${year}-${mi}`]||{den:0,imp:false};
+              const labels=tripLabels[`${year}-${mi}`]||[];
+
+              return (
+                <div key={mi} style={{display:"flex",alignItems:"center",marginBottom:mi<11?3:0,position:"relative"}}>
+                  <div style={{width:LBL_W-4,textAlign:"right",paddingRight:4,flexShrink:0}}>
+                    <span style={{fontSize:isMobile?7:9,fontWeight:800,letterSpacing:"0.03em",color:den.imp?"#DC2626":"#78716C"}}>
+                      {MON[mi].toUpperCase().slice(0,3)}{den.imp&&" ⚠"}
+                    </span>
+                  </div>
+                  <div style={{display:"flex",position:"relative"}}>
+                    {/* Trip name labels - hidden on mobile */}
+                    {!isMobile&&labels.map((span,si)=>{
+                      const cat=cats.find(c=>c.id===span.rt.lib.cat);
+                      const weekGapsBefore=Math.floor(span.minCol/7);
+                      const weekGapsEnd=Math.floor(span.maxCol/7);
+                      const left=span.minCol*CELL+weekGapsBefore*GAP;
+                      const right=(span.maxCol+1)*CELL+weekGapsEnd*GAP;
+                      const w=right-left;
+                      // Only show label if span is wide enough for ~4 chars
+                      if(w < CELL*3) return null;
+                      const outline="0 0 2px rgba(0,0,0,0.7), 0 0 2px rgba(0,0,0,0.7), 1px 1px 0 rgba(0,0,0,0.5), -1px -1px 0 rgba(0,0,0,0.5), 1px -1px 0 rgba(0,0,0,0.5), -1px 1px 0 rgba(0,0,0,0.5)";
+                      return (
+                        <div key={si} style={{position:"absolute",left,width:w,top:0,height:CELL,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",zIndex:3}}>
+                          <span style={{fontSize:10,fontWeight:900,color:"#fff",textShadow:outline,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:w-6,letterSpacing:"0.03em",lineHeight:1}}>
+                            {span.rt.lib.name}
+                          </span>
+                        </div>
+                      );
+                    })}
+
+                    {Array.from({length:maxCols},(_,ci)=>{
+                      const cell=mg.cells.find(c=>c.col===ci);
+                      const wIdx=Math.floor(ci/7),iwp=ci%7;
+                      const gB=iwp===0&&wIdx>0?GAP:0;
+                      if(!cell)return <div key={ci} style={{width:CELL,height:CELL,marginLeft:gB,flexShrink:0}}/>;
+
+                      const fList=fp[cell.str]||[];
+                      const mlE=mlShifts.find(m=>m.date===cell.str);
+                      const pri=fList[0],stk=fList.length>1;
+                      const sec=stk?fList[1]:null;
+                      const cat=pri?cats.find(c=>c.id===pri.rt.lib.cat):null;
+                      const isTr=pri?.type==='travel',isH=pri?.half==='half';
+                      const we=isWE(cell.dow),sel=selDay===cell.str,isDO=dragOver===cell.str;
+                      const pt=prevSet[cell.str],hasPr=!!pt&&!pri,hasStPr=!!pt&&!!pri&&!stk;
+
+                      let schC=false;
+                      if(fList.length>0)PEOPLE.filter(p=>p.child).forEach(ch=>{
+                        if(isSch(cell.str,cell.dow,schoolCals[ch.id]||[])&&fList.some(f=>f.rt.lib.p.includes(ch.id)))schC=true;
+                      });
+
+                      // Vacation outline: blue border for non-school days when toggle is on
+                      const isVacDay=showVacation&&vacationSet.has(cell.str);
+                      // Weekends adopt vacation style if surrounded by vacation days
+                      const isVacWeekend=showVacation&&we&&(()=>{
+                        const fri=ds(ad(cell.date,cell.dow===5?0:-1)); // prev/this Friday
+                        const mon=ds(ad(cell.date,cell.dow===5?2:1)); // next/this Monday
+                        return vacationSet.has(fri)||vacationSet.has(mon);
+                      })();
+                      const vacActive=isVacDay||isVacWeekend;
+
+                      const weBdr=we?"1px solid #AAA":"1px solid #DDDAD7";
+                      const vacBdr=vacActive?"2px solid #3B82F6":null;
+                      let denBg=null;
+                      if(!pri&&!mlE){
+                        if(den.imp)denBg="rgba(220,38,38,0.18)";
+                        else if(den.den>0.25){const t=Math.min((den.den-0.3)/0.5,1);denBg=`rgb(${Math.round(230-t*190)},${Math.round(230-t*200)},${Math.round(230-t*195)})`;}
+                      }
+
+                      let bg="#fff",fg="#888";
+                      let bdr=sel?"2px solid #1C1917":isDO?"2px solid #3B82F6":vacBdr||weBdr;
+                      if(tapPlace&&!pri&&!mlE)bdr="1px dashed #3B82F6";
+                      if(denBg&&!pri)bg=denBg;
+                      if(hasPr){const pc=dragPrev?.cat;bg=pt==='dest'?`${pc?.color||'#999'}80`:`${pc?.color||'#999'}30`;bdr=`1px dashed ${pc?.color||'#999'}`;}
+
+                      const sCat=sec?cats.find(c=>c.id===sec.rt.lib.cat):null;
+                      const sIsTr=sec?.type==='travel',sIsH=sec?.half==='half';
+                      let topBg=bg,botBg=null;
+
+                      if(pri&&cat){
+                        if(isTr){
+                          // Striped travel in trip color
+                          topBg=isH?`linear-gradient(135deg,${cat.color}30 50%,transparent 50%),${stripeGrad(cat.color+'55')}`:stripeGrad(cat.color+'55');
+                          fg="#555";
+                        }else{topBg=cat.color+"dd";fg="#fff";}
+                      }
+                      if(stk&&sCat){
+                        if(sIsTr){botBg=stripeGrad(sCat.color+'55');}
+                        else{botBg=sCat.color+"ee";}
+                      }
+                      const split=stk||hasStPr;
+                      if(hasStPr){const pc=dragPrev?.cat;botBg=pt==='dest'?`${pc?.color||'#999'}60`:`${pc?.color||'#999'}25`;bdr=`1px dashed ${pc?.color||'#999'}`;}
+                      if(!split)bg=topBg;
+                      if(mlE&&!pri){
+                        if(mlE.shift==='travel'){bg=stripeGrad(mlColor+"55");}
+                        else{bg=mlColor+"cc";fg="#fff";}
+                      }
+
+                      const canD=!!pri;
+
+                      return(
+                        <div key={ci} draggable={canD} title={cell.str}
+                          onDragStart={e=>{if(stk){const r=e.currentTarget.getBoundingClientRect();const yR=(e.clientY-r.top)/r.height;dSP(e,yR<=0.5?pri.plId:(sec?sec.plId:pri.plId));}else if(pri)dSP(e,pri.plId);}}
+                          onDragOver={e=>dOC(e,cell.str)} onDrop={e=>dDrop(e,cell.str)} onDragEnd={dEnd}
+                          onClick={()=>handleCellClick(cell.str)}
+                          style={{width:CELL,height:CELL,marginLeft:gB,flexShrink:0,borderRadius:2,position:"relative",
+                            background:split?'transparent':bg,border:bdr,cursor:canD?"grab":"pointer",
+                            boxSizing:"border-box",userSelect:"none",overflow:"hidden"}}>
+                          {split&&<>
+                            <div style={{position:"absolute",top:0,left:0,right:0,height:"calc(50% - 1px)",background:topBg}}/>
+                            <div style={{position:"absolute",top:"50%",left:0,right:0,height:2,backgroundColor:"#fff",zIndex:1}}/>
+                            <div style={{position:"absolute",bottom:0,left:0,right:0,height:"calc(50% - 1px)",background:botBg||topBg}}/>
+                          </>}
+                          {schC&&<div style={{position:"absolute",top:-1,right:0,width:5,height:5,borderRadius:"50%",backgroundColor:"#DC2626",zIndex:4}}/>}
+                          {mlE&&pri&&<div style={{position:"absolute",bottom:0,right:0,width:4,height:4,borderRadius:"50%",backgroundColor:mlColor,zIndex:4}}/>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            </div>
+          </div>
+        );
+        })}
+
+        {viewMode==='week' && (()=>{
+          // Generate all weeks across all years
+          const WC=Math.min(Math.floor((typeof window!=='undefined'?window.innerWidth:400)-80)/7,52);
+          const allWeeks=[];
+          for(const y of years){
+            let d=new Date(y,0,1);
+            // Back up to Monday
+            while(dwM(d)!==0) d=ad(d,-1);
+            const yearEnd=new Date(y,11,31);
+            while(d<=yearEnd){
+              const week=[];
+              for(let i=0;i<7;i++){
+                const dt=ad(d,i);
+                week.push({str:ds(dt),dow:i,date:dt,month:dt.getMonth(),year:dt.getFullYear(),dom:dt.getDate()});
+              }
+              allWeeks.push(week);
+              d=ad(d,7);
+            }
+          }
+          // Deduplicate weeks (year boundaries)
+          const seen=new Set();
+          const weeks=allWeeks.filter(w=>{const k=w[0].str;if(seen.has(k))return false;seen.add(k);return true;});
+
+          let lastYear=null,lastMonth=null;
+          return <div style={{padding:"8px 12px"}}>
+            {/* DOW header */}
+            <div style={{display:"flex",gap:2,marginLeft:60,marginBottom:4,position:"sticky",top:0,backgroundColor:"#FAFAF9",zIndex:10,paddingBottom:2}}>
+              {DOW_L.map((d,i)=> <div key={i} style={{flex:1,textAlign:"center",fontSize:9,fontWeight:700,color:"#A8A29E"}}>{d}</div>)}
+            </div>
+            {weeks.map((week,wi)=>{
+              const firstDay=week.find(d=>d.year>=startY);
+              if(!firstDay)return null;
+              const showYear=firstDay.year!==lastYear;
+              const showMonth=firstDay.month!==lastMonth||showYear;
+              if(showYear)lastYear=firstDay.year;
+              if(showMonth)lastMonth=firstDay.month;
+
+              return <div key={wi}>
+                {showYear&&<div style={{padding:"8px 0 4px",marginLeft:60}}><span style={{fontSize:14,fontWeight:900,color:"#1C1917"}}>{firstDay.year}</span></div>}
+                {showMonth&&!showYear&&<div style={{padding:"4px 0 2px",marginLeft:60}}><span style={{fontSize:10,fontWeight:800,color:"#78716C"}}>{MON[firstDay.month]}</span></div>}
+                <div style={{display:"flex",gap:2,marginBottom:2,alignItems:"center"}}>
+                  <div style={{width:56,textAlign:"right",paddingRight:4,flexShrink:0}}>
+                    {week[0].dom<=7&&<span style={{fontSize:8,fontWeight:700,color:"#A8A29E"}}>{MON[week[0].month]?.slice(0,3)}</span>}
+                  </div>
+                  {week.map((day,di)=>{
+                    if(day.year<startY||day.year>endY)return <div key={di} style={{flex:1,height:isMobile?48:36}}/>;
+                    const fList=fp[day.str]||[];
+                    const mlE=mlShifts.find(m=>m.date===day.str);
+                    const pri=fList[0],stk=fList.length>1,sec=stk?fList[1]:null;
+                    const cat=pri?cats.find(c=>c.id===pri.rt.lib.cat):null;
+                    const isTr=pri?.type==='travel',isH=pri?.half==='half';
+                    const we=isWE(day.dow),sel=selDay===day.str,isDO=dragOver===day.str;
+                    const denKey=`${day.year}-${day.month}`;
+                    const den=mDen[denKey]||{den:0,imp:false};
+
+                    let bg="#fff";
+                    const isVacW=showVacation&&(vacationSet.has(day.str)||(we&&(vacationSet.has(ds(ad(day.date,day.dow===5?0:-1)))||vacationSet.has(ds(ad(day.date,day.dow===5?2:1))))));
+                    let bdr=sel?"2px solid #1C1917":isDO?"2px solid #3B82F6":isVacW?"2px solid #3B82F6":we?"1px solid #AAA":"1px solid #DDDAD7";
+                    if(tapPlace&&!pri&&!mlE)bdr="1px dashed #3B82F6";
+                    if(!pri&&!mlE){
+                      if(den.imp)bg="rgba(220,38,38,0.18)";
+                      else if(den.den>0.3){const t=Math.min((den.den-0.3)/0.5,1);bg=`rgb(${Math.round(230-t*190)},${Math.round(230-t*200)},${Math.round(230-t*195)})`;}
+                    }
+                    if(pri&&cat){
+                      if(isTr)bg=stripeGrad(cat.color+"55");
+                      else bg=cat.color+"dd";
+                    }
+                    if(mlE&&!pri){
+                      if(mlE.shift==='travel')bg=stripeGrad(mlColor+"55");
+                      else{bg=mlColor+"cc";}
+                    }
+
+                    let schC=false;
+                    if(fList.length>0)PEOPLE.filter(p=>p.child).forEach(ch=>{
+                      if(isSch(day.str,day.dow,schoolCals[ch.id]||[])&&fList.some(f=>f.rt.lib.p.includes(ch.id)))schC=true;
+                    });
+
+                    return <div key={di} title={day.str}
+                      draggable={!!pri}
+                      onDragStart={e=>{if(pri)dSP(e,pri.plId);}}
+                      onDragOver={e=>dOC(e,day.str)} onDrop={e=>dDrop(e,day.str)} onDragEnd={dEnd}
+                      onClick={()=>handleCellClick(day.str)}
+                      style={{flex:1,height:isMobile?48:36,borderRadius:3,position:"relative",background:bg,border:bdr,
+                        cursor:pri?"grab":"pointer",boxSizing:"border-box",userSelect:"none",overflow:"hidden",
+                        display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <span style={{fontSize:isMobile?13:10,fontWeight:pri?700:400,color:pri&&!isTr?"#fff":"#888"}}>{day.dom}</span>
+                      {schC&&<div style={{position:"absolute",top:1,right:1,width:5,height:5,borderRadius:"50%",backgroundColor:"#DC2626",zIndex:2}}/>}
+                      {mlE&&pri&&<div style={{position:"absolute",bottom:1,right:1,width:4,height:4,borderRadius:"50%",backgroundColor:mlColor,zIndex:2}}/>}
+                      {pri&&!isTr&&<div style={{position:"absolute",bottom:1,left:2,fontSize:6,fontWeight:700,color:"#fff",textShadow:"0 0 2px rgba(0,0,0,0.5)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"90%"}}>{pri.rt.lib.name}</div>}
+                    </div>;
+                  })}
+                </div>
+              </div>;
+            })}
+          </div>;
+        })()}
+        </div>{/* close zoom wrapper */}
+      </div>
+
+      {/* ═══ FIXED BOTTOM PANEL ═══ */}
+      <div style={{borderTop:"2px solid #E7E5E4",backgroundColor:"#fff",flexShrink:0,maxHeight:isMobile?"50vh":"40vh",overflow:"auto"}}>
+        {/* Legend with color pickers - hidden on mobile */}
+        {!isMobile&&<div style={{display:"flex",gap:10,padding:"8px 14px",flexWrap:"wrap",borderBottom:"1px solid #F0EFED",alignItems:"center"}}>
+          {cats.map(c=> <LegPick key={c.id} color={c.color} label={c.label} onChange={col=>setColor(c.id,col)}/>)}
+          <LegPick color={mlColor} label="Moonlight" onChange={col=>setColor("moonlight",col)}/>
+          <Leg color="none" extra={<div style={{width:12,height:12,borderRadius:2,background:stripeGrad(cats[2]?.color+"55"),border:"1px solid #DDDAD7"}}/>}>Travel</Leg>
+          <Leg color="none" extra={<div style={{width:12,height:12,borderRadius:2,background:stripeGrad(mlColor+"55"),border:"1px solid #DDDAD7"}}/>}>ML Travel</Leg>
+          <Leg color="none" extra={<div style={{width:10,height:10,borderRadius:2,backgroundColor:"rgba(100,100,100,0.3)"}}/>}>Density</Leg>
+          <div style={{display:"flex",alignItems:"center",gap:3,fontSize:8,color:"#78716C"}}><div style={{width:5,height:5,borderRadius:"50%",backgroundColor:"#DC2626"}}/> School</div>
+        </div>}
+        {/* Columns */}
+        <div style={{padding:isMobile?"6px 8px":"10px 14px",display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:isMobile?8:16}}>
+
+        {/* COL 1: Placed Trips */}
+        <div style={{minWidth:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:4,flexWrap:"wrap"}}>
+            <SH>Placed</SH>
+            <button onClick={()=>setPlacedYearFilter(null)} style={{...bSm,fontSize:7,padding:"1px 5px",backgroundColor:!placedYearFilter?"#1C1917":"#F5F5F4",color:!placedYearFilter?"#fff":"#1C1917"}}>All</button>
+            {years.filter(y=>placements.some(p=>p.startDate.startsWith(String(y)))).map(y=>
+              <button key={y} onClick={()=>setPlacedYearFilter(placedYearFilter===y?null:y)} style={{...bSm,fontSize:7,padding:"1px 5px",backgroundColor:placedYearFilter===y?"#1C1917":"#F5F5F4",color:placedYearFilter===y?"#fff":"#1C1917"}}>{y}</button>
+            )}
+          </div>
+          <div style={{maxHeight:240,overflow:"auto"}}>
+            {placements.filter(pl=>!placedYearFilter||pl.startDate.startsWith(String(placedYearFilter)))
+              .map(pl=>{
+              const lib=library.find(l=>l.id===pl.libId);if(!lib)return null;
+              const cat=cats.find(c=>c.id===lib.cat);
+              const total=lib.duration+Math.ceil(lib.tb||0)+Math.ceil(lib.ta||0);
+              const isOverTarget=dragPlOverId===pl.id;
+              return(
+                <div key={pl.id} style={{display:"flex",alignItems:"center",padding:"4px 0",marginBottom:2,borderRadius:3,
+                  border:isOverTarget?"2px solid #3B82F6":"1px solid #E7E5E4",
+                  opacity:dragPlReorder===pl.id?0.4:1}}
+                  onDragOver={e=>{if(dragPlReorder){e.preventDefault();setDragPlOverId(pl.id);}}}
+                  onDrop={e=>{if(dragPlReorder&&dragPlReorder!==pl.id){e.preventDefault();reorderPl(dragPlReorder,pl.id);}setDragPlReorder(null);setDragPlOverId(null);}}>
+                  <div draggable onDragStart={e=>{setDragPlReorder(pl.id);e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain","reorder-pl");}}
+                    onDragEnd={()=>{setDragPlReorder(null);setDragPlOverId(null);}}
+                    style={{cursor:"grab",padding:"0 4px",fontSize:10,color:"#A8A29E",flexShrink:0,userSelect:"none"}} title="Drag to reorder">⠿</div>
+                  <div draggable onDragStart={e=>dSP(e,pl.id)} onDragEnd={dEnd}
+                    style={{display:"flex",alignItems:"center",gap:5,minWidth:0,flex:1,cursor:"grab",padding:"0 4px"}}>
+                    <div style={{width:4,height:18,borderRadius:2,backgroundColor:cat?.color,flexShrink:0}}/>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:9,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{lib.name}</div>
+                      <div style={{fontSize:7,color:"#78716C"}}>{pl.startDate} · {total}d</div>
+                    </div>
+                  </div>
+                  <button onClick={e=>{e.stopPropagation();rmPl(pl.id);}} style={{...bSm,color:"#DC2626",fontSize:7,padding:"2px 5px",flexShrink:0}} title="Remove from calendar">✕</button>
+                </div>
+              );
+            })}
+            {placements.length===0&&<div style={{fontSize:8,color:"#A8A29E",fontStyle:"italic"}}>Open Trip Library to drag trips onto the grid</div>}
+          </div>
+        </div>
+
+        {/* COL 2: ML Earnings + Day Detail */}
+        <div style={{minWidth:0}}>
+          <SH>ML Earnings</SH>
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
+            <span style={{fontSize:18,fontWeight:800}}>${mlM.earn.toLocaleString()}</span>
+            <span style={{fontSize:9,color:"#78716C"}}>
+              {mlM.tot}/{ML_TARGET}{mlM.travelDays>0&&` +${mlM.travelDays}t`}{mlM.tot<ML_TARGET&&<span style={{color:"#B45309"}}> · {ML_TARGET-mlM.tot} left</span>}
+            </span>
+          </div>
+          {facilities.map(f=>{const s=mlM.sum[f.id];if(!s||(!s.day&&!s.night&&!s.travel))return null;
+            return <div key={f.id} style={{display:"flex",justifyContent:"space-between",fontSize:9,padding:"2px 0",borderBottom:"1px solid #F5F5F4"}}>
+              <span>{f.name}</span><span style={{color:"#57534E"}}>{s.day>0&&`${s.day}☀ `}{s.night>0&&`${s.night}🌙 `}{s.travel>0&&`${s.travel}✈ `}${(s.day*f.day+s.night*f.night).toLocaleString()}</span>
+            </div>;
+          })}
+          {mlM.tot<ML_TARGET&&<div style={{marginTop:4,padding:5,borderRadius:3,backgroundColor:"#FFFBEB",fontSize:8}}>
+            <div style={{fontWeight:700,color:"#92400E",marginBottom:2}}>If remaining {ML_TARGET-mlM.tot}:</div>
+            {facilities.map(f=>{const rem=ML_TARGET-mlM.tot;
+              return <div key={f.id} style={{display:"flex",justifyContent:"space-between",padding:"1px 0",color:"#78716C"}}>
+                <span>{f.name}</span><span>☀${(rem*f.day).toLocaleString()} / 🌙${(rem*f.night).toLocaleString()}</span>
+              </div>;
+            })}
+          </div>}
+          {/* Day Detail */}
+          {selDay&&<div style={{marginTop:8,paddingTop:8,borderTop:"1px solid #E7E5E4"}}>
+            <SH>Day Detail</SH>
+            <DayDet str={selDay} fList={fp[selDay]||[]} mlE={mlShifts.find(m=>m.date===selDay)}
+              sCals={schoolCals} facs={facilities} onAddML={addML} onRmML={rmML} onClose={()=>setSelDay(null)}/>
+          </div>}
+        </div>
+        </div>
+      </div>
+
+      {/* Drag date cursor pill */}
+      {dragOver&&<div style={{position:"fixed",left:dragMouse.x+12,top:dragMouse.y-24,zIndex:999,pointerEvents:"none"}}>
+        <span style={{fontSize:11,fontWeight:900,color:"#fff",backgroundColor:"#1C1917",padding:"2px 10px",borderRadius:4,whiteSpace:"nowrap"}}>{dragOver}</span>
+      </div>}
+
+      {/* ═══ MODALS ═══ */}
+      {showLib&&<LibModal lib={library} onEdit={i=>{setEditTrip({...i,lastInteracted:Date.now()});setShowLib(false);}} onNew={()=>{setEditTrip({});setShowLib(false);}}
+        onDel={delLib} onReorder={reorderLib} onDS={dSL} onDE={dEnd} onCancel={cancelDrag}
+        onTapPlace={id=>{setTapPlace({type:'lib',libId:id});setShowLib(false);}} tapPlace={tapPlace}
+        onClose={()=>setShowLib(false)}/>}
+      {showML&&<MLDrawer facilities={facilities} onDragStart={(fac,shift)=>{setDragML({fac,shift});}} onDragEnd={dEnd} onCancel={cancelDrag}
+        onTapPlace={(fac,shift)=>{setTapPlace({type:'ml',fac,shift});setShowML(false);}}
+        onEditFac={()=>{setShowFac(true);}}
+        onClose={()=>setShowML(false)}/>}
+      {editTrip!==null&&<LibEd item={editTrip.id?editTrip:null} onSave={saveLib} onDel={editTrip.id?delLib:null} onClose={()=>setEditTrip(null)}/>}
+      {showSch&&<SchEd cals={schoolCals} onSave={c=>setState(p=>({...p,schoolCals:c}))} onClose={()=>setShowSch(false)}/>}
+      {showFac&&<FacEd facs={facilities} onSave={f=>setState(p=>({...p,facilities:f}))} onClose={()=>setShowFac(false)}/>}
+    </div>
+  );
+}
+
+/* ═══ DAY DETAIL ═══ */
+function DayDet({str,fList,mlE,sCals,facs,onAddML,onRmML,onClose}){
+  const[fac,setFac]=useState(facs[0]?.id||"");
+  const[sh,setSh]=useState("day");
+  const d=pd(str),w=dwM(d),facO=facs.find(f=>f.id===fac);
+  const lOT=fList.some(f=>f.rt.lib.p.includes("lydia"));
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+        <span style={{fontWeight:800,fontSize:10}}>{DOW_L[w]} {str}</span>
+        <button onClick={onClose} style={{border:"none",background:"none",cursor:"pointer",color:"#78716C",fontSize:12,fontFamily:"inherit"}}>×</button>
+      </div>
+      {fList.map((f,i)=>{const cat=CATS.find(c=>c.id===f.rt.lib.cat);
+        return <div key={i} style={{fontSize:9,display:"flex",alignItems:"center",gap:4,marginBottom:1}}>
+          <div style={{width:5,height:5,borderRadius:1,backgroundColor:cat?.color}}/><b>{f.rt.lib.name}</b><span style={{color:"#A8A29E"}}>({f.type}{f.half==='half'?' ½':''})</span>
+        </div>;
+      })}
+      {PEOPLE.filter(p=>p.child).map(ch=>
+        <div key={ch.id} style={{fontSize:8,color:isSch(str,w,sCals[ch.id]||[])?"#166534":"#A8A29E",marginTop:1}}>{ch.name}: {isSch(str,w,sCals[ch.id]||[])?"📚":"—"}</div>
+      )}
+      <div style={{marginTop:4,paddingTop:4,borderTop:"1px solid #E7E5E4"}}>
+        {mlE?<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:9}}>
+          <span><b>◆{facs.find(f=>f.id===mlE.fac)?.name}</b> ({mlE.shift}) · ${mlE.shift==='travel'?'0':mlE.shift==='day'?facs.find(f=>f.id===mlE.fac)?.day?.toLocaleString():facs.find(f=>f.id===mlE.fac)?.night?.toLocaleString()}</span>
+          <button onClick={()=>onRmML(str)} style={{...bSm,color:"#DC2626",fontSize:8,padding:"1px 4px"}}>×</button>
+        </div>:!lOT||fList.some(f=>f.rt.lib.cat==='ml_travel')?
+          <div style={{display:"flex",gap:3,alignItems:"center"}}>
+            <select value={fac} onChange={e=>setFac(e.target.value)} style={sSm}>{facs.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select>
+            <select value={sh} onChange={e=>setSh(e.target.value)} style={sSm}><option value="day">☀${facO?.day?.toLocaleString()}</option><option value="night">🌙${facO?.night?.toLocaleString()}</option><option value="travel">✈ $0</option></select>
+            <button onClick={()=>onAddML(str,fac,sh)} style={{...bSm,fontWeight:700,fontSize:9}}>+ML</button>
+          </div>
+        :<div style={{fontSize:8,color:"#A8A29E",fontStyle:"italic"}}>Lydia on trip</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ═══ LIBRARY MODAL ═══ */
+function LibModal({lib,onEdit,onNew,onDel,onReorder,onDS,onDE,onCancel,onTapPlace,tapPlace,onClose}){
+  const[search,setSearch]=useState("");
+  const[fCat,setFCat]=useState(null);
+  const[dragIdx,setDragIdx]=useState(null);
+  const[overIdx,setOverIdx]=useState(null);
+  const filtered=lib.map((l,i)=>({...l,_idx:i})).filter(l=>{if(fCat&&l.cat!==fCat)return false;if(search&&!l.name.toLowerCase().includes(search.toLowerCase()))return false;return true;});
+  const sorted=[...filtered].sort((a,b)=>(b.lastInteracted||0)-(a.lastInteracted||0));
+
+  return(
+    <div onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect="none";}} onDrop={e=>{e.preventDefault();if(onCancel)onCancel();}}
+      style={{position:"fixed",top:0,right:0,bottom:0,width:360,maxWidth:"100vw",backgroundColor:"#fff",boxShadow:"-4px 0 20px rgba(0,0,0,0.15)",zIndex:900,display:"flex",flexDirection:"column",fontFamily:"'SF Mono','JetBrains Mono',monospace"}}>
+      <div style={{padding:"12px 14px",borderBottom:"1px solid #E7E5E4"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <span style={{fontSize:14,fontWeight:800}}>Trip Library</span>
+          <div style={{display:"flex",gap:4}}>
+            <button onClick={onNew} style={{...bSm,fontWeight:700,backgroundColor:"#1C1917",color:"#fff"}}>+ New</button>
+            <button onClick={onClose} style={bSm}>✕</button>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." style={{...inp,flex:1,minWidth:100}}/>
+          <button onClick={()=>setFCat(null)} style={{...bSm,backgroundColor:!fCat?"#1C1917":"#F5F5F4",color:!fCat?"#fff":"#1C1917",fontSize:8}}>All</button>
+          {CATS.map(c=> <button key={c.id} onClick={()=>setFCat(fCat===c.id?null:c.id)} style={{...bSm,backgroundColor:fCat===c.id?c.color+"cc":"#F5F5F4",color:fCat===c.id?"#fff":"#1C1917",fontSize:8}}>{c.label}</button>)}
+        </div>
+      </div>
+      <div style={{flex:1,overflow:"auto",padding:"8px 14px"}}>
+        {sorted.map(l=>{const cat=CATS.find(c=>c.id===l.cat);const total=l.duration+Math.ceil(l.tb||0)+Math.ceil(l.ta||0);
+          const isOver=overIdx===l._idx;
+          return <div key={l.id}
+            draggable
+            onDragStart={e=>{if(e.altKey){setDragIdx(l._idx);e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain","reorder");}else{onDS(e,l.id);}}}
+            onDragOver={e=>{if(dragIdx!==null){e.preventDefault();setOverIdx(l._idx);}}}
+            onDrop={e=>{if(dragIdx!==null&&dragIdx!==l._idx){e.preventDefault();onReorder(dragIdx,l._idx);}setDragIdx(null);setOverIdx(null);}}
+            onDragEnd={e=>{setDragIdx(null);setOverIdx(null);onDE(e);}}
+            style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",padding:"8px 10px",marginBottom:3,borderRadius:4,
+              border:isOver?"2px solid #3B82F6":"1px solid #E7E5E4",cursor:"grab",backgroundColor:l.recurring?"#FEF2F2":"#fff",opacity:dragIdx===l._idx?0.4:1}}>
+            <div style={{display:"flex",gap:8,minWidth:0,flex:1}}>
+              <div style={{width:5,minHeight:28,borderRadius:3,backgroundColor:cat?.color||"#999",flexShrink:0}}/>
+              <div style={{minWidth:0,flex:1}}>
+                <div style={{fontSize:11,fontWeight:700}}>{l.name}{l.recurring&&<span style={{fontSize:8,color:"#A8A29E",marginLeft:4}}>↻</span>}</div>
+                <div style={{fontSize:9,color:"#78716C"}}>{total}d ({l.duration}d+{Math.ceil(l.tb||0)+Math.ceil(l.ta||0)}d) · {l.p.map(id=>id==='other'?(l.otherName||'Other'):PEOPLE.find(p=>p.id===id)?.name).filter(Boolean).join(', ')}</div>
+                {l.notes&&<div style={{fontSize:8,color:"#A8A29E",marginTop:2,lineHeight:"1.3em"}}>{l.notes.length>120?l.notes.slice(0,120)+'…':l.notes}</div>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:3,flexShrink:0,marginLeft:8}}>
+              <button onClick={()=>onEdit(l)} style={bSm}>Edit</button>
+              {onTapPlace&&<button onClick={()=>onTapPlace(l.id)} style={{...bSm,color:"#3B82F6",fontWeight:700}}>📌</button>}
+              {!l.recurring&&<button onClick={()=>{if(confirm('Delete "'+l.name+'"?'))onDel(l.id);}} style={{...bSm,color:"#DC2626"}}>×</button>}
+            </div>
+          </div>;
+        })}
+        {sorted.length===0&&<div style={{fontSize:10,color:"#A8A29E",fontStyle:"italic",padding:20,textAlign:"center"}}>No trips match</div>}
+      </div>
+      <div style={{fontSize:8,color:"#A8A29E",padding:"8px 14px",borderTop:"1px solid #E7E5E4",textAlign:"center"}}>Drag to calendar ← · Hold ⌥ + drag to reorder</div>
+    </div>
+  );
+}
+
+/* ═══ LIB EDITOR ═══ */
+/* ═══ ML DRAWER ═══ */
+function MLDrawer({facilities,onDragStart,onDragEnd,onEditFac,onCancel,onTapPlace,onClose}){
+  return (
+    <div onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect="none";}} onDrop={e=>{e.preventDefault();if(onCancel)onCancel();}}
+      style={{position:"fixed",top:0,right:0,bottom:0,width:320,maxWidth:"100vw",backgroundColor:"#fff",boxShadow:"-4px 0 20px rgba(0,0,0,0.15)",zIndex:900,display:"flex",flexDirection:"column",fontFamily:"'SF Mono','JetBrains Mono',monospace"}}>
+      <div style={{padding:"12px 14px",borderBottom:"1px solid #E7E5E4"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <span style={{fontSize:14,fontWeight:800}}>Moonlighting</span>
+          <div style={{display:"flex",gap:4}}>
+            <button onClick={onEditFac} style={bSm}>Edit Facilities</button>
+            <button onClick={onClose} style={bSm}>✕</button>
+          </div>
+        </div>
+        <div style={{fontSize:8,color:"#78716C"}}>Drag a shift onto the calendar</div>
+      </div>
+      <div style={{flex:1,overflow:"auto",padding:"8px 14px"}}>
+        {facilities.map(f=> (
+          <div key={f.id} style={{marginBottom:8}}>
+            <div style={{fontSize:10,fontWeight:700,marginBottom:4}}>{f.name}</div>
+            <div style={{display:"flex",gap:4}}>
+              <div draggable onDragStart={e=>{onDragStart(f.id,"day");e.dataTransfer.effectAllowed="copy";e.dataTransfer.setData("text/plain","ml");}}
+                onDragEnd={onDragEnd} onClick={()=>onTapPlace&&onTapPlace(f.id,"day")}
+                style={{flex:1,padding:"8px 6px",borderRadius:4,border:"1px solid #E7E5E4",cursor:"pointer",textAlign:"center",fontSize:9,fontWeight:600}}>
+                ☀ Day<br/><span style={{fontSize:8,color:"#78716C"}}>${f.day.toLocaleString()}</span>
+              </div>
+              <div draggable onDragStart={e=>{onDragStart(f.id,"night");e.dataTransfer.effectAllowed="copy";e.dataTransfer.setData("text/plain","ml");}}
+                onDragEnd={onDragEnd} onClick={()=>onTapPlace&&onTapPlace(f.id,"night")}
+                style={{flex:1,padding:"8px 6px",borderRadius:4,border:"1px solid #E7E5E4",cursor:"pointer",textAlign:"center",fontSize:9,fontWeight:600,backgroundColor:"#1C1917",color:"#fff"}}>
+                🌙 Night<br/><span style={{fontSize:8,color:"#A8A29E"}}>${f.night.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+        {/* ML Travel Day */}
+        <div style={{marginBottom:8}}>
+          <div style={{fontSize:10,fontWeight:700,marginBottom:4}}>Travel Day</div>
+          <div draggable onDragStart={e=>{onDragStart(facilities[0]?.id||"","travel");e.dataTransfer.effectAllowed="copy";e.dataTransfer.setData("text/plain","ml");}}
+            onDragEnd={onDragEnd} onClick={()=>onTapPlace&&onTapPlace(facilities[0]?.id||"","travel")}
+            style={{padding:"8px 6px",borderRadius:4,border:"1px solid #E7E5E4",cursor:"pointer",textAlign:"center",fontSize:9,fontWeight:600,background:stripeGrad("#DB2777"+"55")}}>
+            ✈ ML Travel · $0<br/><span style={{fontSize:7,color:"#78716C"}}>Blocks shift density, no income</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LibEd({item,onSave,onDel,onClose}){
+  const pp=PEOPLE;
+  const[f,sF]=useState(item||{id:"",name:"",cat:"family",duration:7,tb:1,ta:1,p:["lydia","mike","juniper","ocean"],notes:""});
+  const u=(k,v)=>sF(p=>({...p,[k]:v}));
+  const tp=id=>sF(p=>({...p,p:p.p.includes(id)?p.p.filter(x=>x!==id):[...p.p,id]}));
+  const total=f.duration+Math.ceil(f.tb||0)+Math.ceil(f.ta||0);
+  return(
+    <div style={ov} onClick={onClose}><div style={{...md,maxHeight:"85vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
+        <span style={{fontSize:12,fontWeight:800}}>{item?"Edit Trip":"New Trip"}</span>
+        {onDel&&<button onClick={()=>onDel(item.id)} style={{...bSm,color:"#DC2626"}}>Delete</button>}
+      </div>
+      <Lab>Name</Lab>
+      <input value={f.name} onChange={e=>u("name",e.target.value)} style={inp} placeholder="Trip name"/>
+      <Lab>Category</Lab>
+      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+        {CATS.map(c=><button key={c.id} onClick={()=>u("cat",c.id)} style={{...bSm,backgroundColor:f.cat===c.id?c.color+"cc":"#F5F5F4",color:f.cat===c.id?"#fff":"#1C1917"}}>{c.label}</button>)}
+      </div>
+      <Lab>Duration (destination days)</Lab>
+      <input type="number" min={1} max={60} value={f.duration} onChange={e=>u("duration",parseInt(e.target.value)||1)} style={{...inp,width:80}}/>
+      <div style={{display:"flex",gap:10,marginTop:2}}>
+        <div style={{flex:1}}>
+          <Lab>Travel Before</Lab>
+          <div style={{display:"flex",gap:2,flexWrap:"wrap"}}>
+            {TRAVEL_OPTS.map(v=><button key={v} onClick={()=>u("tb",v)} style={{...bSm,backgroundColor:f.tb===v?"#1C1917":"#F5F5F4",color:f.tb===v?"#fff":"#1C1917"}}>{v}d</button>)}
+          </div>
+        </div>
+        <div style={{flex:1}}>
+          <Lab>Travel After</Lab>
+          <div style={{display:"flex",gap:2,flexWrap:"wrap"}}>
+            {TRAVEL_OPTS.map(v=><button key={v} onClick={()=>u("ta",v)} style={{...bSm,backgroundColor:f.ta===v?"#1C1917":"#F5F5F4",color:f.ta===v?"#fff":"#1C1917"}}>{v}d</button>)}
+          </div>
+        </div>
+      </div>
+      <div style={{fontSize:9,color:"#78716C",marginTop:3}}>{f.duration}d + {Math.ceil(f.tb||0)+Math.ceil(f.ta||0)}d travel = <b>{total}d footprint</b></div>
+      <Lab>Participants</Lab>
+      <div style={{display:"flex",gap:2,flexWrap:"wrap"}}>
+        {pp.map(p=> <button key={p.id} onClick={()=>tp(p.id)} style={{...bSm,backgroundColor:f.p.includes(p.id)?"#1C1917":"#F5F5F4",color:f.p.includes(p.id)?"#fff":"#1C1917"}}>{p.customName?(f.otherName||"Other"):p.name}{p.child?" 🎒":""}</button>)}
+      </div>
+      {f.p.includes("other")&&<div style={{marginTop:4}}>
+        <Lab>Other participant name</Lab>
+        <input value={f.otherName||""} onChange={e=>u("otherName",e.target.value)} style={{...inp,width:"100%"}} placeholder="e.g. Dad, Grandma Ellen, Lydia's college friend Sarah..."/>
+      </div>}
+      <Lab>Notes</Lab>
+      <textarea value={f.notes||""} onChange={e=>u("notes",e.target.value)} style={{...inp,minHeight:80,resize:"vertical",lineHeight:"1.4em"}} placeholder="Trip notes, logistics, links, ideas..."/>
+      {/* Recurring holiday */}
+      <div style={{marginTop:8,display:"flex",alignItems:"center",gap:6}}>
+        <label style={{fontSize:9,display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}>
+          <input type="checkbox" checked={!!f.recurring} onChange={e=>u("recurring",e.target.checked)}/>
+          <span style={{fontWeight:600}}>Recurring annually</span>
+        </label>
+      </div>
+      {f.recurring&&<div style={{display:"flex",gap:6,marginTop:4}}>
+        <div><Lab>Month</Lab><input type="number" min={1} max={12} value={f.recMonth||1} onChange={e=>u("recMonth",parseInt(e.target.value)||1)} style={{...inp,width:50}}/></div>
+        <div><Lab>Day</Lab><input type="number" min={0} max={31} value={f.recDay||1} onChange={e=>u("recDay",parseInt(e.target.value)||0)} style={{...inp,width:50}}/></div>
+        <div><Lab>Rule</Lab><select value={f.recRule||""} onChange={e=>u("recRule",e.target.value)} style={{...inp,width:80}}>
+          <option value="">Fixed date</option>
+          <option value="4thu">4th Thursday</option>
+        </select></div>
+      </div>}
+      <div style={{display:"flex",gap:6,marginTop:14}}>
+        <button onClick={()=>onSave(f)} style={{...bSm,flex:1,padding:"8px 0",backgroundColor:"#1C1917",color:"#fff",fontWeight:800,fontSize:10}}>Save</button>
+        <button onClick={onClose} style={{...bSm,flex:1,padding:"8px 0",fontSize:10}}>Cancel</button>
+      </div>
+    </div></div>
+  );
+}
+
+/* ═══ FACILITY EDITOR ═══ */
+function FacEd({facs:initF,onSave,onClose}){
+  const[facs,setFacs]=useState(JSON.parse(JSON.stringify(initF)));
+  const[nn,setNn]=useState("");const[nd,setNd]=useState("");const[nni,setNni]=useState("");
+  const add=()=>{if(!nn||!nd||!nni)return;setFacs(p=>[...p,{id:`fac${Date.now()}`,name:nn,day:parseInt(nd)||0,night:parseInt(nni)||0}]);setNn("");setNd("");setNni("");};
+  const rm=i=>setFacs(p=>p.filter((_,idx)=>idx!==i));
+  const upd=(i,k,v)=>setFacs(p=>{const n=[...p];n[i]={...n[i],[k]:v};return n;});
+  return(
+    <div style={ov} onClick={onClose}><div style={{...md,maxWidth:460}} onClick={e=>e.stopPropagation()}>
+      <div style={{fontSize:12,fontWeight:800,marginBottom:10}}>Facilities</div>
+      {facs.map((f,i)=><div key={i} style={{display:"flex",gap:4,alignItems:"center",marginBottom:4}}>
+        <input value={f.name} onChange={e=>upd(i,"name",e.target.value)} style={{...inp,flex:2}}/>
+        <div style={{fontSize:8,color:"#78716C"}}>☀</div><input type="number" value={f.day} onChange={e=>upd(i,"day",parseInt(e.target.value)||0)} style={{...inp,width:60}}/>
+        <div style={{fontSize:8,color:"#78716C"}}>🌙</div><input type="number" value={f.night} onChange={e=>upd(i,"night",parseInt(e.target.value)||0)} style={{...inp,width:60}}/>
+        <button onClick={()=>rm(i)} style={{...bSm,color:"#DC2626",fontSize:8}}>×</button>
+      </div>)}
+      <div style={{display:"flex",gap:4,marginTop:8,alignItems:"center"}}>
+        <input value={nn} onChange={e=>setNn(e.target.value)} style={{...inp,flex:2}} placeholder="Name"/>
+        <input value={nd} onChange={e=>setNd(e.target.value)} style={{...inp,width:60}} placeholder="Day$"/>
+        <input value={nni} onChange={e=>setNni(e.target.value)} style={{...inp,width:60}} placeholder="Night$"/>
+        <button onClick={add} style={{...bSm,backgroundColor:"#1C1917",color:"#fff",fontWeight:700}}>+</button>
+      </div>
+      <div style={{display:"flex",gap:6,marginTop:12}}>
+        <button onClick={()=>{onSave(facs);onClose();}} style={{...bSm,flex:1,padding:"8px 0",backgroundColor:"#1C1917",color:"#fff",fontWeight:800,fontSize:10}}>Save</button>
+        <button onClick={onClose} style={{...bSm,flex:1,padding:"8px 0",fontSize:10}}>Cancel</button>
+      </div>
+    </div></div>
+  );
+}
+
+/* ═══ SCHOOL EDITOR ═══ */
+function SchEd({cals,onSave,onClose}){
+  const[act,setAct]=useState("juniper");
+  const[data,setData]=useState(JSON.parse(JSON.stringify(cals)));
+  const[schYear,setSchYear]=useState(2026);
+  const[editIdx,setEditIdx]=useState(null);
+  const[ns,setNs]=useState("");const[ne,setNe]=useState("");const[nl,setNl]=useState("");
+  const schFileRef=useRef(null);
+
+  const importSchCal=useCallback((e)=>{
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const entries=JSON.parse(ev.target.result);
+        if(!Array.isArray(entries)){alert('Expected JSON array');return;}
+        // Merge: remove duplicates by matching start date, then add all
+        setData(p=>{
+          const existing=p[act]||[];
+          const existingStarts=new Set(existing.map(r=>r.s));
+          const newEntries=entries.filter(r=>r.s&&!existingStarts.has(r.s));
+          return{...p,[act]:[...existing,...newEntries].sort((a,b)=>a.s.localeCompare(b.s))};
+        });
+        alert(`Imported ${entries.length} entries for ${act}.`);
+      }catch(err){alert('Invalid JSON file');}
+    };
+    reader.readAsText(file);
+    e.target.value='';
+  },[act]);
+
+  // Filter entries for displayed year
+  const yearEntries=(data[act]||[]).filter(r=>{
+    const ry=parseInt(r.s.slice(0,4));
+    return ry===schYear;
+  });
+  const yearIdxMap=(data[act]||[]).reduce((acc,r,i)=>{
+    const ry=parseInt(r.s.slice(0,4));
+    if(ry===schYear) acc.push(i);
+    return acc;
+  },[]);
+
+  const add=()=>{
+    if(!ns)return;
+    setData(p=>({...p,[act]:[...(p[act]||[]),{s:ns,e:ne||ns,l:nl||"Custom"}].sort((a,b)=>a.s.localeCompare(b.s))}));
+    setNs("");setNe("");setNl("");
+  };
+  const rm=globalIdx=>setData(p=>({...p,[act]:p[act].filter((_,i)=>i!==globalIdx)}));
+  const update=(globalIdx,field,val)=>setData(p=>{
+    const n=[...p[act]];n[globalIdx]={...n[globalIdx],[field]:val};
+    return{...p,[act]:n.sort((a,b)=>a.s.localeCompare(b.s))};
+  });
+  const copyTo=act=>{const o=act==="juniper"?"ocean":"juniper";setData(p=>({...p,[o]:JSON.parse(JSON.stringify(p[act]))}));};
+  const copyYear=(fromY,toY)=>{
+    const diff=toY-fromY;
+    const fromEntries=(data[act]||[]).filter(r=>parseInt(r.s.slice(0,4))===fromY);
+    const shifted=fromEntries.map(r=>({
+      ...r,
+      s:r.s.replace(String(fromY),String(toY)),
+      e:r.e.replace(String(fromY),String(toY)),
+    }));
+    // Remove existing toY entries, add shifted
+    setData(p=>{
+      const keep=(p[act]||[]).filter(r=>parseInt(r.s.slice(0,4))!==toY);
+      return{...p,[act]:[...keep,...shifted].sort((a,b)=>a.s.localeCompare(b.s))};
+    });
+  };
+
+  return(
+    <div style={ov} onClick={onClose}><div style={{...md,maxWidth:540,maxHeight:"85vh",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
+      <div style={{fontSize:12,fontWeight:800,marginBottom:4}}>School Calendars</div>
+      <div style={{fontSize:9,color:"#78716C",marginBottom:8}}>Non-school days by year. Weekends are automatic.</div>
+
+      {/* Child + year nav */}
+      <div style={{display:"flex",gap:4,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
+        {PEOPLE.filter(p=>p.child).map(ch=> <button key={ch.id} onClick={()=>setAct(ch.id)} style={{...bSm,backgroundColor:act===ch.id?"#1C1917":"#F5F5F4",color:act===ch.id?"#fff":"#1C1917",fontWeight:700}}>{ch.name}</button>)}
+        <div style={{display:"flex",alignItems:"center",gap:3,marginLeft:"auto"}}>
+          <button onClick={()=>setSchYear(y=>y-1)} style={bSm}>◀</button>
+          <span style={{fontSize:11,fontWeight:800,minWidth:40,textAlign:"center"}}>{schYear}</span>
+          <button onClick={()=>setSchYear(y=>y+1)} style={bSm}>▶</button>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{display:"flex",gap:4,marginBottom:8,flexWrap:"wrap"}}>
+        <button onClick={()=>copyTo(act)} style={{...bSm,fontSize:8,color:"#78716C"}}>Copy {act==="juniper"?"J→O":"O→J"} (all years)</button>
+        <button onClick={()=>copyYear(schYear-1,schYear)} style={{...bSm,fontSize:8,color:"#78716C"}}>Copy {schYear-1}→{schYear}</button>
+        <button onClick={()=>copyYear(schYear,schYear+1)} style={{...bSm,fontSize:8,color:"#78716C"}}>Copy {schYear}→{schYear+1}</button>
+        <button onClick={()=>schFileRef.current?.click()} style={{...bSm,fontSize:8,color:"#3B82F6",fontWeight:700}}>📂 Import JSON</button>
+        <input ref={schFileRef} type="file" accept=".json" onChange={importSchCal} style={{display:'none'}}/>
+      </div>
+
+      {/* Entries for selected year - inline editable */}
+      <div style={{flex:1,overflow:"auto",marginBottom:8}}>
+        {yearEntries.length===0&&<div style={{fontSize:9,color:"#A8A29E",fontStyle:"italic",padding:12,textAlign:"center"}}>No entries for {schYear}. Copy from another year or add below.</div>}
+        {yearEntries.map((r,li)=>{
+          const gi=yearIdxMap[li]; // global index
+          const isEd=editIdx===gi;
+          return <div key={gi} style={{padding:"4px 0",borderBottom:"1px solid #F5F5F4"}}>
+            {isEd?(
+              <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap"}}>
+                <button onClick={()=>{rm(gi);setEditIdx(null);}} style={{...bSm,color:"#DC2626",fontSize:8}}>×</button>
+                <input value={r.l} onChange={e=>update(gi,"l",e.target.value)} style={{...inp,flex:2,fontSize:9}}/>
+                <input type="date" value={r.s} onChange={e=>update(gi,"s",e.target.value)} style={{...inp,width:110,fontSize:9}}/>
+                <input type="date" value={r.e} onChange={e=>update(gi,"e",e.target.value)} style={{...inp,width:110,fontSize:9}}/>
+                <button onClick={()=>setEditIdx(null)} style={{...bSm,fontSize:8}}>Done</button>
+              </div>
+            ):(
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",fontSize:9}} onClick={()=>setEditIdx(gi)}>
+                <div><b>{r.l}</b><span style={{color:"#78716C",marginLeft:6}}>{r.s}{r.e!==r.s?` → ${r.e}`:""}</span></div>
+                <span style={{color:"#A8A29E",fontSize:8}}>edit</span>
+              </div>
+            )}
+          </div>;
+        })}
+      </div>
+
+      {/* Add new */}
+      <div style={{paddingTop:6,borderTop:"1px solid #E7E5E4"}}>
+        <div style={{fontSize:8,fontWeight:700,marginBottom:4}}>Add to {schYear}</div>
+        <div style={{display:"flex",gap:4}}>
+          <input type="date" value={ns} onChange={e=>setNs(e.target.value)} style={{...inp,flex:1}}/>
+          <input type="date" value={ne} onChange={e=>setNe(e.target.value)} style={{...inp,flex:1}}/>
+        </div>
+        <div style={{display:"flex",gap:4,marginTop:3}}>
+          <input value={nl} onChange={e=>setNl(e.target.value)} style={{...inp,flex:1}} placeholder="Label"/>
+          <button onClick={add} style={{...bSm,backgroundColor:"#1C1917",color:"#fff",fontWeight:700}}>+</button>
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:6,marginTop:10}}>
+        <button onClick={()=>{onSave(data);onClose();}} style={{...bSm,flex:1,padding:"8px 0",backgroundColor:"#1C1917",color:"#fff",fontWeight:800,fontSize:10}}>Save</button>
+        <button onClick={onClose} style={{...bSm,flex:1,padding:"8px 0",fontSize:10}}>Cancel</button>
+      </div>
+    </div></div>
+  );
+}
+
+/* ─── Primitives ─── */
+function TBtn({onClick,children,disabled,title}){return <button onClick={onClick} disabled={disabled} title={title} style={{border:"1px solid #D6D3D1",borderRadius:3,padding:"3px 8px",cursor:disabled?"default":"pointer",backgroundColor:"#fff",fontFamily:"inherit",fontSize:9,fontWeight:700,color:disabled?"#D6D3D1":"#1C1917",opacity:disabled?0.5:1}}>{children}</button>;}
+function Pill({children,bad,good}){return <div style={{fontSize:8,padding:"2px 7px",borderRadius:3,fontWeight:700,backgroundColor:bad?"#FEE2E2":good?"#DCFCE7":"#F5F5F4",color:bad?"#991B1B":good?"#166534":"#57534E"}}>{children}</div>;}
+function SH({children}){return <div style={{fontSize:8,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.08em",color:"#78716C",marginBottom:5}}>{children}</div>;}
+function Lab({children}){return <div style={{fontSize:7,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.06em",color:"#78716C",marginTop:8,marginBottom:2}}>{children}</div>;}
+function Leg({color,children,extra}){return <div style={{display:"flex",alignItems:"center",gap:3,fontSize:8,color:"#78716C"}}>{extra||<div style={{width:10,height:10,borderRadius:2,backgroundColor:color}}/>}{children}</div>;}
+function LegPick({color,label,onChange}){
+  return <label style={{display:"flex",alignItems:"center",gap:3,fontSize:8,color:"#78716C",cursor:"pointer"}}>
+    <div style={{width:14,height:14,borderRadius:2,position:"relative",overflow:"hidden",border:"1px solid "+color,backgroundColor:color+"cc"}}>
+      <input type="color" value={color} onChange={e=>onChange(e.target.value)}
+        style={{position:"absolute",top:-4,left:-4,width:22,height:22,border:"none",padding:0,cursor:"pointer",opacity:0}}/>
+    </div>
+    <span>{label}</span>
+  </label>;
+}
+
+const bSm={border:"none",borderRadius:3,padding:"4px 8px",cursor:"pointer",fontFamily:"inherit",fontSize:9,fontWeight:600,backgroundColor:"#F5F5F4",color:"#1C1917"};
+const sSm={padding:"3px 5px",border:"1px solid #E7E5E4",borderRadius:3,fontFamily:"inherit",fontSize:9,backgroundColor:"#fff"};
+const inp={width:"100%",padding:"5px 7px",border:"1px solid #E7E5E4",borderRadius:3,fontFamily:"inherit",fontSize:9,boxSizing:"border-box"};
+const ov={position:"fixed",inset:0,backgroundColor:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000};
+const md={backgroundColor:"#fff",borderRadius:8,padding:18,width:400,maxWidth:"92vw",boxShadow:"0 20px 60px rgba(0,0,0,0.2)",fontFamily:"'SF Mono','JetBrains Mono',monospace"};
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+<script>if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});</script>
+</body>
+</html>
