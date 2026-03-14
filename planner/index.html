@@ -566,8 +566,8 @@ function App(){
   const _vw=typeof window!=='undefined'?window.innerWidth:1200;
   const LBL_W=isMobile?34:100;      // month label column width
   const CELL=isMobile?Math.max(Math.floor((_vw-LBL_W-20)/37),7):22; // day cell size (px)
-  const CELL_GAP=isMobile?2:14;     // gap between individual day cells
-  const WEEK_GAP=isMobile?4:22;     // gap between week groups (larger separator)
+  const CELL_GAP=isMobile?2:2;      // gap between individual day cells
+  const WEEK_GAP=isMobile?4:8;     // gap between week groups (larger separator)
   const GRID_PAD=isMobile?8:24;     // horizontal padding around the year grid
   const ROW_GAP=3;                   // vertical gap between month rows
 
