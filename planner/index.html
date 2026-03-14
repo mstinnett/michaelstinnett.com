@@ -13,7 +13,8 @@
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" as="script">
 <style>
-  *{margin:0;padding:0;box-sizing:border-box;}html,body,#root{height:100%;}body{overflow:hidden;}
+  *{padding:0;box-sizing:border-box;user-select:none;}html,body,#root{height:100%;margin:0;}body{overflow:hidden;margin:0;}h1,h2,h3,h4,h5,h6,p,ul,ol,dl,figure,blockquote{margin:0;}
+  input,textarea,select{user-select:text;}
   #loader{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;background:#FAFAF9;}
   #loader span{font-size:13px;font-weight:600;color:#78716C;letter-spacing:-0.02em;}
   #loader .bar{width:120px;height:3px;background:#E7E5E4;border-radius:2px;overflow:hidden;}
@@ -561,10 +562,14 @@ function App(){
   },[setState]);
 
   /* ═══ RENDER ═══ */
+  /* ─── Grid spacing (edit these to adjust layout) ─── */
   const _vw=typeof window!=='undefined'?window.innerWidth:1200;
-  const LBL_W=isMobile?34:100;
-  const GAP=isMobile?2:4;
-  const CELL=isMobile?Math.max(Math.floor((_vw-LBL_W-20)/37),7):22;
+  const LBL_W=isMobile?34:100;      // month label column width
+  const CELL=isMobile?Math.max(Math.floor((_vw-LBL_W-20)/37),7):22; // day cell size (px)
+  const CELL_GAP=isMobile?2:14;     // gap between individual day cells
+  const WEEK_GAP=isMobile?4:22;     // gap between week groups (larger separator)
+  const GRID_PAD=isMobile?8:24;     // horizontal padding around the year grid
+  const ROW_GAP=3;                   // vertical gap between month rows
 
   const tapPlaceName=tapPlace?(tapPlace.type==='lib'?library.find(l=>l.id===tapPlace.libId)?.name||'Trip':`ML ${tapPlace.shift}`):'';
 
@@ -640,7 +645,7 @@ function App(){
         {viewMode==="year" && years.map(year=>{
           const children=PEOPLE.filter(p=>p.child);
           const STRIP_W=20;
-          const ROW_H=CELL+3; // each month row height including gap
+          const ROW_H=CELL+ROW_GAP;
 
           // Compute school year segments for this calendar year
           // Each segment: {startM, endM, labels:[{name,grade}], extendsUp, extendsDown}
@@ -661,7 +666,7 @@ function App(){
           if(fallLabels.length>0) segments.push({startM:8,endM:11,labels:fallLabels,extendsUp:false,extendsDown:true});
 
           return (
-          <div key={year} style={{padding:"0 12px",overflow:"visible"}}>
+          <div key={year} style={{padding:`0 ${GRID_PAD}px`,overflow:"visible"}}>
             {/* Year header */}
             <div style={{marginLeft:LBL_W,paddingTop:10,paddingBottom:4}}>
               <span style={{fontSize:14,fontWeight:900,color:"#1C1917"}}>{year}</span>
@@ -669,8 +674,8 @@ function App(){
             {/* DOW header */}
             <div style={{marginLeft:LBL_W,marginBottom:2,display:"flex"}}>
               {Array.from({length:Math.ceil(maxCols/7)},(_,wi)=>(
-                <div key={wi} style={{display:"flex",marginRight:GAP}}>
-                  {DOW_L.map((d,di)=><div key={di} style={{width:CELL,textAlign:"center",fontSize:isMobile?5:7,fontWeight:700,color:"#A8A29E"}}>{d}</div>)}
+                <div key={wi} style={{display:"flex",marginRight:WEEK_GAP}}>
+                  {DOW_L.map((d,di)=><div key={di} style={{width:CELL,marginLeft:CELL_GAP,textAlign:"center",fontSize:isMobile?5:7,fontWeight:700,color:"#A8A29E"}}>{d}</div>)}
                 </div>
               ))}
             </div>
@@ -681,7 +686,7 @@ function App(){
               {!isMobile&&segments.map((seg,si)=>{
                 const HEADER_H=50; // approx year+DOW header height for cross-year extension
                 const top=seg.startM*ROW_H - (seg.extendsUp?HEADER_H:0);
-                const bot=(seg.endM+1)*ROW_H - 3;
+                const bot=(seg.endM+1)*ROW_H - ROW_GAP;
                 const height=bot-top + (seg.extendsDown?HEADER_H:0);
                 const labelText=seg.labels.map(l=>`${l.name}:${l.grade}`).join(' ');
                 const rTop=seg.extendsUp?0:3;
@@ -704,7 +709,7 @@ function App(){
               const labels=tripLabels[`${year}-${mi}`]||[];
 
               return (
-                <div key={mi} style={{display:"flex",alignItems:"center",marginBottom:mi<11?3:0,position:"relative"}}>
+                <div key={mi} style={{display:"flex",alignItems:"center",marginBottom:mi<11?ROW_GAP:0,position:"relative"}}>
                   <div style={{width:LBL_W-4,textAlign:"right",paddingRight:4,flexShrink:0}}>
                     <span style={{fontSize:isMobile?7:9,fontWeight:800,letterSpacing:"0.03em",color:den.imp?"#DC2626":"#78716C"}}>
                       {MON[mi].toUpperCase().slice(0,3)}{den.imp&&" ⚠"}
@@ -716,8 +721,8 @@ function App(){
                       const cat=cats.find(c=>c.id===span.rt.lib.cat);
                       const weekGapsBefore=Math.floor(span.minCol/7);
                       const weekGapsEnd=Math.floor(span.maxCol/7);
-                      const left=span.minCol*CELL+weekGapsBefore*GAP;
-                      const right=(span.maxCol+1)*CELL+weekGapsEnd*GAP;
+                      const left=span.minCol*(CELL+CELL_GAP)+weekGapsBefore*(WEEK_GAP-CELL_GAP)+CELL_GAP;
+                      const right=(span.maxCol+1)*(CELL+CELL_GAP)+weekGapsEnd*(WEEK_GAP-CELL_GAP);
                       const w=right-left;
                       // Only show label if span is wide enough for ~4 chars
                       if(w < CELL*3) return null;
@@ -734,8 +739,8 @@ function App(){
                     {Array.from({length:maxCols},(_,ci)=>{
                       const cell=mg.cells.find(c=>c.col===ci);
                       const wIdx=Math.floor(ci/7),iwp=ci%7;
-                      const gB=iwp===0&&wIdx>0?GAP:0;
-                      if(!cell)return <div key={ci} style={{width:CELL,height:CELL,marginLeft:gB,flexShrink:0}}/>;
+                      const cellML=iwp===0&&wIdx>0?WEEK_GAP:CELL_GAP;
+                      if(!cell)return <div key={ci} style={{width:CELL,height:CELL,marginLeft:cellML,flexShrink:0}}/>;
 
                       const fList=fp[cell.str]||[];
                       const mlE=mlShifts.find(m=>m.date===cell.str);
@@ -805,9 +810,9 @@ function App(){
                           onDragStart={e=>{if(stk){const r=e.currentTarget.getBoundingClientRect();const yR=(e.clientY-r.top)/r.height;dSP(e,yR<=0.5?pri.plId:(sec?sec.plId:pri.plId));}else if(pri)dSP(e,pri.plId);}}
                           onDragOver={e=>dOC(e,cell.str)} onDrop={e=>dDrop(e,cell.str)} onDragEnd={dEnd}
                           onClick={()=>handleCellClick(cell.str)}
-                          style={{width:CELL,height:CELL,marginLeft:gB,flexShrink:0,borderRadius:2,position:"relative",
+                          style={{width:CELL,height:CELL,marginLeft:cellML,flexShrink:0,borderRadius:2,position:"relative",
                             background:split?'transparent':bg,border:bdr,cursor:canD?"grab":"pointer",
-                            boxSizing:"border-box",userSelect:"none",overflow:"hidden"}}>
+                            boxSizing:"border-box",overflow:"hidden"}}>
                           {split&&<>
                             <div style={{position:"absolute",top:0,left:0,right:0,height:"calc(50% - 1px)",background:topBg}}/>
                             <div style={{position:"absolute",top:"50%",left:0,right:0,height:2,backgroundColor:"#fff",zIndex:1}}/>
@@ -851,7 +856,7 @@ function App(){
           const weeks=allWeeks.filter(w=>{const k=w[0].str;if(seen.has(k))return false;seen.add(k);return true;});
 
           let lastYear=null,lastMonth=null;
-          return <div style={{padding:"8px 12px"}}>
+          return <div style={{padding:`8px ${GRID_PAD}px`}}>
             {/* DOW header */}
             <div style={{display:"flex",gap:2,marginLeft:60,marginBottom:4,position:"sticky",top:0,backgroundColor:"#FAFAF9",zIndex:10,paddingBottom:2}}>
               {DOW_L.map((d,i)=> <div key={i} style={{flex:1,textAlign:"center",fontSize:9,fontWeight:700,color:"#A8A29E"}}>{d}</div>)}
