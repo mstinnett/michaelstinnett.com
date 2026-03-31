@@ -1296,14 +1296,26 @@ function SchEd({cals,onSave,onClose}){
       try{
         const entries=JSON.parse(ev.target.result);
         if(!Array.isArray(entries)){alert('Expected JSON array');return;}
-        // Merge: remove duplicates by matching start date, then add all
+        const valid=entries.filter(r=>r.s);
+        if(valid.length===0){alert('No valid entries found (each entry needs an "s" start-date field).');return;}
+        // Merge: update entries with matching start date, add new ones
         setData(p=>{
           const existing=p[act]||[];
-          const existingStarts=new Set(existing.map(r=>r.s));
-          const newEntries=entries.filter(r=>r.s&&!existingStarts.has(r.s));
-          return{...p,[act]:[...existing,...newEntries].sort((a,b)=>a.s.localeCompare(b.s))};
+          const existingByStart=new Map(existing.map((r,i)=>[r.s,i]));
+          const merged=[...existing];
+          let added=0,updated=0;
+          for(const entry of valid){
+            if(existingByStart.has(entry.s)){
+              merged[existingByStart.get(entry.s)]={...entry};
+              updated++;
+            }else{
+              merged.push(entry);
+              added++;
+            }
+          }
+          return{...p,[act]:merged.sort((a,b)=>a.s.localeCompare(b.s))};
         });
-        alert(`Imported ${entries.length} entries for ${act}.`);
+        alert(`Imported ${valid.length} entries for ${act} (check matching year tab to view).`);
       }catch(err){alert('Invalid JSON file');}
     };
     reader.readAsText(file);
@@ -1329,8 +1341,12 @@ function SchEd({cals,onSave,onClose}){
   const rm=globalIdx=>setData(p=>({...p,[act]:p[act].filter((_,i)=>i!==globalIdx)}));
   const update=(globalIdx,field,val)=>setData(p=>{
     const n=[...p[act]];n[globalIdx]={...n[globalIdx],[field]:val};
-    return{...p,[act]:n.sort((a,b)=>a.s.localeCompare(b.s))};
+    return{...p,[act]:n};
   });
+  const finishEdit=()=>{
+    setData(p=>({...p,[act]:[...(p[act]||[])].sort((a,b)=>a.s.localeCompare(b.s))}));
+    setEditIdx(null);
+  };
   const copyTo=act=>{const o=act==="juniper"?"ocean":"juniper";setData(p=>({...p,[o]:JSON.parse(JSON.stringify(p[act]))}));};
   const copyYear=(fromY,toY)=>{
     const diff=toY-fromY;
@@ -1384,7 +1400,7 @@ function SchEd({cals,onSave,onClose}){
                 <input value={r.l} onChange={e=>update(gi,"l",e.target.value)} style={{...inp,flex:2,fontSize:9}}/>
                 <input type="date" value={r.s} onChange={e=>update(gi,"s",e.target.value)} style={{...inp,width:110,fontSize:9}}/>
                 <input type="date" value={r.e} onChange={e=>update(gi,"e",e.target.value)} style={{...inp,width:110,fontSize:9}}/>
-                <button onClick={()=>setEditIdx(null)} style={{...bSm,fontSize:8}}>Done</button>
+                <button onClick={finishEdit} style={{...bSm,fontSize:8}}>Done</button>
               </div>
             ):(
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",fontSize:9}} onClick={()=>setEditIdx(gi)}>
