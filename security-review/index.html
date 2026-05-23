@@ -1,207 +1,306 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Security Review — Michael Stinnett</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Security Review — Michael Stinnett</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+            rel="stylesheet"
+        />
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
 
-        :root {
-            --ink: #1a1a1a;
-            --gray: #3a3a3a;
-            --rule: #b0aaa0;
-        }
+            :root {
+                --ink: #1a1a1a;
+                --gray: #3a3a3a;
+                --rule: #b0aaa0;
+            }
 
-        html, body {
-            overflow-x: hidden;
-        }
+            html,
+            body {
+                overflow-x: hidden;
+            }
 
-        body {
-            font-family: 'EB Garamond', Georgia, serif;
-            background-color: #f5f5f5;
-            animation: colorChange 100s infinite;
-            color: var(--ink);
-            min-height: 100vh;
-            min-height: 100dvh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 3rem 2rem 4rem;
-            line-height: 1.6;
-        }
+            body {
+                font-family: "EB Garamond", Georgia, serif;
+                background-color: #f5f5f5;
+                animation: colorChange 100s infinite;
+                color: var(--ink);
+                min-height: 100vh;
+                min-height: 100dvh;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                padding: 3rem 2rem 4rem;
+                line-height: 1.6;
+            }
 
-        @keyframes colorChange {
-            0%   { background-color: #f5f5f5; }
-            18%  { background-color: #c0cce8; }
-            36%  { background-color: #d6d6d6; }
-            54%  { background-color: #c0dac0; }
-            72%  { background-color: #d6d6d6; }
-            90%  { background-color: #e7e0cb; }
-            100% { background-color: #f5f5f5; }
-        }
+            @keyframes colorChange {
+                0% {
+                    background-color: #f5f5f5;
+                }
+                18% {
+                    background-color: #c0cce8;
+                }
+                36% {
+                    background-color: #d6d6d6;
+                }
+                54% {
+                    background-color: #c0dac0;
+                }
+                72% {
+                    background-color: #d6d6d6;
+                }
+                90% {
+                    background-color: #e7e0cb;
+                }
+                100% {
+                    background-color: #f5f5f5;
+                }
+            }
 
-        .page {
-            max-width: 580px;
-            width: 100%;
-        }
+            .page {
+                max-width: 580px;
+                width: 100%;
+            }
 
-        .eyebrow {
-            font-style: italic;
-            font-size: 0.9rem;
-            color: var(--gray);
-            letter-spacing: 0.04em;
-            text-transform: lowercase;
-            margin-bottom: 2rem;
-        }
+            .eyebrow {
+                font-style: italic;
+                font-size: 0.9rem;
+                color: var(--gray);
+                letter-spacing: 0.04em;
+                text-transform: lowercase;
+                margin-bottom: 2rem;
+            }
 
-        .eyebrow a {
-            color: var(--gray);
-            text-decoration: none;
-            border-bottom: 1px solid var(--rule);
-            transition: color 0.2s ease, border-color 0.2s ease;
-        }
+            .eyebrow a {
+                color: var(--gray);
+                text-decoration: none;
+                border-bottom: 1px solid var(--rule);
+                transition:
+                    color 0.2s ease,
+                    border-color 0.2s ease;
+            }
 
-        .eyebrow a:hover {
-            color: var(--ink);
-            border-color: var(--ink);
-        }
+            .eyebrow a:hover {
+                color: var(--ink);
+                border-color: var(--ink);
+            }
 
-        h1 {
-            font-size: 2.5rem;
-            font-weight: 500;
-            letter-spacing: -0.01em;
-            margin-bottom: 0.5rem;
-            color: var(--ink);
-        }
+            h1 {
+                font-size: 2.5rem;
+                font-weight: 500;
+                letter-spacing: -0.01em;
+                margin-bottom: 0.5rem;
+                color: var(--ink);
+            }
 
-        .lede {
-            font-style: italic;
-            font-size: 1.2rem;
-            color: var(--gray);
-            letter-spacing: 0.01em;
-        }
+            .lede {
+                font-style: italic;
+                font-size: 1.2rem;
+                color: var(--gray);
+                letter-spacing: 0.01em;
+            }
 
-        hr {
-            border: none;
-            border-top: 1px solid var(--rule);
-            margin: 2rem 0;
-        }
+            hr {
+                border: none;
+                border-top: 1px solid var(--rule);
+                margin: 2rem 0;
+            }
 
-        p {
-            font-size: 1.1rem;
-            color: var(--gray);
-            margin-bottom: 1rem;
-        }
+            p {
+                font-size: 1.1rem;
+                color: var(--gray);
+                margin-bottom: 1rem;
+            }
 
-        h2 {
-            font-size: 1rem;
-            font-weight: 500;
-            color: var(--ink);
-            font-style: italic;
-            letter-spacing: 0.04em;
-            text-transform: lowercase;
-            margin-bottom: 1rem;
-        }
+            h2 {
+                font-size: 1rem;
+                font-weight: 500;
+                color: var(--ink);
+                font-style: italic;
+                letter-spacing: 0.04em;
+                text-transform: lowercase;
+                margin-bottom: 1rem;
+            }
 
-        h3 {
-            font-size: 1.3rem;
-            font-weight: 500;
-            color: var(--ink);
-            margin-top: 2rem;
-            margin-bottom: 0.5rem;
-        }
+            h3 {
+                font-size: 1.3rem;
+                font-weight: 500;
+                color: var(--ink);
+                margin-top: 2rem;
+                margin-bottom: 0.5rem;
+            }
 
-        h3:first-of-type {
-            margin-top: 0;
-        }
+            h3:first-of-type {
+                margin-top: 0;
+            }
 
-        .contact {
-            font-size: 1.05rem;
-            margin-top: 1rem;
-            color: var(--ink);
-        }
+            .contact {
+                font-size: 1.05rem;
+                margin-top: 1rem;
+                color: var(--ink);
+            }
 
-        .contact a {
-            color: var(--ink);
-            text-decoration: none;
-            border-bottom: 1px solid var(--rule);
-            transition: border-color 0.2s ease;
-        }
+            .contact a {
+                color: var(--ink);
+                text-decoration: none;
+                border-bottom: 1px solid var(--rule);
+                transition: border-color 0.2s ease;
+            }
 
-        .contact a:hover {
-            border-color: var(--ink);
-        }
-    </style>
-</head>
-<body>
-    <div class="page">
-        <p class="eyebrow"><a href="/">michaelstinnett.com</a></p>
+            .contact a:hover {
+                border-color: var(--ink);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="page">
+            <p class="eyebrow"><a href="/">michaelstinnett.com</a></p>
 
-        <h1>Security Review</h1>
-        <p class="lede">a methodology for taking stock of your personal digital security</p>
+            <h1>Security Review</h1>
+            <p class="lede">
+                a methodology for taking stock of your personal digital security
+            </p>
 
-        <hr>
+            <hr />
 
-        <p>Security and convenience pull in opposite directions. Every step you take to make an account harder for an attacker also makes it slightly harder for you. The tradeoff is personal — but most people are sitting much further toward convenience than they realize, and a small number of well-chosen moves shift the balance back without making daily life much harder.</p>
+            <p>
+                Security and convenience pull in opposite directions. Every step
+                you take to make an account harder for an attacker also makes it
+                slightly harder for you. The tradeoff is personal — but most
+                people are sitting much further toward convenience than they
+                realize, and a small number of well-chosen moves shift the
+                balance back without making daily life much harder.
+            </p>
 
-        <p>A Security Review walks through that balance with you. We look at the accounts, devices, and habits that make up your digital life, find the highest-leverage changes, and leave you with a clear picture of where you stand and how to keep it that way.</p>
+            <p>
+                A Security Review walks through that balance with you. With you
+                live on a video call, I help you look at you accounts, devices,
+                and habits that make up your digital life, find the
+                highest-leverage changes, and leave you with a clear picture of
+                where you stand and how to keep it that way.
+            </p>
 
-        <hr>
+            <hr />
 
-        <h2>what a review covers</h2>
+            <h2>what a review covers</h2>
 
-        <h3>The Balance</h3>
-        <p>Most people don't actually decide where they sit between convenience and security — the default just happens. We start by naming the tradeoff out loud, so every choice that follows is intentional.</p>
+            <h3>The Balance</h3>
+            <p>
+                Most people don't actually decide where they sit between
+                convenience and security — the default just happens. We start by
+                naming the tradeoff out loud, so every choice that follows is
+                intentional.
+            </p>
 
-        <h3>Password Practice</h3>
-        <p>Password reuse is the single biggest gap in most people's security, and the single easiest one to close. We set up a password manager, transfer your existing passwords into it, and practice the habit of letting the manager do the work — so the next time a company loses your data, the damage stops at that one account.</p>
+            <h3>Password Practice</h3>
+            <p>
+                Password reuse is the single biggest gap in most people's
+                security, and the single easiest one to close. We set up a
+                password manager, transfer your existing passwords into it, and
+                practice the habit of letting the manager do the work — so the
+                next time a company loses your data, the damage stops at that
+                one account.
+            </p>
 
-        <h3>Account Checkup</h3>
-        <p>We walk through the accounts that actually matter — email, banks and brokerages, your cell carrier, your Apple, Google, and Microsoft accounts, government services, primary shopping sites, health insurance, payment apps, cloud storage — and check each one's password, two-factor settings, and recovery path. Most reviews surface several accounts where the recovery leads somewhere you forgot about.</p>
+            <h3>Account Checkup</h3>
+            <p>
+                We walk through the accounts that actually matter — email, banks
+                and brokerages, your cell carrier, your Apple, Google, and
+                Microsoft accounts, government services, primary shopping sites,
+                health insurance, payment apps, cloud storage — and check each
+                one's password, two-factor settings, and recovery path. Most
+                reviews surface several accounts where the recovery leads
+                somewhere you forgot about.
+            </p>
 
-        <h3>Email Settings</h3>
-        <p>Email is the master key. Almost every other account recovers through it, which is why we look past the password and into the settings: forwarding rules, filters, connected devices, and one-time password history. That's where attackers hide after a takeover.</p>
+            <h3>Email Settings</h3>
+            <p>
+                Email is the master key. Almost every other account recovers
+                through it, which is why we look past the password and into the
+                settings: forwarding rules, filters, connected devices, and
+                one-time password history. That's where attackers hide after a
+                takeover.
+            </p>
 
-        <h3>Recovery Map</h3>
-        <p>A printed sheet that tells your future self how to get back in — which email each account recovers to, which phone number, and which questions you've answered. Locked out at the worst moment is a solvable problem if you wrote it down first.</p>
+            <h3>Recovery Map</h3>
+            <p>
+                A printed sheet that tells your future self how to get back in —
+                which email each account recovers to, which phone number, and
+                which questions you've answered. Locked out at the worst moment
+                is a solvable problem if you wrote it down first.
+            </p>
 
-        <h3>Device Security</h3>
-        <p>Operating system updates, login options, screen lock, and the small settings that decide whether a lost laptop is an inconvenience or a crisis.</p>
+            <h3>Device Security</h3>
+            <p>
+                Operating system updates, login options, screen lock, and the
+                small settings that decide whether a lost laptop is an
+                inconvenience or a crisis.
+            </p>
 
-        <h3>Banks and Brokerages</h3>
-        <p>Beyond passwords and two-factor, we turn on transaction alerts at every account — so the first sign of trouble is a notification on your phone, not a line item on next month's statement.</p>
+            <h3>Banks and Brokerages</h3>
+            <p>
+                Beyond passwords and two-factor, we turn on transaction alerts
+                at every account — so the first sign of trouble is a
+                notification on your phone, not a line item on next month's
+                statement.
+            </p>
 
-        <h3>Credit and ID Protection</h3>
-        <p>Accounts at all three credit bureaus, each with its own password and two-factor. Credit freezes placed at Equifax, Experian, and TransUnion, and the lesser-known reports (Chex, NCTUE) considered as well.</p>
+            <h3>Credit and ID Protection</h3>
+            <p>
+                Accounts at all three credit bureaus, each with its own password
+                and two-factor. Credit freezes placed at Equifax, Experian, and
+                TransUnion, and the lesser-known reports (Chex, NCTUE)
+                considered as well.
+            </p>
 
-        <h3>Scam Awareness</h3>
-        <p>The patterns behind modern scams: requests for two-factor codes from people claiming to be your bank, caller ID spoofing that makes a fraudster look like a real institution, sender addresses dressed up to look familiar. Knowing the shape of these attempts is most of the defense.</p>
+            <h3>Scam Awareness</h3>
+            <p>
+                The patterns behind modern scams: requests for two-factor codes
+                from people claiming to be your bank, caller ID spoofing that
+                makes a fraudster look like a real institution, sender addresses
+                dressed up to look familiar. Knowing the shape of these attempts
+                is most of the defense.
+            </p>
 
-        <h3>Household Bill Payment Manual</h3>
-        <p>A single document that lists each recurring household account — provider, contact number, registered email, phone, and address, whether autopay is enabled, and which card funds it (and when that card expires). The kind of reference a family member could pick up if they had to.</p>
+            <h3>Household Bill Payment Manual</h3>
+            <p>
+                A single document that lists each recurring household account —
+                provider, contact number, registered email, phone, and address,
+                whether autopay is enabled, and which card funds it (and when
+                that card expires). The kind of reference a family member could
+                pick up if they had to.
+            </p>
 
-        <hr>
+            <hr />
 
-        <p>In development. If a security review sounds useful — for yourself, an aging parent, or a household you're responsible for — get in touch.</p>
+            <p>
+                In development. If a security review sounds useful — for
+                yourself, an aging parent, or a household you're responsible for
+                — get in touch.
+            </p>
 
-        <p class="contact">
-            <a href="#" id="email-link">mail@michaelstinnett.com</a>
-        </p>
-    </div>
+            <p class="contact">
+                <a href="#" id="email-link">mail@michaelstinnett.com</a>
+            </p>
+        </div>
 
-    <script>
-        document.getElementById('email-link').addEventListener('click', function(e) {
-            e.preventDefault();
-            window.location.href = 'mailto:' + 'mail' + '@' + 'michaelstinnett.com';
-        });
-    </script>
-</body>
+        <script>
+            document
+                .getElementById("email-link")
+                .addEventListener("click", function (e) {
+                    e.preventDefault();
+                    window.location.href =
+                        "mailto:" + "mail" + "@" + "michaelstinnett.com";
+                });
+        </script>
+    </body>
 </html>
