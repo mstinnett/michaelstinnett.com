@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Michael Stinnett</title>
+    <title>Security Review — Michael Stinnett</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
@@ -49,27 +49,44 @@
             100% { background-color: #f5f5f5; }
         }
 
-        .card {
-            max-width: 420px;
+        .page {
+            max-width: 520px;
             width: 100%;
         }
 
-        .name {
-            font-size: 2.25rem;
-            font-weight: 500;
-            letter-spacing: -0.01em;
+        .eyebrow {
+            font-style: italic;
+            font-size: 0.9rem;
+            color: var(--gray);
+            letter-spacing: 0.04em;
+            text-transform: lowercase;
             margin-bottom: 0.5rem;
         }
 
-        .title {
+        .eyebrow a {
+            color: var(--gray);
+            text-decoration: none;
+            border-bottom: 1px solid var(--rule);
+            transition: color 0.2s ease, border-color 0.2s ease;
+        }
+
+        .eyebrow a:hover {
+            color: var(--ink);
+            border-color: var(--ink);
+        }
+
+        h1 {
+            font-size: 2.25rem;
+            font-weight: 500;
+            letter-spacing: -0.01em;
+            margin-bottom: 0.4rem;
+        }
+
+        .lede {
             font-style: italic;
             font-size: 1.15rem;
             color: var(--gray);
             letter-spacing: 0.01em;
-        }
-
-        .title + .title {
-            margin-top: 0.1rem;
         }
 
         hr {
@@ -78,73 +95,20 @@
             margin: 1.5rem 0;
         }
 
-        .feature {
-            margin-bottom: 1.25rem;
+        p {
+            font-size: 1.05rem;
+            margin-bottom: 1rem;
         }
 
-        .feature-label {
+        .status {
             font-style: italic;
-            font-size: 0.9rem;
             color: var(--gray);
-            letter-spacing: 0.04em;
-            text-transform: lowercase;
-            margin-bottom: 0.25rem;
-        }
-
-        .feature-title {
-            font-size: 1.25rem;
-            font-weight: 500;
-            color: var(--ink);
-        }
-
-        .feature-title a {
-            color: var(--ink);
-            text-decoration: none;
-            border-bottom: 1px solid var(--rule);
-            transition: border-color 0.2s ease;
-        }
-
-        .feature-title a:hover {
-            border-color: var(--ink);
-        }
-
-        .feature-desc {
-            font-style: italic;
             font-size: 1rem;
-            color: var(--gray);
-            margin-top: 0.15rem;
-        }
-
-        .links {
-            font-size: 1rem;
-            color: var(--gray);
-        }
-
-        .links a {
-            color: var(--gray);
-            text-decoration: none;
-            border-bottom: 1px solid var(--rule);
-            transition: color 0.2s ease, border-color 0.2s ease;
-        }
-
-        .links a:hover {
-            color: var(--ink);
-            border-color: var(--ink);
-        }
-
-        .links .pending {
-            color: var(--gray);
-            border-bottom: 1px dotted var(--rule);
-        }
-
-        .links .separator {
-            color: var(--rule);
-            margin: 0 0.4rem;
         }
 
         .contact {
             font-size: 1rem;
-            margin-top: 0.5rem;
+            margin-top: 1.5rem;
         }
 
         .contact a {
@@ -157,41 +121,26 @@
         .contact a:hover {
             border-color: var(--ink);
         }
-
-        .location {
-            font-size: 0.95rem;
-            color: var(--gray);
-            margin-top: 1.5rem;
-        }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1 class="name">Michael Stinnett</h1>
-        <p class="title">professional amateur</p>
-        <p class="title">architect</p>
+    <div class="page">
+        <p class="eyebrow"><a href="/">michaelstinnett.com</a></p>
+
+        <h1>Security Review</h1>
+        <p class="lede">a methodology for taking stock of your personal digital security</p>
 
         <hr>
 
-        <div class="feature">
-            <p class="feature-label">currently developing</p>
-            <p class="feature-title"><a href="/security-review/">Security Review</a></p>
-            <p class="feature-desc">a methodology for taking stock of your personal digital security</p>
-        </div>
+        <p>A Security Review is a structured walkthrough of the accounts, devices, and habits that make up your digital life — finding the places where a small change in convenience buys a meaningful change in safety.</p>
 
-        <p class="links">
-            <a href="https://architecture.tools">architecture.tools</a>
-            <span class="separator">·</span>
-            <a href="https://adequate.design/reviews">adequate.design / reviews</a>
-            <span class="separator">·</span>
-            <span class="pending">DocCheck (forthcoming)</span>
-        </p>
+        <p>The review covers password practice, two-factor authentication, email and account recovery, device security, banking and credit, scam awareness, and the household paperwork that holds it all together.</p>
+
+        <p class="status">In development. If you'd like to talk about it, get in touch.</p>
 
         <p class="contact">
             <a href="#" id="email-link">mail@michaelstinnett.com</a>
         </p>
-
-        <p class="location">Boston</p>
     </div>
 
     <script>
