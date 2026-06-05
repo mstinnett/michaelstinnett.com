@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>The Adversarial LLM Duel — Michael Stinnett</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+            rel="stylesheet"
+        />
+        <script>
+            (function () {
+                const colors = [
+                    "#f5f5f5",
+                    "#c0cce8",
+                    "#d6d6d6",
+                    "#c0dac0",
+                    "#e7e0cb",
+                ];
+                const pick =
+                    colors[Math.floor(Math.random() * colors.length)];
+                document.documentElement.style.setProperty(
+                    "--page-bg",
+                    pick,
+                );
+            })();
+        </script>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            :root {
+                --ink: #1a1a1a;
+                --gray: #3a3a3a;
+                --rule: #b0aaa0;
+            }
+
+            html,
+            body {
+                overflow-x: hidden;
+            }
+
+            body {
+                font-family:
+                    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                    sans-serif;
+                background-color: var(--page-bg, #f5f5f5);
+                color: var(--ink);
+                min-height: 100vh;
+                min-height: 100dvh;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                padding: 3rem 2rem 4rem;
+                line-height: 1.6;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+            }
+
+            .page {
+                max-width: 560px;
+                width: 100%;
+            }
+
+            .eyebrow {
+                font-size: 0.8rem;
+                color: var(--gray);
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                font-weight: 500;
+                margin-bottom: 2rem;
+            }
+
+            .eyebrow a {
+                color: var(--gray);
+                text-decoration: none;
+                border-bottom: 1px solid var(--rule);
+                transition:
+                    color 0.2s ease,
+                    border-color 0.2s ease;
+            }
+
+            .eyebrow a:hover {
+                color: var(--ink);
+                border-color: var(--ink);
+            }
+
+            h1 {
+                font-size: 2.25rem;
+                font-weight: 600;
+                letter-spacing: -0.025em;
+                margin-bottom: 0.5rem;
+                color: var(--ink);
+            }
+
+            hr {
+                border: none;
+                border-top: 1px solid var(--rule);
+                margin: 2rem 0;
+            }
+
+            p {
+                font-size: 1rem;
+                color: var(--gray);
+                margin-bottom: 1rem;
+            }
+
+            p a {
+                color: var(--ink);
+                text-decoration: none;
+                border-bottom: 1px solid var(--rule);
+                transition: border-color 0.2s ease;
+            }
+
+            p a:hover {
+                border-color: var(--ink);
+            }
+
+            .links a {
+                word-break: break-all;
+            }
+
+            .contact {
+                font-size: 1rem;
+                margin-top: 1rem;
+                color: var(--ink);
+            }
+
+            .contact a {
+                color: var(--ink);
+                text-decoration: none;
+                border-bottom: 1px solid var(--rule);
+                transition: border-color 0.2s ease;
+            }
+
+            .contact a:hover {
+                border-color: var(--ink);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="page">
+            <p class="eyebrow"><a href="/">michaelstinnett.com</a></p>
+
+            <h1>The Adversarial LLM Duel</h1>
+
+            <hr />
+
+            <p>
+                I have been trying to build a document review software,
+                DocCheck, using LLMs. This is to streamline my work tools and
+                make them cross platform. I am a licensed architect and
+                professional reviewer - not a programmer. So LLMs are on the
+                technical task. I've encountered all the classic problems of
+                LLM-led development that make software developers less nervous
+                about their future employment. But this software would not exist
+                without LLMs - the market is too small (so far it's 1, though I
+                do want to make it a product eventually).
+            </p>
+
+            <hr />
+
+            <p>
+                The most successful bit of LLM wrangling I have done is the
+                adversarial LLM duel. This technique extends the line of
+                thinking in Du et al.'s paper titled
+                <em
+                    >Improving Factuality and Reasoning in Language Models
+                    through Multiagent Debate</em
+                >.
+            </p>
+
+            <p>
+                One LLM, in my use it's Claude Opus, drafts a technical solution
+                to a problem that has been sliced and handed to it. Then
+                another, in my usage Codex, drafts a solution independently.
+                They each hand their solutions to each other and comment on the
+                efficacy of the other LLM's solution. Then both solutions and
+                critiques - four total documents - go to a new instance that
+                synthesizes a response.
+            </p>
+
+            <p>
+                This neutral referee is also a classifier that finds "values"
+                calls and surfaces them for me to decide in human-in-the-loop
+                interactions, while the technical decisions are kept within the
+                purview of a future LLM implementer. The referee idea is found
+                in Irving et al.'s <em>AI safety via debate</em>.
+            </p>
+
+            <p>
+                I have found this system does not need multiple iterations to be
+                effective. Solutions converge quickly and the use of two LLMs
+                greatly increases the number of mistakes caught in review. In
+                addition, having the referee able to push items back to the
+                queue or raise to the human offers escape hatches for instances
+                when the models do not converge.
+            </p>
+
+            <p>Posted in case others find it useful.</p>
+
+            <hr />
+
+            <p class="links">
+                <a href="https://arxiv.org/abs/2305.14325"
+                    >https://arxiv.org/abs/2305.14325</a
+                ><br />
+                <a href="https://arxiv.org/abs/1805.00899"
+                    >https://arxiv.org/abs/1805.00899</a
+                >
+            </p>
+
+            <hr />
+
+            <p class="contact">
+                <a href="#" id="email-link">mail@michaelstinnett.com</a>
+            </p>
+        </div>
+
+        <script>
+            document
+                .getElementById("email-link")
+                .addEventListener("click", function (e) {
+                    e.preventDefault();
+                    window.location.href =
+                        "mailto:" + "mail" + "@" + "michaelstinnett.com";
+                });
+        </script>
+    </body>
+</html>
