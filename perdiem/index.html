@@ -472,7 +472,10 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
   const [types,setTypes]=useState({});
   const [open,setOpen]=useState(null);
   const [creating,setCreating]=useState(null);
+  const [drawer,setDrawer]=useState(true);
+  const [showOut,setShowOut]=useState(false);
   const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
+  const footprint=useFootprint(state);
   const {weeks,windows,qInfo,committed,remaining}=useMemo(
     ()=>buildWindows(state,monthIdx,types,tsp),[state,monthIdx,types,tsp]);
   const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
@@ -492,45 +495,59 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
   },0);
 
   return <div style={{height:"100%",overflow:"auto"}}>
-    <div style={{maxWidth:920,margin:"0 auto",padding:"14px 16px 60px"}}>
-      {/* month nav */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-        <Btn small onClick={()=>setMonthIdx((monthIdx+11)%12)}>← {MON[(monthIdx+11)%12]}</Btn>
-        <div style={{textAlign:"center"}}>
-          <div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} {YEAR}</div>
-          <div style={{fontSize:9,color:C.gray,marginTop:1}}>the “where” · windows glow by fit, never ranked</div>
+    <div style={{maxWidth:980,margin:"0 auto",padding:"12px 16px 60px"}}>
+
+      {/* ── FACTORS DRAWER (top) ── */}
+      <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:"#FCFBFA",marginBottom:12,overflow:"hidden"}}>
+        <div onClick={()=>setDrawer(d=>!d)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",cursor:"pointer"}}>
+          <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Factors</span>
+          <span style={{fontSize:9,color:C.mute}}>{MONL[monthIdx]}: pace ~{qInfo.quota.value} · {committed} committed · {fmtK(cool.onCurveProjection$)} on pace{!cool.feasible&&" · ⚠ won’t cool"}</span>
+          <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{drawer?"▾ hide":"▸ show"}</span>
         </div>
-        <Btn small onClick={()=>setMonthIdx((monthIdx+1)%12)}>{MON[(monthIdx+1)%12]} →</Btn>
+        {drawer&&<div style={{padding:"0 12px 12px"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div style={{padding:"11px 13px",borderRadius:7,border:`1px solid ${C.line}`,background:"#fff"}}>
+              <div style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase",marginBottom:6}}>Pace suggests · {MON[monthIdx]}</div>
+              <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                <span style={{fontSize:22,fontWeight:800}}>~<Num e={qInfo.quota}/></span>
+                <span style={{fontSize:10,color:C.gray}}>shifts this month</span>
+              </div>
+              <div style={{marginTop:9}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.gray,marginBottom:3}}>
+                  <span>{committed} committed · {remaining>0?remaining+" to go":"quota met"}</span>
+                  <span>{fmt$(monthBooked$)} booked</span>
+                </div>
+                <div style={{height:7,background:C.line2,borderRadius:4,overflow:"hidden",display:"flex"}}>
+                  <div style={{width:Math.min(100,committed/Math.max(1,qInfo.quota.value)*100)+"%",background:C.ink}}/>
+                </div>
+                <div style={{fontSize:8,color:C.mute,marginTop:4}}>soft readout — a cap is never enforced</div>
+              </div>
+            </div>
+            <CoolingBar cool={cool} compact/>
+          </div>
+        </div>}
       </div>
 
-      {/* quota + cooling + running readouts */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
-        <div style={{padding:"12px 14px",borderRadius:7,border:`1px solid ${C.line}`,background:"#fff"}}>
-          <div style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase",marginBottom:6}}>Pace suggests</div>
-          <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-            <span style={{fontSize:24,fontWeight:800}}>~<Num e={qInfo.quota}/></span>
-            <span style={{fontSize:10,color:C.gray}}>shifts this month</span>
-          </div>
-          <div style={{marginTop:9}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.gray,marginBottom:3}}>
-              <span>{committed} committed · {remaining>0?remaining+" to go":"quota met"}</span>
-              <span>{fmt$(monthBooked$)} booked</span>
-            </div>
-            <div style={{height:7,background:C.line2,borderRadius:4,overflow:"hidden",display:"flex"}}>
-              <div style={{width:Math.min(100,committed/Math.max(1,qInfo.quota.value)*100)+"%",background:C.ink}}/>
-            </div>
-            <div style={{fontSize:8,color:C.mute,marginTop:4}}>soft readout — a cap is never enforced</div>
-          </div>
-        </div>
-        <CoolingBar cool={cool} compact/>
+      {/* ── YEAR (middle) — the footprint + month selector ── */}
+      <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.01em"}}>Year {YEAR}</span>
+        <span style={{fontSize:9,color:C.gray}}>footprint · tap a month to load its windows below</span>
+        <label style={{marginLeft:"auto",fontSize:9,color:C.gray,display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer"}}>
+          <input type="checkbox" checked={showOut} onChange={e=>setShowOut(e.target.checked)}/>school-out</label>
       </div>
+      <YearStrip footprint={footprint} selected={monthIdx} onSelect={setMonthIdx} showOut={showOut}/>
+      <FootLegend/>
 
-      {/* legend */}
-      <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:8.5,color:C.mute,margin:"4px 2px 10px"}}>
+      {/* ── MONTH WINDOW LIST (bottom) ── */}
+      <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"22px 2px 8px",flexWrap:"wrap"}}>
+        <span style={{fontSize:13,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} windows</span>
+        <span style={{fontSize:9,color:C.gray}}>the “where” · glow by fit, never ranked</span>
+        <span style={{marginLeft:"auto",fontSize:8,color:C.est,fontStyle:"italic"}}>~amber = estimate</span>
+      </div>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:8.5,color:C.mute,margin:"0 2px 10px"}}>
         <span>glow = brightness:</span>
         {BUCKETS.map(b=><span key={b} style={{display:"inline-flex",alignItems:"center",gap:4}}>
           <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{b}</span>)}
-        <span style={{marginLeft:"auto",color:C.est,fontStyle:"italic"}}>~amber = estimate</span>
       </div>
 
       {/* windows, grouped by week — chronological/structural order only (Inv 3) */}
@@ -1003,11 +1020,9 @@ function monthGrid(y,m){
   const cells=[];for(let i=0;i<wk*7;i++){const dn=i-f+1;cells.push(dn>=1&&dn<=n?new Date(y,m,dn):null);}
   return {cells,totalCols:wk*7};
 }
-function YearView({state,tsp}){
-  const [showOut,setShowOut]=useState(false);
-  const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
-  // index the footprint by day
-  const {byDay,famBy,lockBy,outBy,perMonth}=useMemo(()=>{
+function useFootprint(state){
+  return useMemo(()=>{
+    const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
     const byDay={},famBy={},lockBy={},outBy={},perMonth={};
     for(const r of state.requests){
       const s=siteById[r.siteId];if(!s)continue;
@@ -1035,76 +1050,67 @@ function YearView({state,tsp}){
       perMonth[m]={n,$};}
     return {byDay,famBy,lockBy,outBy,perMonth};
   },[state]);
+}
 
-  return <div style={{height:"100%",overflow:"auto"}}>
-    <div style={{maxWidth:980,margin:"0 auto",padding:"14px 16px 60px"}}>
-      <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
-        <div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Year {YEAR} <span style={{fontSize:10,fontWeight:600,color:C.mute}}>· the footprint / home base</span></div>
-        <label style={{marginLeft:"auto",fontSize:9,color:C.gray,display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer"}}>
-          <input type="checkbox" checked={showOut} onChange={e=>setShowOut(e.target.checked)}/>school-out</label>
+/* by-row year strip — structural spine + month selector. Click a row to load its windows. */
+function YearStrip({footprint,selected,onSelect,showOut}){
+  const {byDay,famBy,lockBy,outBy,perMonth}=footprint;
+  const CELL=15,CG=2,WG=7,LBL=66,RG=3;
+  const grids=MON.map((_,m)=>monthGrid(YEAR,m));
+  const maxCols=Math.max(...grids.map(g=>g.totalCols));
+  const ml=ci=>(ci%7===0&&ci>0)?WG:(ci===0?0:CG);
+  return <div style={{overflowX:"auto",border:`1px solid ${C.line}`,borderRadius:8,background:"#fff",padding:"10px 12px"}}>
+    <div style={{minWidth:LBL+maxCols*(CELL+CG)+(maxCols/7)*WG}}>
+      <div style={{display:"flex",marginBottom:4}}>
+        <div style={{width:LBL,flexShrink:0}}/>
+        {Array.from({length:maxCols},(_,ci)=>
+          <div key={ci} style={{width:CELL,marginLeft:ml(ci),textAlign:"center",fontSize:6.5,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
       </div>
-      <div style={{fontSize:9.5,color:C.gray,marginBottom:12}}>Confirmed Requests harden into placements here — the planner owns trips, days-out & pace (§7).</div>
-      {/* legend */}
-      <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",fontSize:8.5,color:C.mute,marginBottom:12}}>
-        <LegDot bg={SHIFT_COL.day}>day · confirmed</LegDot>
-        <LegDot bg={SHIFT_COL.night}>night · confirmed</LegDot>
-        <LegDot ring={C.blue}>pending</LegDot>
-        <LegDot dotted>smeared candidate</LegDot>
-        <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:LOC_TINT.santa_fe,border:`1px solid ${C.line}`}}/>family location</span>
-        <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
-      </div>
-      {(()=>{
-        const CELL=15,CG=2,WG=7,LBL=66,RG=4;
-        const grids=MON.map((_,m)=>monthGrid(YEAR,m));
-        const maxCols=Math.max(...grids.map(g=>g.totalCols));
-        const ml=ci=>(ci%7===0&&ci>0)?WG:(ci===0?0:CG);
-        return <div style={{overflowX:"auto",border:`1px solid ${C.line}`,borderRadius:8,background:"#fff",padding:"12px 14px"}}>
-          <div style={{minWidth:LBL+maxCols*(CELL+CG)+(maxCols/7)*WG}}>
-            {/* DOW header — repeated per week, weekday-aligned across all months */}
-            <div style={{display:"flex",marginBottom:4}}>
-              <div style={{width:LBL,flexShrink:0}}/>
-              {Array.from({length:maxCols},(_,ci)=>
-                <div key={ci} style={{width:CELL,marginLeft:ml(ci),textAlign:"center",fontSize:6.5,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
-            </div>
-            {/* one row per month */}
-            {MON.map((mn,m)=>{
-              const g=grids[m],pm=perMonth[m],isNow=m===TODAY.getMonth();
-              return <div key={m} style={{display:"flex",alignItems:"center",marginBottom:m<11?RG:0}}>
-                <div style={{width:LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
-                  <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.03em",color:isNow?C.ink:C.gray}}>{mn.toUpperCase()}</div>
-                  <div style={{fontSize:7,color:pm.n?C.ink:C.mute}}>{pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
-                </div>
-                <div style={{display:"flex"}}>
-                  {Array.from({length:maxCols},(_,ci)=>{
-                    const d=ci<g.cells.length?g.cells[ci]:null;
-                    if(!d)return <div key={ci} style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0}}/>;
-                    const str=ds(d),we=d.getDay()===0||d.getDay()===6;
-                    const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],out=outBy[str];
-                    const conf=marks.find(x=>x.state==="confirmed");
-                    const pend=marks.find(x=>x.state==="submitted"||x.state==="draft");
-                    const smear=marks.find(x=>x.state==="smeared");
-                    let bg=fam?LOC_TINT[fam]:(we?"#FBFAF9":"#fff");
-                    if(showOut&&out&&!fam)bg="#F4F1EB";
-                    let border=`1px solid ${C.line2}`,inner=null;
-                    if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
-                    else if(pend){border=`1.5px solid ${C.blue}`;}
-                    else if(smear){inner="dotted";}
-                    return <div key={ci} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${pend?` · pending ${pend.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}`}
-                      style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box"}}>
-                      {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
-                      {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",
-                        background:lk.kind==="hard"?C.ink:"#fff",border:`1.5px solid ${C.ink}`}}/>}
-                    </div>;
-                  })}
-                </div>
+      {MON.map((mn,m)=>{
+        const g=grids[m],pm=perMonth[m],isNow=m===TODAY.getMonth(),sel=m===selected;
+        return <div key={m} onClick={()=>onSelect(m)} style={{display:"flex",alignItems:"center",marginBottom:m<11?RG:0,
+          cursor:"pointer",borderRadius:5,background:sel?"#FBF6EA":"transparent",padding:"1px 0",
+          boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
+          <div style={{width:LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
+            <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{mn.toUpperCase()}{sel&&" ◂"}</div>
+            <div style={{fontSize:7,color:pm.n?C.ink:C.mute}}>{pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
+          </div>
+          <div style={{display:"flex"}}>
+            {Array.from({length:maxCols},(_,ci)=>{
+              const d=ci<g.cells.length?g.cells[ci]:null;
+              if(!d)return <div key={ci} style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0}}/>;
+              const str=ds(d),we=d.getDay()===0||d.getDay()===6;
+              const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],out=outBy[str];
+              const conf=marks.find(x=>x.state==="confirmed");
+              const pend=marks.find(x=>x.state==="submitted"||x.state==="draft");
+              const smear=marks.find(x=>x.state==="smeared");
+              let bg=fam?LOC_TINT[fam]:(we?"#FBFAF9":"#fff");
+              if(showOut&&out&&!fam)bg="#F4F1EB";
+              let border=`1px solid ${C.line2}`,inner=null;
+              if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
+              else if(pend){border=`1.5px solid ${C.blue}`;}
+              else if(smear){inner="dotted";}
+              return <div key={ci} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${pend?` · pending ${pend.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}`}
+                style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box"}}>
+                {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
+                {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",
+                  background:lk.kind==="hard"?C.ink:"#fff",border:`1.5px solid ${C.ink}`}}/>}
               </div>;
             })}
           </div>
         </div>;
-      })()}
+      })}
     </div>
   </div>;
 }
+const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",fontSize:8,color:C.mute,margin:"6px 2px 0"}}>
+  <LegDot bg={SHIFT_COL.day}>day confirmed</LegDot>
+  <LegDot bg={SHIFT_COL.night}>night confirmed</LegDot>
+  <LegDot ring={C.blue}>pending</LegDot>
+  <LegDot dotted>smeared</LegDot>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:LOC_TINT.santa_fe,border:`1px solid ${C.line}`}}/>family</span>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
+</div>;
 const LegDot=({bg,ring,dotted,children})=> <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
   <span style={{width:12,height:12,borderRadius:3,background:bg||"#fff",
     border:ring?`1.5px solid ${ring}`:(dotted?`1px dotted ${C.est}`:(bg?"none":`1px solid ${C.line}`))}}/>{children}</span>;
@@ -1130,7 +1136,7 @@ function App(){
     rd.onload=ev=>{try{setState(JSON.parse(ev.target.result));}catch(err){alert("Invalid file");}};rd.readAsText(f);};
   const reset=()=>{if(confirm("Reset to seed data? This discards your requests and dials."))setState(seedState());};
 
-  const tabs=[["balance","Balance"],["board","Board"],["gantt","Gantt"],["year","Year"]];
+  const tabs=[["balance","Balance"],["board","Board"],["gantt","Gantt"]];
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
     {/* header */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
@@ -1162,7 +1168,6 @@ function App(){
       {surface==="balance"&&<Balance state={state} setState={setState} tsp={tsp}/>}
       {surface==="board"&&<Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp}/>}
       {surface==="gantt"&&<Gantt state={state} setState={setState} tsp={tsp}/>}
-      {surface==="year"&&<YearView state={state} tsp={tsp}/>}
     </div>
     {modal==="sites"&&<SiteWizard state={state} setState={setState} onClose={()=>setModal(null)}/>}
     {modal==="schedule"&&<ScheduleEditor state={state} setState={setState} onClose={()=>setModal(null)}/>}
