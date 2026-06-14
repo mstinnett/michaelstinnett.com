@@ -507,6 +507,56 @@ function WhyBright({w}){
 }
 
 /* ════════ BOARD (§6.2) — primary surface, one month ════════ */
+/* ════════ PACE CURVE — drag each month up/down to shape the year ════════
+   Drag sets a month's absolute target dollars; the annual figure is the live
+   sum, the average is annual/12. Stored faithfully as per-month shareOverride
+   (normalized) with annualTarget = the sum, so §4.4's share-of-annual holds. */
+function PaceCurve({pace,setPace}){
+  const PPX=340,H=96;                                  // $ per drag-pixel, bar area height
+  const dollars=curveShares(pace).map(s=>s*pace.annualTarget);
+  const annual=dollars.reduce((a,x)=>a+x,0);
+  const avg=annual/12;
+  const setMonthDollars=(m,val)=>{
+    const cur=dollars.slice();cur[m]=Math.max(0,Math.round(val/100)*100);
+    const tot=cur.reduce((a,x)=>a+x,0);
+    const curve=pace.curve.map((mm,i)=>({...mm,shareOverride:tot>0?cur[i]/tot:1/12}));
+    setPace({annualTarget:Math.round(tot),curve});
+  };
+  const down=(e,m)=>{
+    e.preventDefault();const el=e.currentTarget;try{el.setPointerCapture(e.pointerId);}catch(_){}
+    const sY=e.clientY,sV=dollars[m];
+    const mv=ev=>setMonthDollars(m,sV+(sY-ev.clientY)*PPX);
+    const up=()=>{el.removeEventListener("pointermove",mv);el.removeEventListener("pointerup",up);el.removeEventListener("pointercancel",up);};
+    el.addEventListener("pointermove",mv);el.addEventListener("pointerup",up);el.addEventListener("pointercancel",up);
+  };
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+      <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase"}}>Pace curve <span style={{fontWeight:600,textTransform:"none",color:C.mute}}>· drag months</span></div>
+      <div style={{textAlign:"right",fontSize:9,color:C.gray}}>
+        avg <b style={{color:C.ink,fontSize:11}}>{fmt$(avg)}</b>/mo · annual <b style={{color:C.ink,fontSize:11}}>{fmtK(annual)}</b>
+      </div>
+    </div>
+    <div style={{position:"relative",display:"flex",alignItems:"flex-end",gap:2,height:H}}>
+      {/* average reference line */}
+      <div style={{position:"absolute",left:0,right:0,bottom:Math.min(H,avg/PPX),borderTop:`1px dashed ${C.est}`,zIndex:2,pointerEvents:"none"}}>
+        <span style={{position:"absolute",right:0,top:-9,fontSize:6.5,color:C.est}}>avg</span>
+      </div>
+      {MON.map((mn,m)=>{
+        const h=Math.max(2,Math.min(H,dollars[m]/PPX)),isNow=m===TODAY.getMonth();
+        return <div key={m} onPointerDown={e=>down(e,m)} title={`${MONL[m]} ~${fmt$(dollars[m])} — drag up/down`}
+          style={{flex:1,height:H,display:"flex",flexDirection:"column",justifyContent:"flex-end",alignItems:"center",
+            cursor:"ns-resize",touchAction:"none"}}>
+          <div style={{fontSize:6,color:C.mute,marginBottom:1,whiteSpace:"nowrap"}}>{dollars[m]>=1000?fmtK(dollars[m]).replace("$",""):""}</div>
+          <div style={{width:"74%",height:h,background:isNow?C.ink:"#DAC79E",borderRadius:"3px 3px 0 0",border:isNow?"none":`1px solid #CDB888`}}/>
+        </div>;
+      })}
+    </div>
+    <div style={{display:"flex",gap:2,marginTop:3}}>
+      {MON.map((mn,m)=><div key={m} style={{flex:1,textAlign:"center",fontSize:6.5,fontWeight:700,color:m===TODAY.getMonth()?C.ink:C.mute}}>{mn[0]}</div>)}
+    </div>
+  </div>;
+}
+
 function Board({state,setState,monthIdx,setMonthIdx,tsp}){
   const [types,setTypes]=useState({});
   const [open,setOpen]=useState(null);
@@ -520,6 +570,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
   const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
 
   const setType=(id,t)=>setTypes(p=>({...p,[id]:t}));
+  const setPace=p=>setState(s=>({...s,pace:{...s.pace,...p}}));
   function createRequest(w,type,foot){
     const r={id:"r"+Date.now(),siteId:w.site.id,shiftType:type,opens:w.opens,dueBy:w.dueBy,state:"draft",footprint:foot};
     setState(s=>({...s,requests:[...s.requests,r]}));
@@ -563,6 +614,9 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
               </div>
             </div>
             <CoolingBar cool={cool} compact/>
+          </div>
+          <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.line2}`}}>
+            <PaceCurve pace={state.pace} setPace={setPace}/>
           </div>
         </div>}
       </div>
@@ -746,11 +800,7 @@ function Overlay({children,onClose}){
 function Balance({state,setState,tsp}){
   const {pace}=state;
   const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
-  const shares=curveShares(pace);
   const setPace=p=>setState(s=>({...s,pace:{...s.pace,...p}}));
-  const cycleTag=i=>setPace({curve:pace.curve.map((m,j)=>j===i?{...m,tag:TAGS[(TAGS.indexOf(m.tag)+1)%TAGS.length],shareOverride:undefined}:m)});
-  const tagCol={summer:"#CBD5C0",light:"#D9E2EC",normal:"#C9C2BA",heavy:"#E3B7A8",travel:"#D6CBE3"};
-  const maxShare=Math.max(...shares,0.0001);
 
   return <div style={{height:"100%",overflow:"auto"}}>
     <div style={{maxWidth:760,margin:"0 auto",padding:"16px 16px 60px"}}>
@@ -778,23 +828,9 @@ function Balance({state,setState,tsp}){
           onChange={e=>setPace({pressureCeiling:+e.target.value})} style={{width:"100%",accentColor:C.ink,marginTop:8}}/>
       </div>
 
-      {/* dial 3 — the curve */}
+      {/* dial 3 — the curve (shared draggable control; also lives in the Board drawer) */}
       <div style={{marginTop:12,padding:"13px 15px",border:`1px solid ${C.line}`,borderRadius:8,background:"#fff"}}>
-        <Dial label="Pace curve" sub="tap a month to retag — summer troughs, travel dips">
-          <span style={{fontSize:9,color:C.mute}}>normalized to target</span>
-        </Dial>
-        <div style={{display:"flex",alignItems:"flex-end",gap:3,height:96,marginTop:12}}>
-          {pace.curve.map((m,i)=>{
-            const h=Math.max(4,shares[i]/maxShare*78);
-            return <div key={i} onClick={()=>cycleTag(i)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}}>
-              <div style={{fontSize:7,color:C.mute,marginBottom:2}}>{fmtK(shares[i]*pace.annualTarget).replace("$","")}</div>
-              <div style={{width:"100%",height:h,background:tagCol[m.tag],borderRadius:"3px 3px 0 0",
-                border:i===TODAY.getMonth()?`2px solid ${C.ink}`:"none"}}/>
-              <div style={{fontSize:7.5,fontWeight:700,color:i===TODAY.getMonth()?C.ink:C.gray,marginTop:3}}>{MON[i]}</div>
-              <div style={{fontSize:6.5,color:C.mute}}>{m.tag}</div>
-            </div>;
-          })}
-        </div>
+        <PaceCurve pace={pace} setPace={setPace}/>
       </div>
 
       {/* release valves for a hot stretch (§6.1) */}
