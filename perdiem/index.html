@@ -998,12 +998,10 @@ function ScheduleEditor({state,setState,onClose}){
 /* ════════ YEAR VIEW — the footprint / home base (§7): confirmed placements + pending ════════ */
 const SHIFT_COL={day:"#C8973A",night:"#6D5BA8"};
 const LOC_TINT={boston:"#EAF1FB",santa_fe:"#FBF1E6",abq:"#F8EEE3",montana:"#E9F4EE",portland:"#F2EAFB"};
-function buildMonthCells(y,m){
-  const first=new Date(y,m,1),lead=(first.getDay()+6)%7,n=dim(y,m);
-  const cells=[];for(let i=0;i<lead;i++)cells.push(null);
-  for(let d=1;d<=n;d++)cells.push(new Date(y,m,d));
-  while(cells.length%7)cells.push(null);
-  return cells;
+function monthGrid(y,m){
+  const f=(new Date(y,m,1).getDay()+6)%7,n=dim(y,m),wk=Math.ceil((f+n)/7);
+  const cells=[];for(let i=0;i<wk*7;i++){const dn=i-f+1;cells.push(dn>=1&&dn<=n?new Date(y,m,dn):null);}
+  return {cells,totalCols:wk*7};
 }
 function YearView({state,tsp}){
   const [showOut,setShowOut]=useState(false);
@@ -1055,44 +1053,55 @@ function YearView({state,tsp}){
         <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:LOC_TINT.santa_fe,border:`1px solid ${C.line}`}}/>family location</span>
         <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:14}}>
-        {MON.map((mn,m)=>{
-          const cells=buildMonthCells(YEAR,m);const pm=perMonth[m];
-          return <div key={m} style={{border:`1px solid ${C.line}`,borderRadius:8,background:"#fff",padding:"9px 10px",
-            outline:m===TODAY.getMonth()?`2px solid ${C.ink}`:"none"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
-              <span style={{fontSize:11,fontWeight:800}}>{MONL[m]}</span>
-              <span style={{fontSize:8,color:pm.n?C.ink:C.mute}}>{pm.n?`${pm.n} · ${fmt$(pm.$)}`:"—"}</span>
+      {(()=>{
+        const CELL=15,CG=2,WG=7,LBL=66,RG=4;
+        const grids=MON.map((_,m)=>monthGrid(YEAR,m));
+        const maxCols=Math.max(...grids.map(g=>g.totalCols));
+        const ml=ci=>(ci%7===0&&ci>0)?WG:(ci===0?0:CG);
+        return <div style={{overflowX:"auto",border:`1px solid ${C.line}`,borderRadius:8,background:"#fff",padding:"12px 14px"}}>
+          <div style={{minWidth:LBL+maxCols*(CELL+CG)+(maxCols/7)*WG}}>
+            {/* DOW header — repeated per week, weekday-aligned across all months */}
+            <div style={{display:"flex",marginBottom:4}}>
+              <div style={{width:LBL,flexShrink:0}}/>
+              {Array.from({length:maxCols},(_,ci)=>
+                <div key={ci} style={{width:CELL,marginLeft:ml(ci),textAlign:"center",fontSize:6.5,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
-              {["M","T","W","T","F","S","S"].map((d,i)=><div key={i} style={{fontSize:6.5,fontWeight:700,color:C.mute,textAlign:"center"}}>{d}</div>)}
-              {cells.map((d,i)=>{
-                if(!d)return <div key={i} style={{aspectRatio:"1"}}/>;
-                const str=ds(d),we=d.getDay()===0||d.getDay()===6;
-                const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],out=outBy[str];
-                const conf=marks.find(x=>x.state==="confirmed");
-                const pend=marks.find(x=>x.state==="submitted"||x.state==="draft");
-                const smear=marks.find(x=>x.state==="smeared");
-                let bg=fam?LOC_TINT[fam]:(we?"#FBFAF9":"#fff");
-                if(showOut&&out&&!fam)bg="#F4F1EB";
-                let border=`1px solid ${C.line2}`,inner=null;
-                if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
-                else if(pend){border=`1.5px solid ${C.blue}`;}
-                else if(smear){inner="dotted";}
-                return <div key={i} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${pend?` · pending ${pend.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}`}
-                  style={{aspectRatio:"1",borderRadius:3,background:bg,border,position:"relative",
-                    display:"flex",alignItems:"center",justifyContent:"center",fontSize:6.5,
-                    color:conf?"#fff":(we?C.mute:C.gray),fontWeight:conf?800:500}}>
-                  {d.getDate()}
-                  {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:2,border:`1px dotted ${C.est}`}}/>}
-                  {lk&&<span style={{position:"absolute",top:-1,right:-1,width:5,height:5,borderRadius:"50%",
-                    background:lk.kind==="hard"?C.ink:"#fff",border:`1.5px solid ${C.ink}`}}/>}
-                </div>;
-              })}
-            </div>
-          </div>;
-        })}
-      </div>
+            {/* one row per month */}
+            {MON.map((mn,m)=>{
+              const g=grids[m],pm=perMonth[m],isNow=m===TODAY.getMonth();
+              return <div key={m} style={{display:"flex",alignItems:"center",marginBottom:m<11?RG:0}}>
+                <div style={{width:LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
+                  <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.03em",color:isNow?C.ink:C.gray}}>{mn.toUpperCase()}</div>
+                  <div style={{fontSize:7,color:pm.n?C.ink:C.mute}}>{pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
+                </div>
+                <div style={{display:"flex"}}>
+                  {Array.from({length:maxCols},(_,ci)=>{
+                    const d=ci<g.cells.length?g.cells[ci]:null;
+                    if(!d)return <div key={ci} style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0}}/>;
+                    const str=ds(d),we=d.getDay()===0||d.getDay()===6;
+                    const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],out=outBy[str];
+                    const conf=marks.find(x=>x.state==="confirmed");
+                    const pend=marks.find(x=>x.state==="submitted"||x.state==="draft");
+                    const smear=marks.find(x=>x.state==="smeared");
+                    let bg=fam?LOC_TINT[fam]:(we?"#FBFAF9":"#fff");
+                    if(showOut&&out&&!fam)bg="#F4F1EB";
+                    let border=`1px solid ${C.line2}`,inner=null;
+                    if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
+                    else if(pend){border=`1.5px solid ${C.blue}`;}
+                    else if(smear){inner="dotted";}
+                    return <div key={ci} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${pend?` · pending ${pend.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}`}
+                      style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box"}}>
+                      {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
+                      {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",
+                        background:lk.kind==="hard"?C.ink:"#fff",border:`1.5px solid ${C.ink}`}}/>}
+                    </div>;
+                  })}
+                </div>
+              </div>;
+            })}
+          </div>
+        </div>;
+      })()}
     </div>
   </div>;
 }
