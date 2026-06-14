@@ -250,9 +250,10 @@ function coolingAggregate(state,tsp){
   const expectedToDate$=pace.annualTarget*curveCumulativeFraction(pace,TODAY);
   let bookedToDate$=0;
   for(const r of requests){
+    const s=siteById[r.siteId];if(!s)continue;
     if(r.state==="confirmed"&&r.footprint.kind==="pinned"){
       const inYr=r.footprint.dates.filter(d=>pd(d)<=TODAY&&pd(d).getFullYear()===YEAR);
-      bookedToDate$+=inYr.length*siteRate(siteById[r.siteId],r.shiftType);
+      bookedToDate$+=inYr.length*siteRate(s,r.shiftType);
     }
   }
   const flatRunRate$=fracYearElapsed>0?bookedToDate$/fracYearElapsed:0;
@@ -275,6 +276,7 @@ function weekExposure(weekDates,requests,siteById,tsp){
     const fp=r.footprint;
     const datesIn=(fp.kind==="pinned"?fp.dates:fp.candidates).filter(d=>wf.has(d));
     if(!datesIn.length)continue;
+    if(!siteById[r.siteId])continue;
     const rate=siteRate(siteById[r.siteId],r.shiftType);
     if(r.state==="confirmed"&&fp.kind==="pinned"){floor$+=datesIn.length*rate;}
     else if(r.state==="submitted"||r.state==="draft"){
@@ -399,6 +401,10 @@ const Btn=({children,onClick,kind,small,disabled})=>{
     background:styles.bg,color:disabled?C.faint:styles.col,border:`1px solid ${disabled?C.line:styles.bd}`,
     opacity:disabled?0.6:1,letterSpacing:"0.02em",whiteSpace:"nowrap"}}>{children}</button>;
 };
+const inp={fontFamily:MONO,fontSize:11,padding:"5px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:"#fff",color:C.ink,width:"100%"};
+const Field=({label,children})=> <label style={{display:"block",marginBottom:7}}>
+  <div style={{fontSize:7.5,fontWeight:800,color:C.gray,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:3}}>{label}</div>
+  {children}</label>;
 function glowStyle(bucket){
   switch(bucket){
     case"brightest":return{border:`1px solid #E0A92E`,background:"#FFFAEC",boxShadow:"0 0 0 1px #E8B53D, 0 5px 20px rgba(220,150,20,.30)"};
@@ -843,6 +849,257 @@ function Gantt({state,setState,tsp}){
   </div>;
 }
 
+/* ════════ SITE WIZARD — add / edit the named, never-rated sites (§3.1, Inv 4) ════════ */
+function SiteWizard({state,setState,onClose}){
+  const [sites,setSites]=useState(()=>JSON.parse(JSON.stringify(state.sites)));
+  const [openId,setOpenId]=useState(state.sites[0]?.id||null);
+  const reqCount=id=>state.requests.filter(r=>r.siteId===id).length;
+  const upd=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,...patch}:s));
+  const updCad=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,cadence:{...s.cadence,...patch}}:s));
+  const addSite=()=>{const id="site"+Date.now();
+    setSites(p=>[...p,{id,name:"New site",note:"",reach:"local",homeBaseLoc:"boston",
+      dayRate:1800,nightRate:2200,dayHours:9,nightHours:9,submissionType:"by_shift",
+      cadence:{opensDaysBefore:60,dueByDaysBefore:21,expectedResponseDays:14}}]);
+    setOpenId(id);};
+  const rm=id=>{if(reqCount(id)>0)return;setSites(p=>p.filter(s=>s.id!==id));if(openId===id)setOpenId(null);};
+  const save=()=>{setState(st=>({...st,sites}));onClose();};
+  const N=props=> <input type="number" style={inp} {...props}/>;
+  return <Overlay onClose={onClose}>
+    <div style={{maxHeight:"82vh",display:"flex",flexDirection:"column"}}>
+      <div style={{fontSize:13,fontWeight:800,marginBottom:2}}>Site wizard</div>
+      <div style={{fontSize:9,color:C.gray,marginBottom:10}}>Sites carry satisfaction in their <b>name</b> + free-text <b>note</b> — never a rating (Inv 4).</div>
+      <div style={{flex:1,overflow:"auto",margin:"0 -2px",padding:"0 2px"}}>
+        {sites.map(s=>{
+          const open=openId===s.id, refs=reqCount(s.id);
+          return <div key={s.id} style={{border:`1px solid ${C.line}`,borderRadius:7,marginBottom:7,background:"#fff",overflow:"hidden"}}>
+            <div onClick={()=>setOpenId(open?null:s.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",cursor:"pointer"}}>
+              <span style={{fontSize:11,fontWeight:800}}>{s.name||"(unnamed)"}</span>
+              <Tag>{REACH_LABEL[s.reach]}</Tag>
+              <Tag bg={C.line2}>{s.submissionType==="by_window"?"by window":"by shift"}</Tag>
+              {s.dependsOn&&<Tag bg="#EEF4FB" col={C.blue}>after {sites.find(x=>x.id===s.dependsOn)?.name||"?"}</Tag>}
+              <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{open?"▾":"▸"}</span>
+            </div>
+            {open&&<div style={{padding:"4px 10px 10px",borderTop:`1px solid ${C.line2}`}}>
+              <Field label="Name (carries satisfaction)"><input style={inp} value={s.name} onChange={e=>upd(s.id,{name:e.target.value})}/></Field>
+              <Field label="Note (free text · non-sortable)"><input style={inp} value={s.note} onChange={e=>upd(s.id,{note:e.target.value})}/></Field>
+              <div style={{display:"flex",gap:8}}>
+                <Field label="Reach"><select style={inp} value={s.reach} onChange={e=>upd(s.id,{reach:e.target.value})}>
+                  {Object.keys(REACH_LABEL).map(r=><option key={r} value={r}>{REACH_LABEL[r]}</option>)}</select></Field>
+                <Field label="Home base"><select style={inp} value={s.homeBaseLoc} onChange={e=>upd(s.id,{homeBaseLoc:e.target.value})}>
+                  {Object.keys(LOC_NAME).map(l=><option key={l} value={l}>{LOC_NAME[l]}</option>)}</select></Field>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <Field label="Day rate $"><N value={s.dayRate} onChange={e=>upd(s.id,{dayRate:+e.target.value||0})}/></Field>
+                <Field label="Day hours"><N value={s.dayHours} onChange={e=>upd(s.id,{dayHours:+e.target.value||0})}/></Field>
+                <Field label="Night rate $"><N value={s.nightRate} onChange={e=>upd(s.id,{nightRate:+e.target.value||0})}/></Field>
+                <Field label="Night hours"><N value={s.nightHours} onChange={e=>upd(s.id,{nightHours:+e.target.value||0})}/></Field>
+              </div>
+              <Field label="Submission type"><select style={inp} value={s.submissionType} onChange={e=>upd(s.id,{submissionType:e.target.value})}>
+                <option value="by_shift">by shift (pinned)</option><option value="by_window">by window (smeared)</option></select></Field>
+              <div style={{display:"flex",gap:8}}>
+                <Field label="Opens (days before)"><N value={s.cadence.opensDaysBefore} onChange={e=>updCad(s.id,{opensDaysBefore:+e.target.value||0})}/></Field>
+                <Field label="Due (days before)"><N value={s.cadence.dueByDaysBefore} onChange={e=>updCad(s.id,{dueByDaysBefore:+e.target.value||0})}/></Field>
+                <Field label="Response (days)"><N value={s.cadence.expectedResponseDays} onChange={e=>updCad(s.id,{expectedResponseDays:+e.target.value||0})}/></Field>
+              </div>
+              <Field label="Depends on (chain — must hear back first)"><select style={inp} value={s.dependsOn||""} onChange={e=>upd(s.id,{dependsOn:e.target.value||undefined})}>
+                <option value="">— none —</option>
+                {sites.filter(x=>x.id!==s.id).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+                <Btn small kind="danger" disabled={refs>0} onClick={()=>rm(s.id)}>remove</Btn>
+                {refs>0&&<span style={{fontSize:8.5,color:C.mute}}>{refs} request{refs>1?"s":""} reference this site — can’t remove</span>}
+              </div>
+            </div>}
+          </div>;
+        })}
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:10}}>
+        <Btn onClick={addSite}>+ add site</Btn>
+        <div style={{flex:1}}/>
+        <Btn onClick={onClose}>cancel</Btn>
+        <Btn kind="prim" onClick={save}>save</Btn>
+      </div>
+    </div>
+  </Overlay>;
+}
+
+/* ════════ SCHEDULE IMPORT — kid calendars: closed ranges drive days-out + presence (Inv 9) ════════ */
+function ScheduleEditor({state,setState,onClose}){
+  const [cals,setCals]=useState(()=>JSON.parse(JSON.stringify(state.kidCalendars)));
+  const [act,setAct]=useState(cals[0]?.childId||null);
+  const [year,setYear]=useState(YEAR);
+  const fileRef=useRef();
+  const cal=cals.find(c=>c.childId===act);
+  const setRanges=fn=>setCals(p=>p.map(c=>c.childId===act?{...c,closedRanges:fn(c.closedRanges||[])}:c));
+  const cap=s=>s? s[0].toUpperCase()+s.slice(1):s;
+  const importJSON=e=>{
+    const f=e.target.files?.[0];if(!f)return;
+    const rd=new FileReader();
+    rd.onload=ev=>{
+      try{
+        const arr=JSON.parse(ev.target.result);
+        if(!Array.isArray(arr)){alert("Expected a JSON array of ranges.");return;}
+        // accept planner {s,e,l} or per-diem {from,to,label}
+        const norm=arr.map(r=>({from:r.from||r.s,to:r.to||r.e||r.from||r.s,label:r.label||r.l||"Closed"})).filter(r=>r.from);
+        if(!norm.length){alert('No valid entries (need "from"/"s" start dates).');return;}
+        setRanges(rs=>{
+          const byFrom=new Map(rs.map((r,i)=>[r.from,i]));
+          const merged=[...rs];let added=0,upd=0;
+          for(const r of norm){if(byFrom.has(r.from)){merged[byFrom.get(r.from)]=r;upd++;}else{merged.push(r);added++;}}
+          return merged.sort((a,b)=>a.from.localeCompare(b.from));
+        });
+        alert(`Imported ${norm.length} ranges for ${cap(act)}.`);
+      }catch(err){alert("Invalid JSON file.");}
+    };
+    rd.readAsText(f);e.target.value="";
+  };
+  const add=()=>setRanges(rs=>[...rs,{from:`${year}-01-01`,to:`${year}-01-01`,label:"Closed"}].sort((a,b)=>a.from.localeCompare(b.from)));
+  const updR=(i,patch)=>setRanges(rs=>rs.map((r,j)=>j===i?{...r,...patch}:r));
+  const rmR=i=>setRanges(rs=>rs.filter((_,j)=>j!==i));
+  const save=()=>{setState(st=>({...st,kidCalendars:cals}));onClose();};
+  const ranges=(cal?.closedRanges||[]).map((r,i)=>({r,i})).filter(({r})=>r.from.slice(0,4)===String(year));
+  return <Overlay onClose={onClose}>
+    <div style={{maxHeight:"82vh",display:"flex",flexDirection:"column",minWidth:0}}>
+      <div style={{fontSize:13,fontWeight:800,marginBottom:2}}>Schedule import</div>
+      <div style={{fontSize:9,color:C.gray,marginBottom:10}}>Non-school ranges per child. Drives days-out + presence only — never capacity (Inv 9). Weekends are automatic.</div>
+      <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+        {cals.map(c=><button key={c.childId} onClick={()=>setAct(c.childId)} style={{fontFamily:MONO,fontSize:9,fontWeight:700,
+          padding:"4px 9px",borderRadius:4,cursor:"pointer",border:`1px solid ${act===c.childId?C.ink:C.line}`,
+          background:act===c.childId?C.ink:"#fff",color:act===c.childId?"#fff":C.gray}}>{cap(c.childId)}</button>)}
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:4}}>
+          <Btn small onClick={()=>setYear(y=>y-1)}>◀</Btn>
+          <span style={{fontSize:11,fontWeight:800,minWidth:38,textAlign:"center"}}>{year}</span>
+          <Btn small onClick={()=>setYear(y=>y+1)}>▶</Btn>
+        </div>
+      </div>
+      <div style={{marginBottom:8}}>
+        <Btn small kind="prim" onClick={()=>fileRef.current.click()}>↥ import JSON</Btn>
+        <input ref={fileRef} type="file" accept=".json" onChange={importJSON} style={{display:"none"}}/>
+        <span style={{fontSize:8,color:C.mute,marginLeft:8}}>accepts {`{from,to,label}`} or planner {`{s,e,l}`}</span>
+      </div>
+      <div style={{flex:1,overflow:"auto",borderTop:`1px solid ${C.line2}`}}>
+        {ranges.length===0&&<div style={{fontSize:9,color:C.mute,fontStyle:"italic",padding:14,textAlign:"center"}}>No ranges for {year}. Import a JSON file or add one below.</div>}
+        {ranges.map(({r,i})=><div key={i} style={{display:"flex",gap:4,alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${C.line2}`}}>
+          <input style={{...inp,flex:2}} value={r.label} onChange={e=>updR(i,{label:e.target.value})}/>
+          <input type="date" style={{...inp,width:130}} value={r.from} onChange={e=>updR(i,{from:e.target.value})}/>
+          <input type="date" style={{...inp,width:130}} value={r.to} onChange={e=>updR(i,{to:e.target.value})}/>
+          <Btn small kind="danger" onClick={()=>rmR(i)}>×</Btn>
+        </div>)}
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:10}}>
+        <Btn onClick={add}>+ add range</Btn>
+        <div style={{flex:1}}/>
+        <Btn onClick={onClose}>cancel</Btn>
+        <Btn kind="prim" onClick={save}>save</Btn>
+      </div>
+    </div>
+  </Overlay>;
+}
+
+/* ════════ YEAR VIEW — the footprint / home base (§7): confirmed placements + pending ════════ */
+const SHIFT_COL={day:"#C8973A",night:"#6D5BA8"};
+const LOC_TINT={boston:"#EAF1FB",santa_fe:"#FBF1E6",abq:"#F8EEE3",montana:"#E9F4EE",portland:"#F2EAFB"};
+function buildMonthCells(y,m){
+  const first=new Date(y,m,1),lead=(first.getDay()+6)%7,n=dim(y,m);
+  const cells=[];for(let i=0;i<lead;i++)cells.push(null);
+  for(let d=1;d<=n;d++)cells.push(new Date(y,m,d));
+  while(cells.length%7)cells.push(null);
+  return cells;
+}
+function YearView({state,tsp}){
+  const [showOut,setShowOut]=useState(false);
+  const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
+  // index the footprint by day
+  const {byDay,famBy,lockBy,outBy,perMonth}=useMemo(()=>{
+    const byDay={},famBy={},lockBy={},outBy={},perMonth={};
+    for(const r of state.requests){
+      const s=siteById[r.siteId];if(!s)continue;
+      const fp=r.footprint;
+      if(fp.kind==="pinned"){
+        for(const d of fp.dates){(byDay[d]=byDay[d]||[]).push({state:r.state,type:r.shiftType,site:s});}
+      }else if(r.state==="draft"||r.state==="submitted"){
+        for(const d of fp.candidates){(byDay[d]=byDay[d]||[]).push({state:"smeared",type:r.shiftType,site:s});}
+      }
+    }
+    for(const sp of state.familySpans){
+      let d=pd(sp.from);const t=pd(sp.to);
+      while(d<=t){if(d.getFullYear()===YEAR)famBy[ds(d)]=sp.loc;d=ad(d,1);}
+    }
+    for(const l of state.locks)lockBy[l.date]=l;
+    for(const kc of state.kidCalendars)for(const rg of (kc.closedRanges||[])){
+      let d=pd(rg.from);const t=pd(rg.to);
+      while(d<=t){if(d.getFullYear()===YEAR)outBy[ds(d)]=true;d=ad(d,1);}
+    }
+    for(let m=0;m<12;m++){let n=0,$=0;
+      for(const r of state.requests){if(r.state==="confirmed"&&r.footprint.kind==="pinned"){
+        const s=siteById[r.siteId];if(!s)continue;
+        const inM=r.footprint.dates.filter(d=>pd(d).getMonth()===m&&pd(d).getFullYear()===YEAR);
+        n+=inM.length;$+=inM.length*siteRate(s,r.shiftType);}}
+      perMonth[m]={n,$};}
+    return {byDay,famBy,lockBy,outBy,perMonth};
+  },[state]);
+
+  return <div style={{height:"100%",overflow:"auto"}}>
+    <div style={{maxWidth:980,margin:"0 auto",padding:"14px 16px 60px"}}>
+      <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
+        <div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Year {YEAR} <span style={{fontSize:10,fontWeight:600,color:C.mute}}>· the footprint / home base</span></div>
+        <label style={{marginLeft:"auto",fontSize:9,color:C.gray,display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer"}}>
+          <input type="checkbox" checked={showOut} onChange={e=>setShowOut(e.target.checked)}/>school-out</label>
+      </div>
+      <div style={{fontSize:9.5,color:C.gray,marginBottom:12}}>Confirmed Requests harden into placements here — the planner owns trips, days-out & pace (§7).</div>
+      {/* legend */}
+      <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",fontSize:8.5,color:C.mute,marginBottom:12}}>
+        <LegDot bg={SHIFT_COL.day}>day · confirmed</LegDot>
+        <LegDot bg={SHIFT_COL.night}>night · confirmed</LegDot>
+        <LegDot ring={C.blue}>pending</LegDot>
+        <LegDot dotted>smeared candidate</LegDot>
+        <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:LOC_TINT.santa_fe,border:`1px solid ${C.line}`}}/>family location</span>
+        <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:14}}>
+        {MON.map((mn,m)=>{
+          const cells=buildMonthCells(YEAR,m);const pm=perMonth[m];
+          return <div key={m} style={{border:`1px solid ${C.line}`,borderRadius:8,background:"#fff",padding:"9px 10px",
+            outline:m===TODAY.getMonth()?`2px solid ${C.ink}`:"none"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+              <span style={{fontSize:11,fontWeight:800}}>{MONL[m]}</span>
+              <span style={{fontSize:8,color:pm.n?C.ink:C.mute}}>{pm.n?`${pm.n} · ${fmt$(pm.$)}`:"—"}</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
+              {["M","T","W","T","F","S","S"].map((d,i)=><div key={i} style={{fontSize:6.5,fontWeight:700,color:C.mute,textAlign:"center"}}>{d}</div>)}
+              {cells.map((d,i)=>{
+                if(!d)return <div key={i} style={{aspectRatio:"1"}}/>;
+                const str=ds(d),we=d.getDay()===0||d.getDay()===6;
+                const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],out=outBy[str];
+                const conf=marks.find(x=>x.state==="confirmed");
+                const pend=marks.find(x=>x.state==="submitted"||x.state==="draft");
+                const smear=marks.find(x=>x.state==="smeared");
+                let bg=fam?LOC_TINT[fam]:(we?"#FBFAF9":"#fff");
+                if(showOut&&out&&!fam)bg="#F4F1EB";
+                let border=`1px solid ${C.line2}`,inner=null;
+                if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
+                else if(pend){border=`1.5px solid ${C.blue}`;}
+                else if(smear){inner="dotted";}
+                return <div key={i} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${pend?` · pending ${pend.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}`}
+                  style={{aspectRatio:"1",borderRadius:3,background:bg,border,position:"relative",
+                    display:"flex",alignItems:"center",justifyContent:"center",fontSize:6.5,
+                    color:conf?"#fff":(we?C.mute:C.gray),fontWeight:conf?800:500}}>
+                  {d.getDate()}
+                  {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:2,border:`1px dotted ${C.est}`}}/>}
+                  {lk&&<span style={{position:"absolute",top:-1,right:-1,width:5,height:5,borderRadius:"50%",
+                    background:lk.kind==="hard"?C.ink:"#fff",border:`1.5px solid ${C.ink}`}}/>}
+                </div>;
+              })}
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>
+  </div>;
+}
+const LegDot=({bg,ring,dotted,children})=> <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
+  <span style={{width:12,height:12,borderRadius:3,background:bg||"#fff",
+    border:ring?`1.5px solid ${ring}`:(dotted?`1px dotted ${C.est}`:(bg?"none":`1px solid ${C.line}`))}}/>{children}</span>;
+
 /* ════════ APP SHELL ════════ */
 function App(){
   const [state,setState]=useState(()=>{
@@ -851,6 +1108,7 @@ function App(){
   });
   const [surface,setSurface]=useState("board");
   const [monthIdx,setMonthIdx]=useState(7); // August — requests are open now
+  const [modal,setModal]=useState(null);    // "sites" | "schedule"
   const fileRef=useRef();
   useEffect(()=>{try{localStorage.setItem("perDiemState",JSON.stringify(state));}catch(e){}},[state]);
   const tsp=useMemo(()=>typicalShiftPay(state.sites),[state.sites]);
@@ -863,7 +1121,7 @@ function App(){
     rd.onload=ev=>{try{setState(JSON.parse(ev.target.result));}catch(err){alert("Invalid file");}};rd.readAsText(f);};
   const reset=()=>{if(confirm("Reset to seed data? This discards your requests and dials."))setState(seedState());};
 
-  const tabs=[["balance","Balance"],["board","Board"],["gantt","Gantt"]];
+  const tabs=[["balance","Balance"],["board","Board"],["gantt","Gantt"],["year","Year"]];
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
     {/* header */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
@@ -872,7 +1130,10 @@ function App(){
         <span style={{fontSize:13,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM</span>
         <span style={{fontSize:8.5,color:C.mute}}>surface, don’t choose</span>
       </div>
-      <div style={{display:"flex",gap:5,alignItems:"center"}}>
+      <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+        <Btn small onClick={()=>setModal("sites")}>sites</Btn>
+        <Btn small onClick={()=>setModal("schedule")}>schedule</Btn>
+        <span style={{width:1,height:16,background:C.line}}/>
         <Btn small onClick={exportJSON}>export</Btn>
         <Btn small onClick={()=>fileRef.current.click()}>import</Btn>
         <Btn small onClick={reset}>reset</Btn>
@@ -892,7 +1153,10 @@ function App(){
       {surface==="balance"&&<Balance state={state} setState={setState} tsp={tsp}/>}
       {surface==="board"&&<Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp}/>}
       {surface==="gantt"&&<Gantt state={state} setState={setState} tsp={tsp}/>}
+      {surface==="year"&&<YearView state={state} tsp={tsp}/>}
     </div>
+    {modal==="sites"&&<SiteWizard state={state} setState={setState} onClose={()=>setModal(null)}/>}
+    {modal==="schedule"&&<ScheduleEditor state={state} setState={setState} onClose={()=>setModal(null)}/>}
   </div>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
