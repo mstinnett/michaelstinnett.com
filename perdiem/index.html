@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1C1917">
+<meta name="description" content="Per Diem — decide how many per-diem ED shifts to request this month, and where.">
+<title>Per Diem</title>
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" as="script">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body,#root{height:100%;}
+  body{overflow:hidden;background:#FAFAF9;-webkit-font-smoothing:antialiased;}
+  input,textarea,select{font-family:inherit;}
+  #loader{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;background:#FAFAF9;font-family:'SF Mono','JetBrains Mono',monospace;}
+  #loader span{font-size:13px;font-weight:600;color:#78716C;letter-spacing:-0.02em;}
+  #loader .bar{width:120px;height:3px;background:#E7E5E4;border-radius:2px;overflow:hidden;}
+  #loader .bar::after{content:'';display:block;width:40%;height:100%;background:#1C1917;border-radius:2px;animation:load 1s ease infinite;}
+  @keyframes load{0%{transform:translateX(-100%)}50%{transform:translateX(200%)}100%{transform:translateX(-100%)}}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:#D6D3D1;border-radius:4px;}
+  @keyframes heat{0%{box-shadow:inset 0 0 60px rgba(220,60,30,.20)}50%{box-shadow:inset 0 0 90px rgba(220,60,30,.34)}100%{box-shadow:inset 0 0 60px rgba(220,60,30,.20)}}
+</style>
+</head>
+<body>
+<div id="root"><div id="loader"><span>PER DIEM</span><div class="bar"></div></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const {useState,useMemo,useCallback,useRef,useEffect}=React;
+
+/* ════════════════════════════════════════════════════════════
+   PER DIEM — a pressure-display grammar prototype.
+   Implements per-diem-build-spec.md: typed entities (§3), exact
+   formulas (§4), three surfaces (§6), the request lifecycle (§5),
+   and the hard invariants (§8). It computes brightness for
+   SURFACING and shows raw facts separately for CHOOSING. It never
+   ranks, recommends, or acts.
+   ════════════════════════════════════════════════════════════ */
+
+/* ─── palette (matches the planner) ─── */
+const C={ink:"#1C1917",bg:"#FAFAF9",panel:"#fff",line:"#E7E5E4",line2:"#ECEAE7",
+  gray:"#78716C",mute:"#A8A29E",faint:"#D6D3D1",blue:"#3B82F6",red:"#DC2626",
+  est:"#A8732C",estLine:"#D9B25A",green:"#0E7C5A"};
+const MONO="'SF Mono','JetBrains Mono','Fira Code',ui-monospace,monospace";
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONL=["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+/* ─── today (spec context: 2026-06-14) ─── */
+const TODAY=new Date(2026,5,14);
+const YEAR=2026;
+
+/* ─── dates ─── */
+const ds=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const pd=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
+const ad=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r;};
+const days=(a,b)=>Math.round((b-a)/864e5);
+const dim=(y,m)=>new Date(y,m+1,0).getDate();
+const clamp01=x=>Math.max(0,Math.min(1,x));
+const fmt$=v=>"$"+Math.round(v).toLocaleString();
+const fmtK=v=>"$"+(Math.round(v/100)/10).toLocaleString()+"k";
+
+/* ─── Estimate provenance (§3.5) ─── */
+const known=v=>({value:v,basis:"known"});
+const est=(v,assumptions)=>({value:v,basis:"estimate",assumptions});
+
+/* ─── reach adjacency: LocationId × Reach → travel hours (§4.2) ───
+   Family-presence location → hours to reach a site of each tier.
+   Table-driven, not hardcoded conditionals. Montana→nm reads cheap. */
+const REACH_ADJ={
+  boston:  {local:1,  nm:8,   rural_nm:11},
+  santa_fe:{local:8,  nm:1.5, rural_nm:3.5},
+  abq:     {local:8,  nm:1.5, rural_nm:3},
+  montana: {local:9,  nm:2.5, rural_nm:4.5},   // Montana→nm reads cheap
+  portland:{local:8,  nm:7,   rural_nm:9},
+};
+const CHEAP_HRS=4;                                   // <= ⇒ co-located
+const ROUNDTRIP={local:1.5,nm:8,rural_nm:12};        // roundTripTravelHrs by reach
+const REST_HOURS={day:10,night:12};                  // restHours(type) — estimate
+const LOC_NAME={boston:"Boston",santa_fe:"Santa Fe",abq:"Albuquerque",montana:"Montana",portland:"Portland"};
+const REACH_LABEL={local:"local",nm:"NM",rural_nm:"rural NM"};
+
+/* ─── pace tag weights (§3.4) ─── */
+const TAG_W={summer:0,light:0.55,normal:1,heavy:1.5,travel:0.5};
+const TAGS=["summer","light","normal","heavy","travel"];
+
+/* ─── brightness weights — FIXED v1 defaults, NOT user knobs (§4.3, Inv 1) ─── */
+const BW={workQuality:0.22,familyEfficiency:0.22,coLocation:0.15,lowDaysOut:0.13,quotaFit:0.18,closing:0.10};
+const BW_EST={workQuality:false,familyEfficiency:true,coLocation:false,lowDaysOut:false,quotaFit:true,closing:false};
+const BW_LABEL={workQuality:"work quality",familyEfficiency:"family efficiency",coLocation:"co-location",lowDaysOut:"low days-out",quotaFit:"quota fit",closing:"closing"};
+const BUCKETS=["dim","normal","bright","brightest"];
+function coarseBucket(s){return s<0.34?"dim":s<0.55?"normal":s<0.74?"bright":"brightest";}
+
+/* ════════ SEED STATE ════════ */
+function seedState(){
+  const sites=[
+    {id:"boston",  name:"Boston ED",   note:"home rink. easy charting, know the nurses.",
+     reach:"local",   homeBaseLoc:"boston",  dayRate:1900,nightRate:2300,dayHours:9, nightHours:9,
+     submissionType:"by_shift",  cadence:{opensDaysBefore:75,dueByDaysBefore:21,expectedResponseDays:14}},
+    {id:"santa_fe",name:"Santa Fe ED", note:"good people. depends on hearing from ABQ first.",
+     reach:"nm",      homeBaseLoc:"santa_fe",dayRate:1700,nightRate:2100,dayHours:10,nightHours:10,
+     submissionType:"by_window", cadence:{opensDaysBefore:90,dueByDaysBefore:30,expectedResponseDays:10}, dependsOn:"abq"},
+    {id:"abq",     name:"Albuquerque ED",note:"high volume, fast. anchors the NM trip.",
+     reach:"nm",      homeBaseLoc:"abq",     dayRate:1600,nightRate:2000,dayHours:9, nightHours:10,
+     submissionType:"by_shift",  cadence:{opensDaysBefore:80,dueByDaysBefore:25,expectedResponseDays:7}},
+    {id:"gallup",  name:"Gallup ED",   note:"rural, long days, pays for it. tiring.",
+     reach:"rural_nm",homeBaseLoc:"abq",     dayRate:2100,nightRate:2500,dayHours:12,nightHours:12,
+     submissionType:"by_window", cadence:{opensDaysBefore:70,dueByDaysBefore:14,expectedResponseDays:21}},
+  ];
+  const familySpans=[
+    {from:"2026-08-01",to:"2026-08-21",loc:"santa_fe"},   // NM family stay → NM sites co-locate in Aug
+    {from:"2026-07-04",to:"2026-07-12",loc:"montana"},
+    {from:"2026-12-22",to:"2027-01-02",loc:"boston"},
+  ];
+  const locks=[
+    {date:"2026-08-15",kind:"hard",label:"anniversary"},
+    {date:"2026-08-08",kind:"soft",recoveryBufferHrs:24,label:"recital"},
+  ];
+  const kidCalendars=[
+    {childId:"juniper",schoolDaysOutWeight:1,closedRanges:[{from:"2026-06-18",to:"2026-08-31"},{from:"2026-11-26",to:"2026-11-28"},{from:"2026-12-22",to:"2027-01-02"}]},
+    {childId:"ocean",  schoolDaysOutWeight:1,closedRanges:[{from:"2026-06-18",to:"2026-08-31"},{from:"2026-11-26",to:"2026-11-28"},{from:"2026-12-22",to:"2027-01-02"}]},
+  ];
+  const pace={
+    annualTarget:95000,
+    pressureCeiling:7,   // soft comfortable max shifts / month
+    // back-loaded: lighter through spring/summer, ramps into the fall
+    curve:[
+      {month:1,tag:"light"},{month:2,tag:"light"},{month:3,tag:"normal"},{month:4,tag:"normal"},
+      {month:5,tag:"light"},{month:6,tag:"light"},{month:7,tag:"normal"},{month:8,tag:"heavy"},
+      {month:9,tag:"heavy"},{month:10,tag:"heavy"},{month:11,tag:"travel"},{month:12,tag:"normal"},
+    ],
+  };
+  // seeded requests: confirmed YTD (feeds booked / floor), plus a live submitted + a draft
+  const requests=[
+    cReq("c1","boston","day",  ["2026-01-13","2026-01-20","2026-01-27"]),
+    cReq("c2","abq",   "night",["2026-02-10","2026-02-11"]),
+    cReq("c3","boston","day",  ["2026-03-04","2026-03-18"]),
+    cReq("c4","santa_fe","day",["2026-03-24","2026-03-25"]),
+    cReq("c5","boston","night",["2026-04-08","2026-04-22"]),
+    cReq("c6","gallup","day",  ["2026-05-12","2026-05-13"]),
+    cReq("c7","boston","day",  ["2026-05-20"]),
+    // a live submitted request for July (shows the deadline clock + dependency)
+    {id:"s1",siteId:"abq",shiftType:"day",opens:"2026-04-13",dueBy:"2026-05-08",
+     state:"submitted",submittedOn:"2026-05-02",expectedResponseBy:"2026-05-09",
+     footprint:{kind:"pinned",dates:["2026-07-07","2026-07-08","2026-07-09"]}},
+    {id:"s2",siteId:"santa_fe",shiftType:"day",opens:"2026-04-08",dueBy:"2026-06-20",
+     state:"draft",
+     footprint:{kind:"smeared",candidates:["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"],take:2}},
+  ];
+  return {sites,familySpans,locks,kidCalendars,pace,requests};
+}
+function cReq(id,siteId,shiftType,dates){
+  return {id,siteId,shiftType,opens:ds(ad(pd(dates[0]),-70)),dueBy:ds(ad(pd(dates[0]),-25)),
+    state:"confirmed",submittedOn:ds(ad(pd(dates[0]),-40)),resolvedOn:ds(ad(pd(dates[0]),-30)),
+    expectedResponseBy:ds(ad(pd(dates[0]),-26)),footprint:{kind:"pinned",dates}};
+}
+
+/* ════════ DERIVED VALUES & FORMULAS (§4) — all readouts (Inv 5) ════════ */
+
+const siteRate=(s,t)=>t==="day"?s.dayRate:s.nightRate;
+const siteHours=(s,t)=>t==="day"?s.dayHours:s.nightHours;
+const shiftCount=r=>r.footprint.kind==="pinned"?r.footprint.dates.length:r.footprint.take;
+
+/* typicalShiftPay — estimate; carries assumption (§4.4) */
+function typicalShiftPay(sites){
+  const v=sites.reduce((a,s)=>a+(s.dayRate+s.nightRate)/2,0)/sites.length;
+  return est(Math.round(v/10)*10,["typicalShiftPay = mean of site day/night rates"]);
+}
+
+/* §4.2 co-location + travel */
+function coLocation(site,weekDates,familySpans){
+  for(const sp of familySpans){
+    const f=pd(sp.from),t=pd(sp.to);
+    const overlaps=weekDates.some(d=>d>=f&&d<=t);
+    if(!overlaps)continue;
+    const hrs=(REACH_ADJ[sp.loc]||{})[site.reach];
+    if(hrs!=null&&hrs<=CHEAP_HRS)return {coLocated:true,loc:sp.loc,hrs};
+  }
+  return {coLocated:false,loc:null,hrs:null};
+}
+function travelHours(site,weekDates,familySpans){
+  const co=coLocation(site,weekDates,familySpans);
+  return co.coLocated?co.hrs:ROUNDTRIP[site.reach];
+}
+
+/* §4.1 per-window money — facts for choosing */
+function windowMoney(site,type,weekDates,familySpans){
+  const shiftPay=siteRate(site,type);
+  const clinicalHours=siteHours(site,type);
+  const erPerHr=known(shiftPay/clinicalHours);
+  const travel=travelHours(site,weekDates,familySpans);
+  const rest=REST_HOURS[type];
+  const awayHours=travel+clinicalHours+rest;
+  const awayPerHr=est(shiftPay/awayHours,
+    [`restHours(${type})=${rest}`,`travelHours=${travel}`]);
+  return {shiftPay,clinicalHours,erPerHr,awayPerHr,awayHours,travel};
+}
+
+/* weighted days-out for a week (§ kid presence; Inv 9 — presence only) */
+function weekDaysOut(weekDates,kidCalendars){
+  let out=0;
+  for(const d of weekDates){
+    const dow=d.getDay();
+    let w=0;
+    if(dow===0||dow===6)w=1;                     // weekend → kids home
+    for(const kc of kidCalendars){
+      for(const r of kc.closedRanges){
+        if(d>=pd(r.from)&&d<=pd(r.to)){w=Math.max(w,kc.schoolDaysOutWeight);break;}
+      }
+    }
+    out+=w;
+  }
+  return out;                                     // 0..7
+}
+
+/* §4.4 curve shares (fractions sum to 1) + month quota */
+function curveShares(pace){
+  const w=pace.curve.map(m=>m.shareOverride!=null?null:TAG_W[m.tag]);
+  const fixed=pace.curve.reduce((a,m)=>a+(m.shareOverride!=null?m.shareOverride:0),0);
+  const wsum=w.reduce((a,x)=>a+(x||0),0);
+  const free=Math.max(0,1-fixed);
+  return pace.curve.map((m,i)=> m.shareOverride!=null?m.shareOverride:(wsum>0?free*w[i]/wsum:0));
+}
+function monthQuota(pace,monthIdx,tsp){
+  const shares=curveShares(pace);
+  const monthTarget$=shares[monthIdx]*pace.annualTarget;
+  const q=Math.round(monthTarget$/tsp.value);
+  return {monthTarget$,quota:est(q,tsp.assumptions),shares};
+}
+/* fraction of annual pace expected to have elapsed by `date` */
+function curveCumulativeFraction(pace,date){
+  const shares=curveShares(pace);
+  const m=date.getMonth();
+  let f=0;
+  for(let i=0;i<12;i++){
+    if(i<m)f+=shares[i];
+    else if(i===m)f+=shares[i]*(date.getDate()/dim(date.getFullYear(),i));
+  }
+  return f;
+}
+
+/* §4.5 the cooling aggregate */
+function coolingAggregate(state,tsp){
+  const {pace,requests,sites}=state;
+  const siteById=Object.fromEntries(sites.map(s=>[s.id,s]));
+  const fracYearElapsed=days(new Date(YEAR,0,1),TODAY)/365;
+  const expectedToDate$=pace.annualTarget*curveCumulativeFraction(pace,TODAY);
+  let bookedToDate$=0;
+  for(const r of requests){
+    if(r.state==="confirmed"&&r.footprint.kind==="pinned"){
+      const inYr=r.footprint.dates.filter(d=>pd(d)<=TODAY&&pd(d).getFullYear()===YEAR);
+      bookedToDate$+=inYr.length*siteRate(siteById[r.siteId],r.shiftType);
+    }
+  }
+  const flatRunRate$=fracYearElapsed>0?bookedToDate$/fracYearElapsed:0;
+  const onCurveProjection$=expectedToDate$>0?pace.annualTarget*(bookedToDate$/expectedToDate$):bookedToDate$;
+  const coolingGap$=onCurveProjection$-flatRunRate$;
+  // infeasibility: can the gap still be closed at a sane pace? (§6.1)
+  const monthsLeft=12-TODAY.getMonth()-(TODAY.getDate()/dim(YEAR,TODAY.getMonth()));
+  const maxReachable$=bookedToDate$+pace.pressureCeiling*monthsLeft*tsp.value;
+  const feasible=maxReachable$>=pace.annualTarget;
+  const shortfall=Math.max(0,pace.annualTarget-maxReachable$);
+  const heat=feasible?0:clamp01(shortfall/(pace.annualTarget*0.5));
+  return {fracYearElapsed,expectedToDate$,bookedToDate$,flatRunRate$,onCurveProjection$,coolingGap$,feasible,heat,maxReachable$,monthsLeft,annualTarget:pace.annualTarget};
+}
+
+/* §4.6 exposure per week off the footprint */
+function weekExposure(weekDates,requests,siteById,tsp){
+  const wf=new Set(weekDates.map(ds));
+  let floor$=0,ceil$=0,pending=[];
+  for(const r of requests){
+    const fp=r.footprint;
+    const datesIn=(fp.kind==="pinned"?fp.dates:fp.candidates).filter(d=>wf.has(d));
+    if(!datesIn.length)continue;
+    const rate=siteRate(siteById[r.siteId],r.shiftType);
+    if(r.state==="confirmed"&&fp.kind==="pinned"){floor$+=datesIn.length*rate;}
+    else if(r.state==="submitted"||r.state==="draft"){
+      pending.push(r);
+      if(fp.kind==="pinned")ceil$+=datesIn.length*rate;
+      else ceil$+=Math.min(fp.take,datesIn.length)*tsp.value; // smeared → typicalShiftPay (estimate)
+    }
+  }
+  ceil$+=floor$;
+  // collision: two pending footprints overlapping in this week
+  let collision=false;
+  for(let i=0;i<pending.length;i++)for(let j=i+1;j<pending.length;j++){
+    const a=new Set((pending[i].footprint.kind==="pinned"?pending[i].footprint.dates:pending[i].footprint.candidates).filter(d=>wf.has(d)));
+    const b=(pending[j].footprint.kind==="pinned"?pending[j].footprint.dates:pending[j].footprint.candidates).filter(d=>wf.has(d));
+    if(b.some(d=>a.has(d)))collision=true;
+  }
+  const thinOnly=pending.length>0&&pending.every(r=>r.footprint.kind==="smeared"&&r.footprint.take<=2);
+  const hole=floor$===0&&ceil$>0&&thinOnly;
+  return {floor$,ceil$,pending,collision,hole};
+}
+
+/* §5 request lifecycle clocks */
+function requestPressure(r){
+  if(r.state!=="draft"&&r.state!=="submitted")return 0;
+  if(r.state==="submitted")return 0;             // → 0 once acted
+  return clamp01(days(pd(r.opens),TODAY)/Math.max(1,days(pd(r.opens),pd(r.dueBy))));
+}
+function closingTerm(opens,dueBy){
+  const o=pd(opens),d=pd(dueBy);
+  if(TODAY<o)return 0;                            // not yet open
+  if(TODAY>d)return 0;                            // closed
+  return clamp01(days(o,TODAY)/Math.max(1,days(o,d)));
+}
+
+/* weeks of a month (Monday-start, overlapping the month) */
+function getWeeks(y,m){
+  const last=new Date(y,m+1,0);
+  let cur=new Date(y,m,1);cur.setDate(cur.getDate()-((cur.getDay()+6)%7));
+  const weeks=[];
+  while(cur<=last){
+    const dates=[];for(let i=0;i<7;i++){const d=new Date(cur);d.setDate(cur.getDate()+i);dates.push(d);}
+    if(dates.some(d=>d.getMonth()===m))weeks.push({start:new Date(cur),dates});
+    cur.setDate(cur.getDate()+7);
+  }
+  return weeks;
+}
+
+/* ════════ WINDOWS + BRIGHTNESS (§4.3) ════════
+   Derived per (site × week). Brightness drives GLOW ONLY:
+   never order, never visibility, never action (Inv 1, 2a). */
+function buildWindows(state,monthIdx,types,tsp){
+  const {sites,familySpans,kidCalendars,locks,pace,requests}=state;
+  const siteById=Object.fromEntries(sites.map(s=>[s.id,s]));
+  const weeks=getWeeks(YEAR,monthIdx);
+  const qInfo=monthQuota(pace,monthIdx,tsp);
+  // committed shifts toward this month (pinned dates landing in month)
+  let committed=0;
+  for(const r of requests){
+    if(r.state==="confirmed"||r.state==="submitted"||r.state==="draft"){
+      const dts=(r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates);
+      const n=r.footprint.kind==="pinned"?dts.filter(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR).length
+              :(dts.some(d=>pd(d).getMonth()===monthIdx)?r.footprint.take:0);
+      committed+=n;
+    }
+  }
+  const remaining=qInfo.quota.value-committed;
+  const raw=[];
+  weeks.forEach((wk,wi)=>{
+    sites.forEach(site=>{
+      const type=types[`${site.id}-${wi}`]||"day";
+      const money=windowMoney(site,type,wk.dates,familySpans);
+      const co=coLocation(site,wk.dates,familySpans);
+      const dout=weekDaysOut(wk.dates,kidCalendars);
+      const opens=ds(ad(wk.start,-site.cadence.opensDaysBefore));
+      const dueBy=ds(ad(wk.start,-site.cadence.dueByDaysBefore));
+      const closing=closingTerm(opens,dueBy);
+      const closed=TODAY>pd(dueBy);
+      const notOpen=TODAY<pd(opens);
+      const lockHit=wk.dates.filter(d=>locks.some(l=>l.date===ds(d)));
+      raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,
+        closing,closed,notOpen,lockHit,
+        existing:requests.find(r=>r.siteId===site.id&&r.footprint&&
+          (r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates).some(d=>pd(d).getMonth()===monthIdx&&wk.dates.some(wd=>ds(wd)===d)))});
+    });
+  });
+  // normalization ranges across the month's windows
+  const er=raw.map(w=>w.money.erPerHr.value), aw=raw.map(w=>w.money.awayPerHr.value), dt=raw.map(w=>w.dout);
+  const nrm=(v,a)=>{const lo=Math.min(...a),hi=Math.max(...a);return hi>lo?(v-lo)/(hi-lo):0.5;};
+  raw.forEach(w=>{
+    const c={
+      workQuality:nrm(w.money.erPerHr.value,er),
+      familyEfficiency:nrm(w.money.awayPerHr.value,aw),
+      coLocation:w.co.coLocated?1:0,
+      lowDaysOut:1-nrm(w.dout,dt),
+      quotaFit:remaining>0?clamp01(0.45+0.55*Math.min(1,remaining/Math.max(1,qInfo.quota.value))):0.08,
+      closing:w.closing,
+    };
+    let score=0;for(const k in BW)score+=BW[k]*c[k];
+    if(w.closed)score*=0.45;                       // closed windows dim (persist, never gone — Inv 8)
+    if(w.notOpen)score*=0.7;
+    w.components=c;w.score=score;w.bucket=coarseBucket(score);
+  });
+  return {weeks,windows:raw,qInfo,committed,remaining};
+}
+
+/* ════════ tiny UI atoms ════════ */
+function Num({e,money,k,dp,bold}){
+  const v=e.value;
+  const txt=money?(k?fmtK(v):fmt$(v)):(dp!=null?v.toFixed(dp):String(v));
+  if(e.basis==="estimate")
+    return <span title={"estimate — "+(e.assumptions||[]).join(" · ")}
+      style={{fontStyle:"italic",color:C.est,borderBottom:`1px dotted ${C.estLine}`,cursor:"help",fontWeight:bold?700:400}}>~{txt}</span>;
+  return <span style={{fontWeight:bold?700:400}}>{txt}</span>;
+}
+const Tag=({children,bg,col})=> <span style={{fontSize:8,fontWeight:800,letterSpacing:"0.04em",
+  padding:"1px 5px",borderRadius:3,background:bg||C.line2,color:col||C.gray,textTransform:"uppercase",whiteSpace:"nowrap"}}>{children}</span>;
+const Btn=({children,onClick,kind,small,disabled})=>{
+  const styles={prim:{bg:C.ink,col:"#fff",bd:C.ink},ghost:{bg:"transparent",col:C.gray,bd:C.line},
+    danger:{bg:"transparent",col:C.red,bd:"#F1C9C4"},good:{bg:"transparent",col:C.green,bd:"#BFE3D3"}}[kind||"ghost"];
+  return <button onClick={onClick} disabled={disabled} style={{fontFamily:MONO,fontSize:small?9:10,fontWeight:700,
+    padding:small?"3px 7px":"5px 10px",borderRadius:4,cursor:disabled?"not-allowed":"pointer",
+    background:styles.bg,color:disabled?C.faint:styles.col,border:`1px solid ${disabled?C.line:styles.bd}`,
+    opacity:disabled?0.6:1,letterSpacing:"0.02em",whiteSpace:"nowrap"}}>{children}</button>;
+};
+function glowStyle(bucket){
+  switch(bucket){
+    case"brightest":return{border:`1px solid #E0A92E`,background:"#FFFAEC",boxShadow:"0 0 0 1px #E8B53D, 0 5px 20px rgba(220,150,20,.30)"};
+    case"bright":   return{border:`1px solid #E8C97A`,background:"#FFFDF5",boxShadow:"0 0 0 1px #F0D78A, 0 3px 12px rgba(220,170,40,.18)"};
+    case"normal":   return{border:`1px solid ${C.line}`,background:C.panel,boxShadow:"none"};
+    default:        return{border:`1px solid ${C.line2}`,background:"#FCFBFA",boxShadow:"none"};
+  }
+}
+
+/* ════════ COOLING AGGREGATE — never shown raw (Inv 6) ════════ */
+function CoolingBar({cool,compact}){
+  const hot=!cool.feasible;
+  return <div style={{padding:compact?"8px 10px":"12px 14px",borderRadius:7,
+    border:`1px solid ${hot?"#E8B4A8":C.line}`,background:hot?"#FCEFEA":"#fff",position:"relative",overflow:"hidden",
+    animation:hot?"heat 2.4s ease-in-out infinite":"none"}}>
+    {!hot? <>
+      <div style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase",marginBottom:6}}>On current pace</div>
+      <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+        <span style={{fontSize:compact?20:24,fontWeight:800,color:C.ink,letterSpacing:"-0.02em"}}>{fmtK(cool.onCurveProjection$)}</span>
+        <span style={{fontSize:10,color:C.gray}}>projected this year</span>
+      </div>
+      <div style={{fontSize:9.5,color:C.gray,marginTop:6,lineHeight:1.5}}>
+        Booked <b style={{color:C.ink}}>{fmt$(cool.bookedToDate$)}</b> of an expected <Num e={est(cool.expectedToDate$,["curve-weighted to-date"])} money/> so far.
+        The flat run-rate reads <span style={{color:C.mute}}>{fmtK(cool.flatRunRate$)}</span> — but the curve says you ramp in the fall, so on-pace it
+        cools {cool.coolingGap$>=0?"up":"down"} to <b style={{color:C.green}}>{fmtK(cool.onCurveProjection$)}</b> (cooling moves <Num e={est(cool.coolingGap$,["onCurve − flatRunRate"])} k money/>).
+      </div>
+    </> : <>
+      <div style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.red,textTransform:"uppercase",marginBottom:6}}>The display will not cool</div>
+      <div style={{fontSize:11,color:"#9A2D1A",lineHeight:1.55,fontWeight:500}}>
+        Even at the comfortable ceiling for the rest of the year you top out near <b>{fmtK(cool.maxReachable$)}</b>,
+        short of the <b>{fmtK(cool.annualTarget)}</b> target. This is genuine heat — not an alert.
+        Use a release valve below: level up effort, lower the goal, or accept it.
+      </div>
+    </>}
+  </div>;
+}
+
+/* ════════ BRIGHTNESS DECOMPOSITION (the "shows its work" safeguard) ════════ */
+function WhyBright({w}){
+  return <div style={{padding:"10px 12px",background:"#FBFAF8",borderTop:`1px dashed ${C.line}`}}>
+    <div style={{fontSize:8.5,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>
+      Why it glows — components combine for surfacing only
+    </div>
+    {Object.keys(BW).map(k=>{
+      const v=w.components[k],pct=Math.round(v*100);
+      return <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+        <div style={{width:108,fontSize:9,color:BW_EST[k]?C.est:C.gray,fontStyle:BW_EST[k]?"italic":"normal",flexShrink:0}}>
+          {BW_LABEL[k]}{BW_EST[k]&&" ~"}</div>
+        <div style={{flex:1,height:6,background:C.line2,borderRadius:3,overflow:"hidden"}}>
+          <div style={{width:pct+"%",height:"100%",borderRadius:3,
+            background:BW_EST[k]?C.estLine:"#C8973A"}}/>
+        </div>
+        <div style={{width:64,fontSize:8,color:C.mute,textAlign:"right",flexShrink:0}}>×{BW[k]} = {(v*BW[k]).toFixed(2)}</div>
+      </div>;
+    })}
+    <div style={{marginTop:8,paddingTop:7,borderTop:`1px solid ${C.line}`,fontSize:9,color:C.gray,display:"flex",justifyContent:"space-between"}}>
+      <span>weighted score <b style={{color:C.ink}}>{w.score.toFixed(2)}</b> → bucket <b style={{color:C.ink}}>{w.bucket}</b></span>
+      <span style={{color:C.mute}}>glow only · never orders / hides / recommends</span>
+    </div>
+  </div>;
+}
+
+/* ════════ BOARD (§6.2) — primary surface, one month ════════ */
+function Board({state,setState,monthIdx,setMonthIdx,tsp}){
+  const [types,setTypes]=useState({});
+  const [open,setOpen]=useState(null);
+  const [creating,setCreating]=useState(null);
+  const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
+  const {weeks,windows,qInfo,committed,remaining}=useMemo(
+    ()=>buildWindows(state,monthIdx,types,tsp),[state,monthIdx,types,tsp]);
+  const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
+
+  const setType=(id,t)=>setTypes(p=>({...p,[id]:t}));
+  function createRequest(w,type,foot){
+    const r={id:"r"+Date.now(),siteId:w.site.id,shiftType:type,opens:w.opens,dueBy:w.dueBy,state:"draft",footprint:foot};
+    setState(s=>({...s,requests:[...s.requests,r]}));
+    setCreating(null);
+  }
+
+  // running month $ from confirmed + the quota readout (the one signal allowed to cross from footprint, §7)
+  const monthBooked$=state.requests.reduce((a,r)=>{
+    if(r.state!=="confirmed"||r.footprint.kind!=="pinned")return a;
+    const n=r.footprint.dates.filter(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR).length;
+    return a+n*siteRate(siteById[r.siteId],r.shiftType);
+  },0);
+
+  return <div style={{height:"100%",overflow:"auto"}}>
+    <div style={{maxWidth:920,margin:"0 auto",padding:"14px 16px 60px"}}>
+      {/* month nav */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+        <Btn small onClick={()=>setMonthIdx((monthIdx+11)%12)}>← {MON[(monthIdx+11)%12]}</Btn>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} {YEAR}</div>
+          <div style={{fontSize:9,color:C.gray,marginTop:1}}>the “where” · windows glow by fit, never ranked</div>
+        </div>
+        <Btn small onClick={()=>setMonthIdx((monthIdx+1)%12)}>{MON[(monthIdx+1)%12]} →</Btn>
+      </div>
+
+      {/* quota + cooling + running readouts */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+        <div style={{padding:"12px 14px",borderRadius:7,border:`1px solid ${C.line}`,background:"#fff"}}>
+          <div style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase",marginBottom:6}}>Pace suggests</div>
+          <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+            <span style={{fontSize:24,fontWeight:800}}>~<Num e={qInfo.quota}/></span>
+            <span style={{fontSize:10,color:C.gray}}>shifts this month</span>
+          </div>
+          <div style={{marginTop:9}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.gray,marginBottom:3}}>
+              <span>{committed} committed · {remaining>0?remaining+" to go":"quota met"}</span>
+              <span>{fmt$(monthBooked$)} booked</span>
+            </div>
+            <div style={{height:7,background:C.line2,borderRadius:4,overflow:"hidden",display:"flex"}}>
+              <div style={{width:Math.min(100,committed/Math.max(1,qInfo.quota.value)*100)+"%",background:C.ink}}/>
+            </div>
+            <div style={{fontSize:8,color:C.mute,marginTop:4}}>soft readout — a cap is never enforced</div>
+          </div>
+        </div>
+        <CoolingBar cool={cool} compact/>
+      </div>
+
+      {/* legend */}
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:8.5,color:C.mute,margin:"4px 2px 10px"}}>
+        <span>glow = brightness:</span>
+        {BUCKETS.map(b=><span key={b} style={{display:"inline-flex",alignItems:"center",gap:4}}>
+          <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{b}</span>)}
+        <span style={{marginLeft:"auto",color:C.est,fontStyle:"italic"}}>~amber = estimate</span>
+      </div>
+
+      {/* windows, grouped by week — chronological/structural order only (Inv 3) */}
+      {weeks.map((wk,wi)=>{
+        const wkWins=windows.filter(w=>w.wi===wi);
+        const exp=weekExposure(wk.dates,state.requests,siteById,tsp);
+        const inMonth=wk.dates.filter(d=>d.getMonth()===monthIdx);
+        const label=`${MON[inMonth[0].getMonth()]} ${inMonth[0].getDate()}–${inMonth[inMonth.length-1].getDate()}`;
+        return <div key={wi} style={{marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 2px 6px"}}>
+            <span style={{fontSize:10,fontWeight:800,color:C.gray,letterSpacing:"0.02em"}}>{label}</span>
+            {/* exposure band: floor → ceiling (her hedge, §4.6) */}
+            <div style={{flex:1,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
+              <div style={{flex:1,height:6,background:C.line2,borderRadius:3,position:"relative",overflow:"hidden"}}>
+                <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,#E8DCC0,#E8DCC0 4px,transparent 4px,transparent 7px)"}}/>
+                <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.floor$/8000*100)+"%",background:C.ink}}/>
+              </div>
+              <span style={{fontSize:8,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
+            </div>
+            {exp.collision&&<Tag bg="#FCE8E6" col={C.red}>double-book</Tag>}
+            {exp.hole&&<Tag bg="#FEF6E7" col={C.est}>thin</Tag>}
+          </div>
+
+          {wkWins.map(w=>{
+            const gs=glowStyle(w.bucket);
+            const isOpen=open===w.id;
+            return <div key={w.id} style={{...gs,borderRadius:7,marginBottom:6,transition:"box-shadow .2s"}}>
+              <div style={{display:"flex",alignItems:"stretch"}}>
+                {/* identity + note (choosing) */}
+                <div style={{flex:"1 1 200px",minWidth:0,padding:"9px 11px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
+                    <Tag>{REACH_LABEL[w.site.reach]}</Tag>
+                    {w.co.coLocated&&<Tag bg="#E6F2EC" col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
+                    {w.lockHit.length>0&&<Tag bg="#EEEAF6" col="#6D5BA8">lock</Tag>}
+                    {w.closed&&<Tag bg={C.line2} col={C.mute}>window closed</Tag>}
+                    {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
+                  </div>
+                  <div style={{fontSize:9.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.note||w.site.note}</div>
+                </div>
+                {/* raw fact columns — individually visible (Inv 2) */}
+                <div style={{display:"flex",borderLeft:`1px solid ${C.line2}`}}>
+                  <Fact label="$/hr ER"><Num e={w.money.erPerHr} money/></Fact>
+                  <Fact label="$/hr away"><Num e={w.money.awayPerHr} money/></Fact>
+                  <Fact label="days-out">{w.dout}</Fact>
+                  <Fact label="close"><span style={{color:w.closing>0.7?C.est:C.gray}}>{Math.round(w.closing*100)}%</span></Fact>
+                </div>
+              </div>
+              {/* actions */}
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 11px",borderTop:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
+                <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
+                  {["day","night"].map(t=><button key={t} onClick={()=>setType(w.id,t)}
+                    style={{fontFamily:MONO,fontSize:9,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
+                      background:w.type===t?C.ink:"transparent",color:w.type===t?"#fff":C.gray}}>{t}</button>)}
+                </div>
+                {w.existing? <Tag bg="#EEF4FB" col={C.blue}>request exists · {w.existing.state}</Tag>
+                  : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>+ request</Btn>}
+                <span style={{marginLeft:"auto",fontSize:8,color:C.mute}}>{w.site.submissionType==="by_window"?"by window":"by shift"}</span>
+                <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why bright"}</Btn>
+              </div>
+              {isOpen&&<WhyBright w={w}/>}
+            </div>;
+          })}
+        </div>;
+      })}
+      <p style={{fontSize:9,color:C.mute,textAlign:"center",marginTop:18,lineHeight:1.6}}>
+        Brightness is attention; order is structural; the choice is read from the raw facts.<br/>
+        No window is hidden, reordered by desirability, or recommended.
+      </p>
+    </div>
+    {creating&&<CreateModal w={creating.w} tsp={tsp} onClose={()=>setCreating(null)} onCreate={createRequest}/>}
+  </div>;
+}
+const Fact=({label,children})=> <div style={{padding:"9px 11px",textAlign:"right",minWidth:74,borderRight:`1px solid ${C.line2}`}}>
+  <div style={{fontSize:7.5,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:2}}>{label}</div>
+  <div style={{fontSize:12,fontWeight:700,color:C.ink}}>{children}</div>
+</div>;
+
+function CreateModal({w,tsp,onClose,onCreate}){
+  const byWindow=w.site.submissionType==="by_window";
+  const [type,setType]=useState(w.type);
+  const weekdays=w.week.dates.filter(d=>d.getDay()!==0&&d.getDay()!==6).map(ds);
+  const [take,setTake]=useState(2);
+  const [picked,setPicked]=useState(byWindow?weekdays:[weekdays[0]]);
+  const toggle=d=>setPicked(p=>p.includes(d)?p.filter(x=>x!==d):[...p,d]);
+  function go(){
+    const foot=byWindow?{kind:"smeared",candidates:picked,take:Math.min(take,picked.length)}
+                       :{kind:"pinned",dates:picked};
+    onCreate(w,type,foot);
+  }
+  return <Overlay onClose={onClose}>
+    <div style={{fontSize:13,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
+    <div style={{fontSize:9,color:C.gray,marginBottom:12}}>{byWindow?"by window — pick candidates + how many to take":"by shift — pick the dates"}</div>
+    <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginBottom:12}}>
+      {["day","night"].map(t=><button key={t} onClick={()=>setType(t)} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
+        padding:"5px 14px",border:"none",cursor:"pointer",background:type===t?C.ink:"transparent",color:type===t?"#fff":C.gray}}>{t}</button>)}
+    </div>
+    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
+      {weekdays.map(d=>{const on=picked.includes(d);return <button key={d} onClick={()=>toggle(d)}
+        style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 9px",borderRadius:5,cursor:"pointer",
+          border:`1px solid ${on?C.ink:C.line}`,background:on?C.ink:"#fff",color:on?"#fff":C.gray}}>
+        {MON[pd(d).getMonth()]} {pd(d).getDate()}</button>;})}
+    </div>
+    {byWindow&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+      <span style={{fontSize:10,color:C.gray}}>take</span>
+      <Btn small onClick={()=>setTake(t=>Math.max(1,t-1))}>−</Btn>
+      <span style={{fontSize:13,fontWeight:800,minWidth:18,textAlign:"center"}}>{take}</span>
+      <Btn small onClick={()=>setTake(t=>Math.min(picked.length,t+1))}>+</Btn>
+      <span style={{fontSize:9,color:C.mute}}>of {picked.length} candidates · ceiling at <Num e={tsp} money/>/shift</span>
+    </div>}
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+      <Btn onClick={onClose}>cancel</Btn>
+      <Btn kind="prim" disabled={!picked.length} onClick={go}>create draft</Btn>
+    </div>
+  </Overlay>;
+}
+function Overlay({children,onClose}){
+  return <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(28,25,23,.4)",display:"flex",
+    alignItems:"center",justifyContent:"center",zIndex:200,padding:16}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:10,padding:"18px 20px",maxWidth:460,width:"100%",
+      boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>{children}</div>
+  </div>;
+}
+
+/* ════════ BALANCE (§6.1) — the three dials ════════ */
+function Balance({state,setState,tsp}){
+  const {pace}=state;
+  const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
+  const shares=curveShares(pace);
+  const setPace=p=>setState(s=>({...s,pace:{...s.pace,...p}}));
+  const cycleTag=i=>setPace({curve:pace.curve.map((m,j)=>j===i?{...m,tag:TAGS[(TAGS.indexOf(m.tag)+1)%TAGS.length],shareOverride:undefined}:m)});
+  const tagCol={summer:"#CBD5C0",light:"#D9E2EC",normal:"#C9C2BA",heavy:"#E3B7A8",travel:"#D6CBE3"};
+  const maxShare=Math.max(...shares,0.0001);
+
+  return <div style={{height:"100%",overflow:"auto"}}>
+    <div style={{maxWidth:760,margin:"0 auto",padding:"16px 16px 60px"}}>
+      <div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Balance</div>
+      <div style={{fontSize:9.5,color:C.gray,marginBottom:14}}>three coupled soft dials · the tool never picks a setting</div>
+
+      <CoolingBar cool={cool}/>
+
+      {/* dial 1 — annual target */}
+      <div style={{marginTop:16,padding:"13px 15px",border:`1px solid ${C.line}`,borderRadius:8,background:"#fff"}}>
+        <Dial label="Annual target" sub="soft — the whole-year aim">
+          <span style={{fontSize:18,fontWeight:800}}>{fmtK(pace.annualTarget)}</span>
+        </Dial>
+        <input type="range" min={60000} max={420000} step={5000} value={pace.annualTarget}
+          onChange={e=>setPace({annualTarget:+e.target.value})} style={{width:"100%",accentColor:C.ink,marginTop:8}}/>
+      </div>
+
+      {/* dial 2 — pressure ceiling */}
+      <div style={{marginTop:12,padding:"13px 15px",border:`1px solid ${C.line}`,borderRadius:8,background:"#fff"}}>
+        <Dial label="Pressure ceiling" sub="soft — comfortable max effort / month">
+          <span style={{fontSize:18,fontWeight:800}}>{pace.pressureCeiling}</span>
+          <span style={{fontSize:10,color:C.gray,marginLeft:4}}>shifts/mo</span>
+        </Dial>
+        <input type="range" min={2} max={14} step={1} value={pace.pressureCeiling}
+          onChange={e=>setPace({pressureCeiling:+e.target.value})} style={{width:"100%",accentColor:C.ink,marginTop:8}}/>
+      </div>
+
+      {/* dial 3 — the curve */}
+      <div style={{marginTop:12,padding:"13px 15px",border:`1px solid ${C.line}`,borderRadius:8,background:"#fff"}}>
+        <Dial label="Pace curve" sub="tap a month to retag — summer troughs, travel dips">
+          <span style={{fontSize:9,color:C.mute}}>normalized to target</span>
+        </Dial>
+        <div style={{display:"flex",alignItems:"flex-end",gap:3,height:96,marginTop:12}}>
+          {pace.curve.map((m,i)=>{
+            const h=Math.max(4,shares[i]/maxShare*78);
+            return <div key={i} onClick={()=>cycleTag(i)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}}>
+              <div style={{fontSize:7,color:C.mute,marginBottom:2}}>{fmtK(shares[i]*pace.annualTarget).replace("$","")}</div>
+              <div style={{width:"100%",height:h,background:tagCol[m.tag],borderRadius:"3px 3px 0 0",
+                border:i===TODAY.getMonth()?`2px solid ${C.ink}`:"none"}}/>
+              <div style={{fontSize:7.5,fontWeight:700,color:i===TODAY.getMonth()?C.ink:C.gray,marginTop:3}}>{MON[i]}</div>
+              <div style={{fontSize:6.5,color:C.mute}}>{m.tag}</div>
+            </div>;
+          })}
+        </div>
+      </div>
+
+      {/* release valves for a hot stretch (§6.1) */}
+      <div style={{marginTop:14,padding:"13px 15px",border:`1px solid ${C.line}`,borderRadius:8,background:"#FBFAF8"}}>
+        <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>Release valves</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <Btn onClick={()=>setPace({pressureCeiling:Math.min(14,pace.pressureCeiling+1)})}>level up effort (+1/mo)</Btn>
+          <Btn onClick={()=>setPace({annualTarget:Math.max(60000,pace.annualTarget-20000)})}>lower the goal (−$20k)</Btn>
+          <Btn kind="ghost" onClick={()=>{}}>{cool.feasible?"feasible ✓":"accept infeasible"}</Btn>
+        </div>
+        <div style={{fontSize:8.5,color:C.mute,marginTop:8,lineHeight:1.5}}>
+          Infeasibility is shown by the display failing to cool above — no popup. Drag any dial and the others recompute live.
+        </div>
+      </div>
+
+      {/* presence layers (read-only here) */}
+      <div style={{marginTop:14}}>
+        <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>Presence layers</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          <LayerCard title="Family location">
+            {state.familySpans.map((s,i)=><Row key={i} a={`${MON[pd(s.from).getMonth()]} ${pd(s.from).getDate()}–${MON[pd(s.to).getMonth()]} ${pd(s.to).getDate()}`} b={LOC_NAME[s.loc]}/>)}
+          </LayerCard>
+          <LayerCard title="Locks">
+            {state.locks.map((l,i)=><Row key={i} a={`${MON[pd(l.date).getMonth()]} ${pd(l.date).getDate()}`} b={`${l.label} · ${l.kind}`}/>)}
+          </LayerCard>
+        </div>
+        <div style={{fontSize:8.5,color:C.mute,marginTop:8}}>Childcare is continuous — kid calendars drive days-out + presence only, never capacity (Inv 9).</div>
+      </div>
+    </div>
+  </div>;
+}
+const Dial=({label,sub,children})=> <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+  <div><div style={{fontSize:11,fontWeight:800,color:C.ink}}>{label}</div><div style={{fontSize:8.5,color:C.gray}}>{sub}</div></div>
+  <div style={{textAlign:"right"}}>{children}</div>
+</div>;
+const LayerCard=({title,children})=> <div style={{padding:"10px 12px",border:`1px solid ${C.line}`,borderRadius:7,background:"#fff"}}>
+  <div style={{fontSize:9,fontWeight:800,color:C.ink,marginBottom:6}}>{title}</div>{children}</div>;
+const Row=({a,b})=> <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.gray,padding:"2px 0"}}>
+  <span>{a}</span><span style={{color:C.mute}}>{b}</span></div>;
+
+/* ════════ GANTT SIDECAR (§6.3) — the "when" ════════ */
+function Gantt({state,setState,tsp}){
+  const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
+  const live=state.requests.filter(r=>["draft","submitted","confirmed","denied","expired"].includes(r.state));
+  function transition(r,to){
+    setState(s=>({...s,requests:s.requests.map(x=>{
+      if(x.id!==r.id)return x;
+      if(to==="submitted")return {...x,state:"submitted",submittedOn:ds(TODAY),
+        expectedResponseBy:ds(ad(TODAY,siteById[x.siteId].cadence.expectedResponseDays))};
+      if(to==="confirmed"){
+        const dates=x.footprint.kind==="smeared"?x.footprint.candidates.slice(0,x.footprint.take):x.footprint.dates;
+        return {...x,state:"confirmed",resolvedOn:ds(TODAY),footprint:{kind:"pinned",dates}}; // hardens smeared→pinned
+      }
+      if(to==="denied")return {...x,state:"denied",resolvedOn:ds(TODAY)};
+      return x;
+    })}));
+  }
+  const discard=r=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==r.id)}));
+
+  // dependency edges (§6.3) — single dependsOn chain only
+  const chains=state.sites.filter(s=>s.dependsOn).map(s=>{
+    const upstream=live.find(r=>r.siteId===s.dependsOn&&(r.state==="submitted"||r.state==="confirmed"));
+    const downstream=live.find(r=>r.siteId===s.id);
+    if(!upstream||!downstream)return null;
+    const slack=days(pd(upstream.expectedResponseBy||upstream.dueBy),pd(downstream.dueBy));
+    return {from:siteById[s.dependsOn],to:s,upstream,downstream,slack};
+  }).filter(Boolean);
+
+  const stCol={draft:C.gray,submitted:C.blue,confirmed:C.green,denied:C.red,expired:C.mute};
+  return <div style={{height:"100%",overflow:"auto"}}>
+    <div style={{maxWidth:760,margin:"0 auto",padding:"16px 16px 60px"}}>
+      <div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Gantt <span style={{fontSize:10,fontWeight:600,color:C.mute}}>· sidecar</span></div>
+      <div style={{fontSize:9.5,color:C.gray,marginBottom:14}}>the “when” — deadline clocks + the one dependency edge. Not a decision surface.</div>
+
+      {chains.length>0&&<div style={{marginBottom:16}}>
+        <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>Dependency</div>
+        {chains.map((c,i)=><div key={i} style={{padding:"11px 13px",border:`1px solid ${c.slack<0?"#E8B4A8":C.line}`,
+          borderRadius:7,background:c.slack<0?"#FCEFEA":"#fff",marginBottom:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,fontWeight:700}}>
+            <span>{c.from.name}</span>
+            <span style={{color:C.mute}}>assigns →</span>
+            <span>{c.to.name}</span>
+            <span style={{marginLeft:"auto"}}>{c.slack<0
+              ? <Tag bg="#FCE8E6" col={C.red}>slack {c.slack}d — B due before A responds</Tag>
+              : <Tag bg="#E6F2EC" col={C.green}>{c.slack}d slack</Tag>}</span>
+          </div>
+          <div style={{fontSize:8.5,color:C.gray,marginTop:5}}>
+            A responds by {c.upstream.expectedResponseBy||c.upstream.dueBy} · B due {c.downstream.dueBy}
+            {c.slack<0&&" — flagged, never auto-resolved"}
+          </div>
+        </div>)}
+      </div>}
+
+      <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>Requests · two clocks, one object</div>
+      {live.length===0&&<div style={{fontSize:10,color:C.mute,padding:"20px 0",textAlign:"center"}}>No requests yet — create one on the Board.</div>}
+      {live.sort((a,b)=>pd(a.dueBy)-pd(b.dueBy)).map(r=>{
+        const site=siteById[r.siteId];
+        const press=requestPressure(r);
+        const dim=r.state==="denied"||r.state==="expired";
+        const n=shiftCount(r);
+        return <div key={r.id} style={{padding:"10px 12px",border:`1px solid ${C.line}`,borderRadius:7,background:"#fff",
+          marginBottom:7,opacity:dim?0.55:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:11,fontWeight:800}}>{site.name}</span>
+            <Tag bg="#F4F2F0" col={stCol[r.state]}>{r.state}</Tag>
+            <Tag>{r.shiftType}</Tag>
+            <Tag>{r.footprint.kind==="smeared"?`smeared · take ${r.footprint.take}/${r.footprint.candidates.length}`:`pinned · ${n}`}</Tag>
+            <span style={{marginLeft:"auto",fontSize:8.5,color:C.mute}}>
+              {r.footprint.kind==="pinned"?r.footprint.dates.map(d=>`${MON[pd(d).getMonth()]} ${pd(d).getDate()}`).join(", ")
+                :`${MON[pd(r.footprint.candidates[0]).getMonth()]} ${pd(r.footprint.candidates[0]).getDate()}–${pd(r.footprint.candidates.at(-1)).getDate()}`}
+            </span>
+          </div>
+          {/* deadline clock */}
+          {(r.state==="draft"||r.state==="submitted")&&<div style={{marginTop:7}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:C.mute,marginBottom:2}}>
+              <span>opens {r.opens}</span>
+              <span>{r.state==="submitted"?`pressure → 0 · response by ${r.expectedResponseBy}`:`due ${r.dueBy}`}</span>
+            </div>
+            <div style={{height:5,background:C.line2,borderRadius:3,overflow:"hidden"}}>
+              <div style={{width:(r.state==="submitted"?100:press*100)+"%",height:"100%",
+                background:r.state==="submitted"?C.blue:(press>0.7?C.red:C.ink)}}/>
+            </div>
+          </div>}
+          <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+            {r.state==="draft"&&<><Btn small kind="prim" onClick={()=>transition(r,"submitted")}>submit</Btn>
+              <Btn small kind="danger" onClick={()=>discard(r)}>discard</Btn></>}
+            {r.state==="submitted"&&<><Btn small kind="good" onClick={()=>transition(r,"confirmed")}>confirm</Btn>
+              <Btn small kind="danger" onClick={()=>transition(r,"denied")}>deny</Btn></>}
+            {dim&&<span style={{fontSize:8.5,color:C.mute,fontStyle:"italic"}}>faded to legibility floor — persists, never deleted (Inv 8)</span>}
+            {r.state==="confirmed"&&<span style={{fontSize:8.5,color:C.green,fontWeight:700}}>→ hardened to a planner placement (home base, §7)</span>}
+          </div>
+        </div>;
+      })}
+      <p style={{fontSize:9,color:C.mute,textAlign:"center",marginTop:18,lineHeight:1.6}}>
+        The footprint owns trips, days-out, pace & confirmed placements.<br/>
+        Only the pace/exposure readout crosses back to the Board (the seam, §7).
+      </p>
+    </div>
+  </div>;
+}
+
+/* ════════ APP SHELL ════════ */
+function App(){
+  const [state,setState]=useState(()=>{
+    try{const s=localStorage.getItem("perDiemState");if(s)return JSON.parse(s);}catch(e){}
+    return seedState();
+  });
+  const [surface,setSurface]=useState("board");
+  const [monthIdx,setMonthIdx]=useState(7); // August — requests are open now
+  const fileRef=useRef();
+  useEffect(()=>{try{localStorage.setItem("perDiemState",JSON.stringify(state));}catch(e){}},[state]);
+  const tsp=useMemo(()=>typicalShiftPay(state.sites),[state.sites]);
+
+  const exportJSON=()=>{
+    const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="per-diem.json";a.click();
+  };
+  const importJSON=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+    rd.onload=ev=>{try{setState(JSON.parse(ev.target.result));}catch(err){alert("Invalid file");}};rd.readAsText(f);};
+  const reset=()=>{if(confirm("Reset to seed data? This discards your requests and dials."))setState(seedState());};
+
+  const tabs=[["balance","Balance"],["board","Board"],["gantt","Gantt"]];
+  return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
+    {/* header */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
+      borderBottom:`1px solid ${C.line}`,background:"#fff",flexShrink:0,gap:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+        <span style={{fontSize:13,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM</span>
+        <span style={{fontSize:8.5,color:C.mute}}>surface, don’t choose</span>
+      </div>
+      <div style={{display:"flex",gap:5,alignItems:"center"}}>
+        <Btn small onClick={exportJSON}>export</Btn>
+        <Btn small onClick={()=>fileRef.current.click()}>import</Btn>
+        <Btn small onClick={reset}>reset</Btn>
+        <input ref={fileRef} type="file" accept=".json" onChange={importJSON} style={{display:"none"}}/>
+      </div>
+    </div>
+    {/* tabs */}
+    <div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:"#fff",flexShrink:0}}>
+      {tabs.map(([id,label])=><button key={id} onClick={()=>setSurface(id)}
+        style={{fontFamily:MONO,fontSize:11,fontWeight:800,padding:"9px 16px",border:"none",cursor:"pointer",
+          background:"transparent",color:surface===id?C.ink:C.mute,letterSpacing:"-0.01em",
+          borderBottom:surface===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
+      <span style={{marginLeft:"auto",alignSelf:"center",fontSize:8,color:C.mute,padding:"0 14px"}}>today {ds(TODAY)}</span>
+    </div>
+    {/* surface */}
+    <div style={{flex:1,minHeight:0}}>
+      {surface==="balance"&&<Balance state={state} setState={setState} tsp={tsp}/>}
+      {surface==="board"&&<Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp}/>}
+      {surface==="gantt"&&<Gantt state={state} setState={setState} tsp={tsp}/>}
+    </div>
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
