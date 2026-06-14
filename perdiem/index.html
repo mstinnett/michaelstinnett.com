@@ -216,6 +216,43 @@ function weekDaysOut(weekDates,kidCalendars){
   return out;                                     // 0..7
 }
 
+/* per-kid days-out: candidate shift dates that land on a kid's out-of-school day
+   (weekend or break). The family-time cost of a window, recorded per child. */
+function kidDaysOut(dateStrs,kidCalendars){
+  return kidCalendars.map(kc=>{
+    let count=0;
+    for(const s of dateStrs){
+      const d=pd(s),we=d.getDay()===0||d.getDay()===6;
+      const closed=(kc.closedRanges||[]).some(r=>d>=pd(r.from)&&d<=pd(r.to));
+      if(we||closed)count++;
+    }
+    return {childId:kc.childId,name:kc.childId[0].toUpperCase()+kc.childId.slice(1),count,of:dateStrs.length};
+  });
+}
+
+/* month load (shift-days committed/pending) and its pressure vs the comfortable ceiling */
+function loadByMonth(state){
+  const by={};for(let m=0;m<12;m++)by[m]=0;
+  for(const r of state.requests){
+    if(r.state!=="confirmed"&&r.state!=="submitted"&&r.state!=="draft")continue;
+    if(r.footprint.kind==="pinned"){
+      for(const d of r.footprint.dates){const dt=pd(d);if(dt.getFullYear()===YEAR)by[dt.getMonth()]++;}
+    }else{
+      const m=pd(r.footprint.candidates[0]).getMonth();by[m]+=r.footprint.take;
+    }
+  }
+  return by;
+}
+function pressureTint(load,ceil){
+  if(load<=0)return null;
+  const p=load/Math.max(1,ceil);
+  if(p<0.5)return "#FCFAF4";
+  if(p<0.85)return "#FBF1DC";
+  if(p<1.05)return "#F6E2B8";    // at the comfortable ceiling
+  if(p<1.4)return "#F0CDA8";
+  return "#E9B59C";              // over the ceiling — hot
+}
+
 /* §4.4 curve shares (fractions sum to 1) + month quota */
 function curveShares(pace){
   const w=pace.curve.map(m=>m.shareOverride!=null?null:TAG_W[m.tag]);
@@ -356,7 +393,9 @@ function buildWindows(state,monthIdx,types,tsp){
       const closed=TODAY>pd(dueBy);
       const notOpen=TODAY<pd(opens);
       const lockHit=wk.dates.filter(d=>locks.some(l=>l.date===ds(d)));
-      raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,
+      const weekdayStrs=wk.dates.filter(d=>d.getDay()!==0&&d.getDay()!==6).map(ds);
+      const perKid=kidDaysOut(weekdayStrs,kidCalendars);
+      raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,weekdayStrs,perKid,
         closing,closed,notOpen,lockHit,
         existing:requests.find(r=>r.siteId===site.id&&r.footprint&&
           (r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates).some(d=>pd(d).getMonth()===monthIdx&&wk.dates.some(wd=>ds(wd)===d)))});
@@ -535,7 +574,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
         <label style={{marginLeft:"auto",fontSize:9,color:C.gray,display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer"}}>
           <input type="checkbox" checked={showOut} onChange={e=>setShowOut(e.target.checked)}/>school-out</label>
       </div>
-      <YearStrip footprint={footprint} selected={monthIdx} onSelect={setMonthIdx} showOut={showOut}/>
+      <YearStrip footprint={footprint} selected={monthIdx} onSelect={setMonthIdx} showOut={showOut} ceiling={state.pace.pressureCeiling}/>
       <FootLegend/>
 
       {/* ── MONTH WINDOW LIST (bottom) ── */}
@@ -587,6 +626,10 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
                     {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
                   </div>
                   <div style={{fontSize:9.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.note||w.site.note}</div>
+                  <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+                    {w.perKid.map(k=><span key={k.childId} title={`${k.name}: ${k.count} of ${k.of} weekdays out of school`}
+                      style={{fontSize:8,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
+                  </div>
                 </div>
                 {/* raw fact columns — individually visible (Inv 2) */}
                 <div style={{display:"flex",borderLeft:`1px solid ${C.line2}`}}>
@@ -618,7 +661,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
         No window is hidden, reordered by desirability, or recommended.
       </p>
     </div>
-    {creating&&<CreateModal w={creating.w} tsp={tsp} onClose={()=>setCreating(null)} onCreate={createRequest}/>}
+    {creating&&<CreateModal w={creating.w} state={state} tsp={tsp} onClose={()=>setCreating(null)} onCreate={createRequest}/>}
   </div>;
 }
 const Fact=({label,children})=> <div style={{padding:"9px 11px",textAlign:"right",minWidth:74,borderRight:`1px solid ${C.line2}`}}>
@@ -626,7 +669,7 @@ const Fact=({label,children})=> <div style={{padding:"9px 11px",textAlign:"right
   <div style={{fontSize:12,fontWeight:700,color:C.ink}}>{children}</div>
 </div>;
 
-function CreateModal({w,tsp,onClose,onCreate}){
+function CreateModal({w,state,tsp,onClose,onCreate}){
   const byWindow=w.site.submissionType==="by_window";
   const [type,setType]=useState(w.type);
   const weekdays=w.week.dates.filter(d=>d.getDay()!==0&&d.getDay()!==6).map(ds);
@@ -638,6 +681,12 @@ function CreateModal({w,tsp,onClose,onCreate}){
                        :{kind:"pinned",dates:picked};
     onCreate(w,type,foot);
   }
+  // live readout — money + per-kid days-out for what's being built
+  const money=windowMoney(w.site,type,w.week.dates,state.familySpans);
+  const count=byWindow?Math.min(take,picked.length):picked.length;
+  const effDates=byWindow?picked.slice(0,Math.min(take,picked.length)):picked;
+  const perKid=kidDaysOut(effDates,state.kidCalendars);
+  const totalPay=money.shiftPay*count;
   return <Overlay onClose={onClose}>
     <div style={{fontSize:13,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
     <div style={{fontSize:9,color:C.gray,marginBottom:12}}>{byWindow?"by window — pick candidates + how many to take":"by shift — pick the dates"}</div>
@@ -658,6 +707,27 @@ function CreateModal({w,tsp,onClose,onCreate}){
       <Btn small onClick={()=>setTake(t=>Math.min(picked.length,t+1))}>+</Btn>
       <span style={{fontSize:9,color:C.mute}}>of {picked.length} candidates · ceiling at <Num e={tsp} money/>/shift</span>
     </div>}
+    {/* live readout — what this candidate records */}
+    <div style={{border:`1px solid ${C.line}`,borderRadius:7,background:"#FCFBFA",padding:"10px 12px",marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
+        <span style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>This candidate records</span>
+        <span style={{fontSize:11,fontWeight:800}}>{count}× · {fmt$(totalPay)}{byWindow&&count<picked.length?" if all land":""}</span>
+      </div>
+      <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8}}>
+        <div><div style={{fontSize:7.5,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>$/hr ER</div><div style={{fontSize:13,fontWeight:700}}><Num e={money.erPerHr} money/></div></div>
+        <div><div style={{fontSize:7.5,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>$/hr away</div><div style={{fontSize:13,fontWeight:700}}><Num e={money.awayPerHr} money/></div></div>
+        <div><div style={{fontSize:7.5,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>away hrs</div><div style={{fontSize:13,fontWeight:700,color:C.gray}}>{money.awayHours}</div>
+          <div style={{fontSize:7,color:C.mute}}>{money.travel}h travel{w.co.coLocated?" · co-located":""}</div></div>
+      </div>
+      <div style={{borderTop:`1px solid ${C.line2}`,paddingTop:7}}>
+        <div style={{fontSize:7.5,fontWeight:700,color:C.mute,textTransform:"uppercase",marginBottom:4}}>Days out of school {byWindow?"(of the take)":""}</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {perKid.map(k=><span key={k.childId} style={{fontSize:10,fontWeight:700,color:k.count>0?C.est:C.green}}>
+            ◷ {k.name} <b>{k.count}</b>/{k.of}</span>)}
+          {perKid.every(k=>k.count===0)&&<span style={{fontSize:9,color:C.green}}>no family-time collision</span>}
+        </div>
+      </div>
+    </div>
     <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
       <Btn onClick={onClose}>cancel</Btn>
       <Btn kind="prim" disabled={!picked.length} onClick={go}>create draft</Btn>
@@ -1048,14 +1118,14 @@ function useFootprint(state){
         const inM=r.footprint.dates.filter(d=>pd(d).getMonth()===m&&pd(d).getFullYear()===YEAR);
         n+=inM.length;$+=inM.length*siteRate(s,r.shiftType);}}
       perMonth[m]={n,$};}
-    return {byDay,famBy,lockBy,outBy,perMonth};
+    return {byDay,famBy,lockBy,outBy,perMonth,loadM:loadByMonth(state)};
   },[state]);
 }
 
 /* by-row year strip — structural spine + month selector. Click a row to load its windows. */
-function YearStrip({footprint,selected,onSelect,showOut}){
-  const {byDay,famBy,lockBy,outBy,perMonth}=footprint;
-  const CELL=15,CG=2,WG=7,LBL=66,RG=3;
+function YearStrip({footprint,selected,onSelect,showOut,ceiling}){
+  const {byDay,famBy,lockBy,outBy,perMonth,loadM}=footprint;
+  const CELL=15,CG=2,WG=7,LBL=72,RG=3;
   const grids=MON.map((_,m)=>monthGrid(YEAR,m));
   const maxCols=Math.max(...grids.map(g=>g.totalCols));
   const ml=ci=>(ci%7===0&&ci>0)?WG:(ci===0?0:CG);
@@ -1068,12 +1138,15 @@ function YearStrip({footprint,selected,onSelect,showOut}){
       </div>
       {MON.map((mn,m)=>{
         const g=grids[m],pm=perMonth[m],isNow=m===TODAY.getMonth(),sel=m===selected;
+        const load=loadM?loadM[m]:0,tint=pressureTint(load,ceiling),hot=load>ceiling;
         return <div key={m} onClick={()=>onSelect(m)} style={{display:"flex",alignItems:"center",marginBottom:m<11?RG:0,
           cursor:"pointer",borderRadius:5,background:sel?"#FBF6EA":"transparent",padding:"1px 0",
           boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
           <div style={{width:LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
             <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{mn.toUpperCase()}{sel&&" ◂"}</div>
             <div style={{fontSize:7,color:pm.n?C.ink:C.mute}}>{pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
+            <div title={`${load} of ~${ceiling} comfortable shifts`} style={{fontSize:6.5,fontWeight:700,color:hot?"#B5573A":(load>0?C.est:C.mute)}}>
+              {load>0?`${load}/${ceiling}${hot?" ⚠":""}`:""}</div>
           </div>
           <div style={{display:"flex"}}>
             {Array.from({length:maxCols},(_,ci)=>{
@@ -1084,8 +1157,8 @@ function YearStrip({footprint,selected,onSelect,showOut}){
               const conf=marks.find(x=>x.state==="confirmed");
               const pend=marks.find(x=>x.state==="submitted"||x.state==="draft");
               const smear=marks.find(x=>x.state==="smeared");
-              let bg=fam?LOC_TINT[fam]:(we?"#FBFAF9":"#fff");
-              if(showOut&&out&&!fam)bg="#F4F1EB";
+              let bg=fam?LOC_TINT[fam]:(tint||(we?"#FBFAF9":"#fff"));
+              if(showOut&&out&&!fam&&!tint)bg="#F4F1EB";
               let border=`1px solid ${C.line2}`,inner=null;
               if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
               else if(pend){border=`1.5px solid ${C.blue}`;}
@@ -1110,6 +1183,9 @@ const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignIt
   <LegDot dotted>smeared</LegDot>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:LOC_TINT.santa_fe,border:`1px solid ${C.line}`}}/>family</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
+  <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:3}}>month pressure
+    {["#FBF1DC","#F6E2B8","#F0CDA8","#E9B59C"].map(c=><span key={c} style={{width:11,height:11,borderRadius:2,background:c,border:`1px solid ${C.line}`}}/>)}
+    <span style={{color:"#B5573A"}}>over ceiling</span></span>
 </div>;
 const LegDot=({bg,ring,dotted,children})=> <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
   <span style={{width:12,height:12,borderRadius:3,background:bg||"#fff",
