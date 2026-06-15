@@ -1813,6 +1813,7 @@ function TripsDrawer({state,setState}){
   const WF=[["colocate","co-locate"],["commute","commute"],["closed","closed"]];
   const WFNOTE={colocate:"work locally — nearby sites co-locate (cheap)",commute:"leave the trip to work — full travel",closed:"no work — options closed (e.g. international)"};
   return <Drawer title="Trips" sub="Family travel" n={trips.length} open={open} setOpen={setOpen}>
+    <div style={{maxHeight:"44vh",overflowY:"auto",overflowX:"hidden",margin:"0 -1px 2px",padding:"0 1px",WebkitOverflowScrolling:"touch"}}>
     {trips.map(t=><div key={t.id} style={{border:`1px solid ${C.line2}`,borderRadius:6,padding:"7px 8px",marginBottom:6}}>
       <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",marginBottom:5}}>
         <input style={{...inp,flex:"1 1 120px"}} value={t.name} onChange={e=>upd(t.id,{name:e.target.value})}/>
@@ -1830,6 +1831,7 @@ function TripsDrawer({state,setState}){
       </div>
       <div style={{fontSize:9,color:C.mute,marginTop:4}}>{WFNOTE[t.workFactor]}</div>
     </div>)}
+    </div>
     <Btn small onClick={add}>+ add trip</Btn>
     <span style={{fontSize:9.5,color:C.mute,marginLeft:8}}>trips render on the calendar; closed trips strike out their days</span>
   </Drawer>;
