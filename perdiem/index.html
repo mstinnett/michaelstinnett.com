@@ -1391,22 +1391,21 @@ function dayVisual(d,ctx){
   const marks=ctx.byDay[str]||[],fam=ctx.famBy[str],lk=ctx.lockBy[str],lays=ctx.layerCov[str]||[];
   const closed=fam&&fam.wf==="closed";
   const conf=marks.find(x=>x.state==="confirmed"),neg=marks.find(x=>x.state==="override"),pend=marks.find(x=>x.state==="pending"),cand=marks.find(x=>x.state==="candidate"),smear=marks.find(x=>x.state==="smeared");
-  // base fill + edge: trip → blue (ocean edge), family-calendar day → green (juniper edge), else month pressure
-  let bg,border,inner=null;
-  if(fam){bg=LOC_TINT[fam.loc];border=`1px solid ${C.ocean}`;}
-  else if(lays.length){bg=C.blockFam;border=`1px solid ${C.juniper}`;}
-  else {bg=ctx.tint||(we?C.weekend:C.panel);border=`1px solid ${C.line2}`;}
-  // shifts/windows draw on top — confirmed/negotiation fill the cell; windows are outline-only
+  // layered channels: fill = shift (concrete) or a faint trip wash; family blockers ride the bottom bars;
+  // pressure lives on the focused month; the cost (family-off ∩ work) reads as a hatch.
+  let bg=we?C.weekend:C.panel,border=`1px solid ${C.line2}`,inner=null;
+  if(fam){bg=LOC_TINT[fam.loc];border=`1px solid ${C.ocean}`;}   // trip → faint blue wash + ocean edge
   if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
   else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
   else if(pend){border=`1.5px solid ${C.ink}`;}
   else if(cand){border=`1.5px dotted ${C.est}`;}
   else if(smear){inner="dotted";}
+  const cost=lays.length>0&&!!(conf||neg||pend||cand||smear);   // working a family-off day → family-time cost
   const drawing=ctx.drawSet&&ctx.drawSet.has(str),inSel=ctx.selReqDates&&ctx.selReqDates.has(str),inTrip=ctx.selTripDates&&ctx.selTripDates.has(str);
   if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
   const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
   const title=`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
-  return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,bg,border,inner,drawing,inSel,inTrip,title};
+  return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,cost,bg,border,inner,drawing,inSel,inTrip,title};
 }
 function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandle}){
   const base={...box,marginLeft:ml||0,flexShrink:0,borderRadius:2,position:"relative",boxSizing:"border-box"};
@@ -1424,6 +1423,7 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandl
       display:num?"flex":"block",alignItems:"center",justifyContent:"center"}}>
     {num&&<span style={{fontSize:13,fontWeight:v.conf?800:500,color:v.conf?"var(--on-shift)":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
     {v.closed&&!v.conf&&!v.neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
+    {v.cost&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(135deg,${C.pressHot} 0 1.5px,transparent 1.5px 5px)`,opacity:0.55,pointerEvents:"none"}}/>}
     {v.inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
     {v.lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:v.lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
     {v.lays.length>0&&<div style={{position:"absolute",left:0,right:0,bottom:0,height:num?4:3,display:"flex",overflow:"hidden",borderRadius:"0 0 1px 1px",pointerEvents:"none"}}>
@@ -1440,6 +1440,7 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
   const ctx={byDay,famBy,lockBy,layerCov,tint,drawSet,selReqDates,selTripDates};
   const barW=44,confW=Math.min(barW,ld.conf/Math.max(1,ceil2(ceiling))*barW),winW=Math.min(barW-confW,ld.win/Math.max(1,ceil2(ceiling))*barW);
   function ceil2(c){return Math.max(c,load);}                 // bar scales to whichever is larger
+  const GW=200,gsc=Math.max(ceiling,load)||1,gcw=ld.conf/gsc*GW,gww=Math.min(GW-gcw,ld.win/gsc*GW),gtick=Math.min(GW-1,ceiling/gsc*GW);  // focused-month pressure gauge
   return <div style={{display:"flex",alignItems:"center",marginBottom:CAL_RG,borderRadius:5,
     background:sel?C.sel:"transparent",boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
     <div onClick={selectable?()=>onSelect(y,m):undefined} style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8,cursor:selectable?"pointer":"default"}}>
@@ -1455,12 +1456,22 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
         <span style={{fontSize:7,fontWeight:700,color:hot?C.pressHot:C.mute}}>{load||""}{hot?"⚠":""}</span>
       </div>
     </div>
-    <div style={{display:"flex"}}>
-      {Array.from({length:calMaxCols},(_,ci)=>{
-        const d=ci<g.cells.length?g.cells[ci]:null,str=d&&ds(d);
-        return <DayCell key={ci} d={d} ctx={ctx} box={{width:CAL_CELL,height:CAL_CELL}} ml={calMl(ci)} tool={tool} onCellDown={onCellDown} onTap={onTap} y={y} m={m}
-          hStart={str&&str===selStart} hEnd={str&&str===selEnd} onHandle={onHandle}/>;
-      })}
+    <div style={{display:"flex",flexDirection:"column",gap:3,paddingTop:sel?3:0}}>
+      {sel&&<div title={`${ld.conf} confirmed + ${ld.win} window of ~${ceiling}/mo`} style={{display:"flex",alignItems:"center",gap:6,marginLeft:1}}>
+        <div style={{width:GW,height:7,background:C.line2,borderRadius:3,overflow:"hidden",display:"flex",position:"relative"}}>
+          <div style={{width:gcw,height:"100%",background:hot?C.pressHot:C.ink}}/>
+          <div style={{width:gww,height:"100%",background:C.bar}}/>
+          <div style={{position:"absolute",left:gtick,top:-1,bottom:-1,width:1,background:C.gray}}/>
+        </div>
+        <span style={{fontSize:9,fontWeight:700,color:hot?C.pressHot:C.gray}}>{load}/{ceiling}{hot?" ⚠":""} <span style={{fontWeight:600,color:C.mute}}>pressure</span></span>
+      </div>}
+      <div style={{display:"flex"}}>
+        {Array.from({length:calMaxCols},(_,ci)=>{
+          const d=ci<g.cells.length?g.cells[ci]:null,str=d&&ds(d);
+          return <DayCell key={ci} d={d} ctx={ctx} box={{width:CAL_CELL,height:CAL_CELL}} ml={calMl(ci)} tool={tool} onCellDown={onCellDown} onTap={onTap} y={y} m={m}
+            hStart={str&&str===selStart} hEnd={str&&str===selEnd} onHandle={onHandle}/>;
+        })}
+      </div>
     </div>
   </div>;
 }
@@ -1691,11 +1702,11 @@ const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignIt
   <LegDot ring={C.ink}>pending</LegDot>
   <LegDot dotted>candidate</LegDot>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:C.blockTrip,border:`1px solid ${C.ocean}`}}/>trip</span>
-  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:C.blockFam,border:`1px solid ${C.juniper}`}}/>family off</span>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,backgroundImage:`repeating-linear-gradient(135deg,${C.pressHot} 0 1.5px,transparent 1.5px 5px)`,border:`1px solid ${C.line}`}}/>family-time cost</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
-  <span style={{display:"inline-flex",alignItems:"center",gap:3}}><span style={{width:3,height:3,borderRadius:"50%",background:C.juniper}}/><span style={{width:3,height:3,borderRadius:"50%",background:C.ocean}}/>layer day (~ inferred)</span>
-  <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:3}}>month pressure
-    {PRESS_RAMP.map(c=><span key={c} style={{width:11,height:11,borderRadius:2,background:c,border:`1px solid ${C.line}`}}/>)}
+  <span style={{display:"inline-flex",alignItems:"center",gap:3}}><span style={{width:3,height:3,borderRadius:"50%",background:C.juniper}}/><span style={{width:3,height:3,borderRadius:"50%",background:C.ocean}}/>family off · bottom bars (~ inferred)</span>
+  <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:4}}>focused-month pressure
+    <span style={{display:"inline-flex",width:34,height:6,borderRadius:3,overflow:"hidden",border:`1px solid ${C.line}`}}><span style={{width:14,background:C.ink}}/><span style={{width:9,background:C.bar}}/></span>
     <span style={{color:C.pressHot}}>over ceiling</span></span>
 </div>;
 const LegDot=({bg,ring,dotted,children})=> <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
