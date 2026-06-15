@@ -163,10 +163,10 @@ function seedState(){
   ];
   // presence layers — primary, categorized, editable, JSON-importable (an LLM can draft these)
   const layers=[
-    {id:"jun",name:"Juniper School",kind:"school",childId:"juniper",color:"var(--juniper)",visible:true,daysOutWeight:1,
+    {id:"jun",name:"Juni Off",kind:"school",childId:"juniper",color:"var(--juniper)",visible:true,daysOutWeight:1,
      ranges:[{from:"2026-02-16",to:"2026-02-20",label:"Feb break"},{from:"2026-04-20",to:"2026-04-24",label:"Spring break"},
        {from:"2026-06-18",to:"2026-08-31",label:"Summer"},{from:"2026-11-25",to:"2026-11-27",label:"Thanksgiving"},{from:"2026-12-21",to:"2027-01-02",label:"Winter"}]},
-    {id:"oce",name:"Ocean School",kind:"school",childId:"ocean",color:"var(--ocean)",visible:true,daysOutWeight:1,
+    {id:"oce",name:"Ocean Off",kind:"school",childId:"ocean",color:"var(--ocean)",visible:true,daysOutWeight:1,
      ranges:[{from:"2026-02-16",to:"2026-02-20",label:"Feb break"},{from:"2026-04-13",to:"2026-04-17",label:"Spring break"},
        {from:"2026-06-12",to:"2026-08-25",label:"Summer"},{from:"2026-11-25",to:"2026-11-27",label:"Thanksgiving"},{from:"2026-12-21",to:"2027-01-02",label:"Winter"}]},
     {id:"hol",name:"Holidays",kind:"holiday",color:"var(--ink)",visible:true,
@@ -272,7 +272,7 @@ function sanitizeState(obj){
         return o;});
     }else if(Array.isArray(obj.kidCalendars)){          // migrate the old kid-calendar schema → school layers
       layers=obj.kidCalendars.filter(kc=>kc&&kc.childId).map(kc=>({
-        id:String(kc.childId),name:kc.childId[0].toUpperCase()+kc.childId.slice(1)+" School",kind:"school",
+        id:String(kc.childId),name:(kc.childId==="juniper"?"Juni":kc.childId[0].toUpperCase()+kc.childId.slice(1))+" Off",kind:"school",
         childId:String(kc.childId),color:kc.childId==="ocean"?"var(--ocean)":"var(--juniper)",visible:true,
         daysOutWeight:numOr(kc.schoolDaysOutWeight,1),ranges:cleanRanges(kc.closedRanges)}));
       const seedExtra=seed.layers.filter(l=>l.kind!=="school");
@@ -1450,7 +1450,7 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
 }
 /* the calendar engine + workbench: dual-mode, infinite scroll, future inference, draw/erase/edit */
 /* calendar filters — toggle which presence layers paint the days, right on the workspace */
-function LayerFilters({layers,setLayers}){
+function LayerFilters({layers,setLayers,goto}){
   return <div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",padding:"6px 10px",borderBottom:`1px solid ${C.line2}`}}>
     <span style={{fontSize:8,fontWeight:800,color:C.mute,textTransform:"uppercase",letterSpacing:"0.05em",flexShrink:0}}>show</span>
     {layers.map(l=>{const on=l.visible!==false;
@@ -1461,6 +1461,9 @@ function LayerFilters({layers,setLayers}){
         <span style={{fontSize:9,fontWeight:700,color:on?C.ink:C.mute,whiteSpace:"nowrap"}}>{l.name}</span>
         {!on&&<span style={{fontSize:8,color:C.mute}}>off</span>}
       </button>;})}
+    <button onClick={()=>goto&&goto("setup")} title="edit calendars in Setup"
+      style={{flexShrink:0,fontFamily:MONO,fontSize:9,fontWeight:700,padding:"3px 9px",borderRadius:13,cursor:"pointer",
+        border:`1px dashed ${C.line}`,background:"transparent",color:C.gray}}>✎ edit</button>
   </div>;
 }
 function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto,mobile}){
@@ -1585,33 +1588,38 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
         tool={big?tool:null} onCellDown={cellDown} onTap={big?undefined:tapSelect} y={focusY} m={fM}
         hStart={big&&str&&str===srStart} hEnd={big&&str&&str===srEnd} onHandle={(e,which)=>sr&&handleResize(e,which,sr)}/>;})}</div>;
     return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
-      {/* pressure ribbon — the year at a glance */}
-      <div style={{display:"flex",alignItems:"center",gap:4,padding:"7px 8px",borderBottom:`1px solid ${C.line2}`,overflowX:"auto"}}>
-        <button onClick={()=>setFocusY(y=>y-1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>‹</button>
-        <span style={{fontSize:9,fontWeight:800,minWidth:30,textAlign:"center"}}>{focusY}</span>
-        <button onClick={()=>setFocusY(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>›</button>
-        {MON.map((mn,m)=>{const l=footprint.loadYM[`${focusY}-${m}`]||{conf:0,win:0},t=pressureTint(l.conf+l.win,ceiling),on=m===fM;
-          return <button key={m} onClick={()=>onSelect(focusY,m)} style={{flexShrink:0,fontFamily:MONO,fontSize:8.5,fontWeight:800,
-            padding:"4px 7px",borderRadius:5,cursor:"pointer",border:`1px solid ${on?C.ink:C.line}`,
-            background:on?C.ink:(t||C.panel),color:on?C.bg:C.ink}}>{mn[0]}</button>;})}
-      </div>
-      <LayerFilters layers={layers} setLayers={setLayers}/>
-      {/* focus month — inline. View: scrolls, tap to inspect. Edit: month locked for drags,
-          but the rest of the workspace (candidates + trips) stays right here. */}
-      <div style={{padding:"9px 11px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7,flexWrap:"wrap"}}>
-          <span style={{fontSize:13,fontWeight:800}}>{MONL[fM]} {focusY}</span>
-          <span style={{fontSize:8.5,color:fld.conf+fld.win>ceiling?C.pressHot:C.mute}}>{fld.conf}+{fld.win}/{ceiling}/mo</span>
-          <span style={{marginLeft:"auto"}}>{editing
-            ? <Btn small onClick={()=>{setEditing(false);setDraw(null);}}>done</Btn>
-            : <Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit</Btn>}</span>
+      <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
+      <div style={{display:"flex",alignItems:"stretch"}}>
+        {/* month picker — vertical narrow scroll */}
+        <div style={{flexShrink:0,width:54,borderRight:`1px solid ${C.line2}`,maxHeight:380,overflowY:"auto"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3,padding:"5px 0",position:"sticky",top:0,background:C.panel,borderBottom:`1px solid ${C.line2}`,zIndex:1}}>
+            <button onClick={()=>setFocusY(y=>y-1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>‹</button>
+            <span style={{fontSize:9,fontWeight:800}}>{focusY}</span>
+            <button onClick={()=>setFocusY(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>›</button>
+          </div>
+          {MON.map((mn,m)=>{const l=footprint.loadYM[`${focusY}-${m}`]||{conf:0,win:0},load=l.conf+l.win,t=pressureTint(load,ceiling),on=m===fM,hot=load>ceiling;
+            return <button key={m} onClick={()=>onSelect(focusY,m)} style={{width:"100%",fontFamily:MONO,cursor:"pointer",border:"none",
+              borderBottom:`1px solid ${C.line2}`,padding:"7px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:1,
+              background:on?C.ink:(t||C.panel),color:on?C.bg:C.ink}}>
+              <span style={{fontSize:9.5,fontWeight:800}}>{mn}</span>
+              <span style={{fontSize:6.5,fontWeight:700,color:on?C.bg:(hot?C.pressHot:C.mute)}}>{load?`${load}/${ceiling}`:"·"}</span>
+            </button>;})}
         </div>
-        {editing&&<div style={{marginBottom:7}}>{toolPalette}</div>}
-        {editing&&editBars}
-        {dow}
-        {/* lock the month area while editing so drags don't scroll it; page still scrolls to candidates/trips below */}
-        <div style={{touchAction:editing?"none":"auto"}}>{grid(editing)}</div>
-        <FootLegend/>
+        {/* focus month — inline. View: tap to inspect. Edit: month locked for drags; candidates + trips stay below */}
+        <div style={{flex:1,minWidth:0,padding:"9px 11px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7,flexWrap:"wrap"}}>
+            <span style={{fontSize:13,fontWeight:800}}>{MONL[fM]} {focusY}</span>
+            <span style={{fontSize:8.5,color:fld.conf+fld.win>ceiling?C.pressHot:C.mute}}>{fld.conf}+{fld.win}/{ceiling}/mo</span>
+            <span style={{marginLeft:"auto"}}>{editing
+              ? <Btn small onClick={()=>{setEditing(false);setDraw(null);}}>done</Btn>
+              : <Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit</Btn>}</span>
+          </div>
+          {editing&&<div style={{marginBottom:7}}>{toolPalette}</div>}
+          {editing&&editBars}
+          {dow}
+          <div style={{touchAction:editing?"none":"auto"}}>{grid(editing)}</div>
+          <FootLegend/>
+        </div>
       </div>
     </div>;
   }
@@ -1624,7 +1632,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
           padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
       </div>
     </div>
-    <LayerFilters layers={layers} setLayers={setLayers}/>
+    <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
     {editBars}
     <div onScroll={onScroll} style={{maxHeight:320,overflow:"auto",padding:"8px 12px"}}>
       <div style={{minWidth:width}}>
