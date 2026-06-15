@@ -100,6 +100,9 @@ const pd=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
 const ad=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r;};
 const days=(a,b)=>Math.round((b-a)/864e5);
 const dim=(y,m)=>new Date(y,m+1,0).getDate();
+const firstOfMonth=d=>new Date(d.getFullYear(),d.getMonth(),1);
+// deadlines are per site + per month: every shift in a month shares one due date = month start − the site's lead.
+const monthDueBy=(d,leadDays)=>ds(ad(firstOfMonth(typeof d==="string"?pd(d):d),-(leadDays||0)));
 const clamp01=x=>Math.max(0,Math.min(1,x));
 const fmt$=v=>"$"+Math.round(v).toLocaleString();
 const fmtK=v=>"$"+(Math.round(v/100)/10).toLocaleString()+"k";
@@ -390,7 +393,7 @@ function makeWindow(site,type,dates){                       // a drawn window �
   if(!dates.length)return null;
   const first=dates[0];
   return {id:"r"+Date.now()+Math.floor(Math.random()*1e3),siteId:site.id,shiftType:type,
-    opens:ds(ad(pd(first),-(site.cadence.opensDaysBefore||60))),dueBy:ds(ad(pd(first),-(site.cadence.dueByDaysBefore||21))),
+    opens:ds(ad(pd(first),-(site.cadence.opensDaysBefore||60))),dueBy:monthDueBy(first,site.cadence.dueByDaysBefore||21),
     state:"candidate",footprint:{kind:"pinned",dates:dates.slice().sort()}};
 }
 
@@ -631,7 +634,7 @@ function buildWindows(state,monthIdx,types,tsp){
       const co=coLocation(site,wk.dates,trips);
       const dout=weekDaysOut(wk.dates,layers);
       const opens=ds(ad(wk.start,-site.cadence.opensDaysBefore));
-      const dueBy=ds(ad(wk.start,-site.cadence.dueByDaysBefore));
+      const dueBy=monthDueBy(wk.start,site.cadence.dueByDaysBefore);
       const closing=closingTerm(opens,dueBy);
       const closed=TODAY>pd(dueBy)||!!closedTrip(trips,wk.dates);   // past due, or a closed (international) trip
       const notOpen=TODAY<pd(opens);
@@ -1205,7 +1208,7 @@ function SiteWizard({state,setState,embed,onClose}){
               <span style={{fontSize:13,fontWeight:800}}>{s.name||"(unnamed)"}</span>
               <Tag>{REACH_LABEL[s.reach]}</Tag>
               <Tag bg={C.line2}>{s.submissionType==="by_window"?"by window":"by shift"}</Tag>
-              <Tag bg={C.line2}>due {s.cadence.dueByDaysBefore}d before</Tag>
+              <Tag bg={C.line2}>due {s.cadence.dueByDaysBefore}d before month</Tag>
               <span style={{marginLeft:"auto",fontSize:11,color:C.mute}}>{open?"▾":"▸"}</span>
             </div>
             {open&&<div style={{padding:"4px 10px 10px",borderTop:`1px solid ${C.line2}`}}>
@@ -1227,10 +1230,10 @@ function SiteWizard({state,setState,embed,onClose}){
                 <option value="by_shift">by shift (pinned)</option><option value="by_window">by window (smeared)</option></select></Field>
               <div style={{display:"flex",gap:8}}>
                 <Field label="Opens (days before)"><N value={s.cadence.opensDaysBefore} onChange={e=>updCad(s.id,{opensDaysBefore:+e.target.value||0})}/></Field>
-                <Field label="Requests due by (days before)"><N value={s.cadence.dueByDaysBefore} onChange={e=>updCad(s.id,{dueByDaysBefore:+e.target.value||0})}/></Field>
+                <Field label="Requests due (days before the month)"><N value={s.cadence.dueByDaysBefore} onChange={e=>updCad(s.id,{dueByDaysBefore:+e.target.value||0})}/></Field>
                 <Field label="Response (days)"><N value={s.cadence.expectedResponseDays} onChange={e=>updCad(s.id,{expectedResponseDays:+e.target.value||0})}/></Field>
               </div>
-              <div style={{fontSize:9.5,color:C.mute,margin:"2px 0 4px"}}>No manual dependencies — the chain emerges from each site's due-by date. The earliest-due request leads.</div>
+              <div style={{fontSize:9.5,color:C.mute,margin:"2px 0 4px"}}>Every shift in a month shares one due date (month start − this lead). The site whose date lands earliest leads the chain.</div>
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
                 <Btn small kind="danger" disabled={refs>0} onClick={()=>rm(s.id)}>remove</Btn>
                 {refs>0&&<span style={{fontSize:10,color:C.mute}}>{refs} request{refs>1?"s":""} reference this site — can’t remove</span>}
