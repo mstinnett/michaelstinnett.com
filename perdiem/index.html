@@ -1293,7 +1293,7 @@ function LayersPanel({state,setState}){
           <span style={{fontSize:11.5,fontWeight:700,color:on?C.ink:C.mute}}>{l.name}</span>
           <span style={{fontSize:9,color:C.mute}}>{(l.ranges||[]).length}</span>
         </span>
-        <span onClick={()=>setEditing(editing===l.id?null:l.id)} title="edit" style={{fontSize:11,color:editing===l.id?C.ink:C.mute,cursor:"pointer"}}>✎</span>
+        <span onClick={()=>setEditing(editing===l.id?null:l.id)} title="edit ranges & import JSON" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:26,height:24,padding:"0 7px",marginLeft:2,borderRadius:8,fontSize:14,lineHeight:1,cursor:"pointer",color:editing===l.id?C.ink:C.gray,background:editing===l.id?C.line:C.panel,border:`1px solid ${editing===l.id?C.faint:C.line}`}}>✎</span>
       </span>;})}
       <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
         <input value={adding} onChange={e=>setAdding(e.target.value)} placeholder="+ layer" onKeyDown={e=>{if(e.key==="Enter")addLayer();}}
