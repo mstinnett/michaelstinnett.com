@@ -150,10 +150,12 @@ function seedState(){
      reach:"rural_nm",homeBaseLoc:"abq",     dayRate:2100,nightRate:2500,dayHours:12,nightHours:12,
      submissionType:"by_window", cadence:{opensDaysBefore:70,dueByDaysBefore:14,expectedResponseDays:21}},
   ];
-  const familySpans=[
-    {from:"2026-08-01",to:"2026-08-21",loc:"santa_fe"},   // NM family stay → NM sites co-locate in Aug
-    {from:"2026-07-04",to:"2026-07-12",loc:"montana"},
-    {from:"2026-12-22",to:"2027-01-02",loc:"boston"},
+  // trips — family travel; workFactor: colocate (work locally), commute (leave to work), closed (no work)
+  const trips=[
+    {id:"t1",name:"Santa Fe summer",from:"2026-08-01",to:"2026-08-21",loc:"santa_fe",workFactor:"colocate"},
+    {id:"t2",name:"Montana cabin",from:"2026-07-04",to:"2026-07-12",loc:"montana",workFactor:"commute"},
+    {id:"t3",name:"Japan",from:"2026-03-14",to:"2026-03-28",loc:"boston",workFactor:"closed"},   // international → windows closed
+    {id:"t4",name:"Holidays home",from:"2026-12-22",to:"2027-01-02",loc:"boston",workFactor:"colocate"},
   ];
   const locks=[
     {date:"2026-08-15",kind:"hard",label:"anniversary"},
@@ -213,7 +215,7 @@ function seedState(){
      state:"candidate",
      footprint:{kind:"pinned",dates:["2026-08-04","2026-08-05"]}},
   ];
-  return {sites,familySpans,locks,layers,pace,requests};
+  return {sites,trips,locks,layers,pace,requests};
 }
 function cReq(id,siteId,shiftType,dates){
   return {id,siteId,shiftType,opens:ds(ad(pd(dates[0]),-70)),dueBy:ds(ad(pd(dates[0]),-25)),
@@ -276,7 +278,11 @@ function sanitizeState(obj){
       const seedExtra=seed.layers.filter(l=>l.kind!=="school");
       layers=layers.concat(seedExtra);
     }else layers=seed.layers;
-    const familySpans=(Array.isArray(obj.familySpans)?obj.familySpans:seed.familySpans).filter(s=>s&&DATE_RE.test(s.from||"")&&DATE_RE.test(s.to||"")&&s.loc);
+    const WF=["colocate","commute","closed"];
+    const tripSrc=Array.isArray(obj.trips)?obj.trips:(Array.isArray(obj.familySpans)?obj.familySpans:seed.trips);
+    const trips=tripSrc.filter(s=>s&&DATE_RE.test(s.from||"")&&DATE_RE.test(s.to||"")&&s.loc).map((s,i)=>({
+      id:String(s.id||("t"+i)),name:String(s.name||LOC_NAME[s.loc]||"Trip"),from:s.from,to:s.to,loc:s.loc,
+      workFactor:WF.includes(s.workFactor)?s.workFactor:"colocate"}));
     const locks=(Array.isArray(obj.locks)?obj.locks:seed.locks).filter(l=>l&&DATE_RE.test(l.date||"")).map(l=>{
       const o={date:l.date,kind:l.kind==="hard"?"hard":"soft",label:String(l.label||"lock")};
       if(Number.isFinite(+l.recoveryBufferHrs))o.recoveryBufferHrs=+l.recoveryBufferHrs;return o;});
@@ -295,7 +301,7 @@ function sanitizeState(obj){
       ["expectedResponseBy","submittedOn","resolvedOn"].forEach(k=>{if(DATE_RE.test(r[k]||""))o[k]=r[k];});
       return o;
     }).filter(Boolean);
-    return {sites,familySpans,locks,layers,pace,requests};
+    return {sites,trips,locks,layers,pace,requests};
   }catch(e){console.warn("sanitizeState failed",e);return null;}
 }
 /* read a share-link payload from the URL hash (#s=…), LZ-decompress + validate */
@@ -353,28 +359,29 @@ function typicalShiftPay(sites){
   return est(Math.round(v/10)*10,["typicalShiftPay = mean of site day/night rates"]);
 }
 
-/* §4.2 co-location + travel */
-function coLocation(site,weekDates,familySpans){
-  for(const sp of familySpans){
-    const f=pd(sp.from),t=pd(sp.to);
-    const overlaps=weekDates.some(d=>d>=f&&d<=t);
-    if(!overlaps)continue;
+/* §4.2 co-location + travel — trips with workFactor: colocate / commute / closed */
+const tripOverlaps=(trip,weekDates)=>{const f=pd(trip.from),t=pd(trip.to);return weekDates.some(d=>d>=f&&d<=t);};
+const closedTrip=(trips,weekDates)=>trips.find(tp=>tp.workFactor==="closed"&&tripOverlaps(tp,weekDates));
+function coLocation(site,weekDates,trips){
+  for(const sp of trips){
+    if(sp.workFactor!=="colocate")continue;          // only a co-locating trip makes a site cheap
+    if(!tripOverlaps(sp,weekDates))continue;
     const hrs=(REACH_ADJ[sp.loc]||{})[site.reach];
     if(hrs!=null&&hrs<=CHEAP_HRS)return {coLocated:true,loc:sp.loc,hrs};
   }
   return {coLocated:false,loc:null,hrs:null};
 }
-function travelHours(site,weekDates,familySpans){
-  const co=coLocation(site,weekDates,familySpans);
+function travelHours(site,weekDates,trips){
+  const co=coLocation(site,weekDates,trips);
   return co.coLocated?co.hrs:ROUNDTRIP[site.reach];
 }
 
 /* §4.1 per-window money — facts for choosing */
-function windowMoney(site,type,weekDates,familySpans){
+function windowMoney(site,type,weekDates,trips){
   const shiftPay=siteRate(site,type);
   const clinicalHours=siteHours(site,type);
   const erPerHr=known(shiftPay/clinicalHours);
-  const travel=travelHours(site,weekDates,familySpans);
+  const travel=travelHours(site,weekDates,trips);
   const rest=REST_HOURS[type];
   const awayHours=travel+clinicalHours+rest;
   const awayPerHr=est(shiftPay/awayHours,
@@ -558,7 +565,7 @@ function getWeeks(y,m){
    Derived per (site × week). Brightness drives GLOW ONLY:
    never order, never visibility, never action (Inv 1, 2a). */
 function buildWindows(state,monthIdx,types,tsp){
-  const {sites,familySpans,layers,locks,pace,requests}=state;
+  const {sites,trips,layers,locks,pace,requests}=state;
   const siteById=Object.fromEntries(sites.map(s=>[s.id,s]));
   const weeks=getWeeks(YEAR,monthIdx);
   const qInfo=monthQuota(pace,monthIdx,tsp);
@@ -577,13 +584,13 @@ function buildWindows(state,monthIdx,types,tsp){
   weeks.forEach((wk,wi)=>{
     sites.forEach(site=>{
       const type=types[`${site.id}-${wi}`]||"day";
-      const money=windowMoney(site,type,wk.dates,familySpans);
-      const co=coLocation(site,wk.dates,familySpans);
+      const money=windowMoney(site,type,wk.dates,trips);
+      const co=coLocation(site,wk.dates,trips);
       const dout=weekDaysOut(wk.dates,layers);
       const opens=ds(ad(wk.start,-site.cadence.opensDaysBefore));
       const dueBy=ds(ad(wk.start,-site.cadence.dueByDaysBefore));
       const closing=closingTerm(opens,dueBy);
-      const closed=TODAY>pd(dueBy);
+      const closed=TODAY>pd(dueBy)||!!closedTrip(trips,wk.dates);   // past due, or a closed (international) trip
       const notOpen=TODAY<pd(opens);
       const lockHit=wk.dates.filter(d=>locks.some(l=>l.date===ds(d)));
       const weekdayStrs=wk.dates.filter(d=>d.getDay()!==0&&d.getDay()!==6).map(ds);
@@ -791,6 +798,8 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
       <div style={{height:10}}/>
       <Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling}/>
       <FootLegend/>
+      <div style={{height:10}}/>
+      <TripsDrawer state={state} setState={setState}/>
 
       {/* ── MONTH WINDOW LIST (bottom) ── */}
       <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"22px 2px 8px",flexWrap:"wrap"}}>
@@ -875,6 +884,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
         Brightness is attention; order is structural; the choice is read from the raw facts.<br/>
         No window is hidden, reordered by desirability, or recommended.
       </p>
+      <div style={{marginTop:16}}><SitesWorksheet state={state} setState={setState}/></div>
     </div>
     {creating&&<CreateModal w={creating.w} state={state} tsp={tsp} onClose={()=>setCreating(null)} onCreate={createRequest}/>}
   </div>;
@@ -897,7 +907,7 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
     onCreate(w,type,foot);
   }
   // live readout — money + per-kid days-out for what's being built
-  const money=windowMoney(w.site,type,w.week.dates,state.familySpans);
+  const money=windowMoney(w.site,type,w.week.dates,state.trips);
   const count=byWindow?Math.min(take,picked.length):picked.length;
   const effDates=byWindow?picked.slice(0,Math.min(take,picked.length)):picked;
   const perKid=kidDaysOut(effDates,state.layers);
@@ -1135,10 +1145,11 @@ function OverrideEditor({r,site,onRm,onAdd,onRate,onConfirm,onReject}){
   </div>;
 }
 
-/* ════════ SITE WIZARD — add / edit the named, never-rated sites (§3.1, Inv 4) ════════ */
-function SiteWizard({state,setState,onClose}){
-  const [sites,setSites]=useState(()=>JSON.parse(JSON.stringify(state.sites)));
+/* ════════ SITES WORKSHEET — add / edit named, never-rated sites; live, near the window list (§3.1, Inv 4) ════════ */
+function SiteWizard({state,setState,embed,onClose}){
   const [openId,setOpenId]=useState(state.sites[0]?.id||null);
+  const sites=state.sites;
+  const setSites=fn=>setState(st=>({...st,sites:fn(st.sites)}));   // live edits
   const reqCount=id=>state.requests.filter(r=>r.siteId===id).length;
   const upd=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,...patch}:s));
   const updCad=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,cadence:{...s.cadence,...patch}}:s));
@@ -1148,12 +1159,10 @@ function SiteWizard({state,setState,onClose}){
       cadence:{opensDaysBefore:60,dueByDaysBefore:21,expectedResponseDays:14}}]);
     setOpenId(id);};
   const rm=id=>{if(reqCount(id)>0)return;setSites(p=>p.filter(s=>s.id!==id));if(openId===id)setOpenId(null);};
-  const save=()=>{setState(st=>({...st,sites}));onClose();};
   const N=props=> <input type="number" style={inp} {...props}/>;
-  return <Overlay onClose={onClose}>
-    <div style={{maxHeight:"82vh",display:"flex",flexDirection:"column"}}>
-      <div style={{fontSize:13,fontWeight:800,marginBottom:2}}>Site wizard</div>
-      <div style={{fontSize:9,color:C.gray,marginBottom:10}}>Sites carry satisfaction in their <b>name</b> + free-text <b>note</b> — never a rating (Inv 4).</div>
+  const Inner=<div style={{maxHeight:embed?"none":"82vh",display:"flex",flexDirection:"column"}}>
+      {!embed&&<div style={{fontSize:13,fontWeight:800,marginBottom:2}}>Sites worksheet</div>}
+      <div style={{fontSize:9,color:C.gray,marginBottom:10}}>Sites carry satisfaction in their <b>name</b> + free-text <b>note</b> — never a rating (Inv 4). Edits are live.</div>
       <div style={{flex:1,overflow:"auto",margin:"0 -2px",padding:"0 2px"}}>
         {sites.map(s=>{
           const open=openId===s.id, refs=reqCount(s.id);
@@ -1201,11 +1210,10 @@ function SiteWizard({state,setState,onClose}){
       <div style={{display:"flex",gap:8,marginTop:10}}>
         <Btn onClick={addSite}>+ add site</Btn>
         <div style={{flex:1}}/>
-        <Btn onClick={onClose}>cancel</Btn>
-        <Btn kind="prim" onClick={save}>save</Btn>
+        {!embed&&<Btn kind="prim" onClick={onClose}>done</Btn>}
       </div>
-    </div>
-  </Overlay>;
+    </div>;
+  return embed?Inner:<Overlay onClose={onClose}>{Inner}</Overlay>;
 }
 
 /* ════════ PRESENCE LAYERS — primary, categorized, editable, JSON-importable (near the calendar) ════════ */
@@ -1306,7 +1314,7 @@ function useFootprint(state){
         for(const d of fp.candidates){(byDay[d]=byDay[d]||[]).push({state:"smeared",type:r.shiftType,site:s});}
       }
     }
-    for(const sp of state.familySpans){let d=pd(sp.from);const t=pd(sp.to);while(d<=t){famBy[ds(d)]=sp.loc;d=ad(d,1);}}
+    for(const sp of state.trips){let d=pd(sp.from);const t=pd(sp.to);while(d<=t){famBy[ds(d)]={loc:sp.loc,wf:sp.workFactor,name:sp.name};d=ad(d,1);}}
     for(const l of state.locks)lockBy[l.date]=l;
     return {byDay,famBy,lockBy,perYM,loadYM:loadByYM(state)};
   },[state]);
@@ -1368,9 +1376,10 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
         if(!d)return <div key={ci} style={{width:CAL_CELL,height:CAL_CELL,marginLeft:calMl(ci),flexShrink:0}}/>;
         const str=ds(d),we=d.getDay()===0||d.getDay()===6;
         const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],lays=layerCov[str]||[];
+        const closed=fam&&fam.wf==="closed";
         const conf=marks.find(x=>x.state==="confirmed"),neg=marks.find(x=>x.state==="override");
         const pend=marks.find(x=>x.state==="pending"),cand=marks.find(x=>x.state==="candidate"),smear=marks.find(x=>x.state==="smeared");
-        let bg=fam?LOC_TINT[fam]:(tint||(we?C.weekend:C.panel));
+        let bg=fam?LOC_TINT[fam.loc]:(tint||(we?C.weekend:C.panel));
         let border=`1px solid ${C.line2}`,inner=null;
         if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
         else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
@@ -1382,10 +1391,11 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
         const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
         return <div key={ci} data-date={str}
           onPointerDown={tool&&tool!=="off"?e=>onCellDown(e,str,y,m):undefined}
-          title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}${lt}`}
+          title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`}
           style={{width:CAL_CELL,height:CAL_CELL,marginLeft:calMl(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box",
-            cursor:tool==="pencil"?"crosshair":(tool==="eraser"?"cell":"pointer"),touchAction:tool&&tool!=="off"?"none":"auto",
-            outline:inSel?`2px solid ${C.ink}`:"none",outlineOffset:-1}}>
+            cursor:closed?"not-allowed":(tool==="pencil"?"crosshair":(tool==="eraser"?"cell":"pointer")),touchAction:tool&&tool!=="off"?"none":"auto",
+            outline:inSel?`2px solid ${C.ink}`:"none",outlineOffset:-1,opacity:closed&&!conf&&!neg?0.82:1}}>
+          {closed&&!conf&&!neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
           {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
           {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
           {lays.length>0&&<div style={{position:"absolute",left:1,right:1,bottom:1,display:"flex",gap:1,justifyContent:"center",pointerEvents:"none"}}>
@@ -1414,16 +1424,18 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling}){
   const editableAt=str=>state.requests.find(r=>EDITABLE.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));
   const eraseDay=str=>{const r=editableAt(str);if(!r)return;const left=r.footprint.dates.filter(x=>x!==str);
     if(left.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:left}}));else delReq(r.id);};
+  const dayClosed=str=>state.trips.some(t=>t.workFactor==="closed"&&str>=t.from&&str<=t.to);
   function cellDown(e,str,y,m){
     if(tool==="eraser"){eraseDay(str);return;}
     if(tool==="select"){const r=editableAt(str);setSelReq(r?r.id:null);return;}
+    if(dayClosed(str))return;                            // can't draw inside a closed trip
     // pencil: drag to draw a contiguous window within this month
     e.preventDefault();setDraw({startStr:str,endStr:str,y,m});
     const move=ev=>{const t=ev.touches?ev.touches[0]:ev;const el=document.elementFromPoint(t.clientX,t.clientY);
       const c=el&&el.closest&&el.closest("[data-date]");
       if(c&&c.dataset.date){const dd=c.dataset.date;const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}};
     const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);
-      setDraw(d=>{if(d){const dates=weekdaysBetween(d.startStr,d.endStr);const site=sites.find(s=>s.id===drawSiteId)||sites[0];
+      setDraw(d=>{if(d){const dates=weekdaysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));const site=sites.find(s=>s.id===drawSiteId)||sites[0];
         if(dates.length&&site){const r=makeWindow(site,drawType,dates);addReq(r);setSelReq(r.id);}}return null;});};
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
   }
@@ -1503,6 +1515,57 @@ const LegDot=({bg,ring,dotted,children})=> <span style={{display:"inline-flex",a
   <span style={{width:12,height:12,borderRadius:3,background:bg||C.panel,
     border:ring?`1.5px solid ${ring}`:(dotted?`1px dotted ${C.est}`:(bg?"none":`1px solid ${C.line}`))}}/>{children}</span>;
 
+/* a small collapsible section wrapper for the side drawers */
+function Drawer({title,sub,n,children,open,setOpen}){
+  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
+    <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"baseline",gap:8,padding:"8px 11px",cursor:"pointer"}}>
+      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>{title}</span>
+      {n!=null&&<span style={{fontSize:9,fontWeight:700,color:C.mute}}>{n}</span>}
+      <span style={{fontSize:8.5,color:C.mute}}>{sub}</span>
+      <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{open?"▾":"▸"}</span>
+    </div>
+    {open&&<div style={{padding:"0 11px 11px"}}>{children}</div>}
+  </div>;
+}
+/* ════════ TRIPS DRAWER — the fun back door: family trips that gate windows ════════ */
+function TripsDrawer({state,setState}){
+  const [open,setOpen]=useState(false);
+  const trips=state.trips;
+  const setTrips=fn=>setState(s=>({...s,trips:fn(s.trips)}));
+  const upd=(id,patch)=>setTrips(ts=>ts.map(t=>t.id===id?{...t,...patch}:t));
+  const add=()=>setTrips(ts=>[...ts,{id:"t"+Date.now(),name:"New trip",from:`${YEAR}-07-06`,to:`${YEAR}-07-12`,loc:Object.keys(LOC_NAME)[0],workFactor:"closed"}]);
+  const rm=id=>setTrips(ts=>ts.filter(t=>t.id!==id));
+  const WF=[["colocate","co-locate"],["commute","commute"],["closed","closed"]];
+  const WFNOTE={colocate:"work locally — nearby sites co-locate (cheap)",commute:"leave the trip to work — full travel",closed:"no work — windows closed (e.g. international)"};
+  return <Drawer title="Trips" sub="family travel · gates windows" n={trips.length} open={open} setOpen={setOpen}>
+    {trips.map(t=><div key={t.id} style={{border:`1px solid ${C.line2}`,borderRadius:6,padding:"7px 8px",marginBottom:6}}>
+      <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",marginBottom:5}}>
+        <input style={{...inp,flex:"1 1 120px"}} value={t.name} onChange={e=>upd(t.id,{name:e.target.value})}/>
+        <select style={{...inp,width:110}} value={t.loc} onChange={e=>upd(t.id,{loc:e.target.value})}>
+          {Object.keys(LOC_NAME).map(l=><option key={l} value={l}>{LOC_NAME[l]}</option>)}</select>
+        <Btn small kind="danger" onClick={()=>rm(t.id)}>×</Btn>
+      </div>
+      <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+        <input type="date" style={{...inp,width:128}} value={t.from} onChange={e=>upd(t.id,{from:e.target.value})}/>
+        <input type="date" style={{...inp,width:128}} value={t.to} onChange={e=>upd(t.id,{to:e.target.value})}/>
+        <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
+          {WF.map(([k,l])=><button key={k} onClick={()=>upd(t.id,{workFactor:k})} title={WFNOTE[k]} style={{fontFamily:MONO,fontSize:8,fontWeight:700,
+            padding:"3px 7px",border:"none",cursor:"pointer",background:t.workFactor===k?C.ink:"transparent",color:t.workFactor===k?C.bg:C.gray}}>{l}</button>)}
+        </div>
+      </div>
+      <div style={{fontSize:7.5,color:C.mute,marginTop:4}}>{WFNOTE[t.workFactor]}</div>
+    </div>)}
+    <Btn small onClick={add}>+ add trip</Btn>
+    <span style={{fontSize:8,color:C.mute,marginLeft:8}}>trips render on the calendar; closed trips strike out their days</span>
+  </Drawer>;
+}
+function SitesWorksheet({state,setState}){
+  const [open,setOpen]=useState(false);
+  return <Drawer title="Sites" sub="rates, reach, cadence — near your windows" n={state.sites.length} open={open} setOpen={setOpen}>
+    <SiteWizard state={state} setState={setState} embed/>
+  </Drawer>;
+}
+
 /* ════════ APP SHELL ════════ */
 function App(){
   const [state,setState]=useState(()=>{
@@ -1559,7 +1622,6 @@ function App(){
       </div>
       <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
         <Btn small onClick={cycleTheme} title={`theme: ${theme}`}>{themeIcon}</Btn>
-        <Btn small onClick={()=>setModal("sites")}>sites</Btn>
         <span style={{width:1,height:16,background:C.line}}/>
         <Btn small kind="prim" onClick={share}>share link</Btn>
         <Btn small onClick={exportJSON}>export</Btn>
@@ -1584,7 +1646,6 @@ function App(){
       {surface==="board"&&<Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp}/>}
       {surface==="pending"&&<Pending state={state} setState={setState} tsp={tsp}/>}
     </div>
-    {modal==="sites"&&<SiteWizard state={state} setState={setState} onClose={()=>setModal(null)}/>}
   </div>;
 }
 /* ════════ ERROR BOUNDARY — last-resort guard against a white screen ════════ */
