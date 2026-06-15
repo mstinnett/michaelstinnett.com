@@ -860,6 +860,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   const [creating,setCreating]=useState(null);
   const [drawer,setDrawer]=useState(true);
   const [sel,setSel]=useState(null);                 // {kind:"req"|"trip", id}
+  const [tripDrag,setTripDrag]=useState(null);       // live drop preview while dragging a trip: {set:Set<dateStr>, color}
   const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
   const footprint=useFootprint(state);
   const {weeks,windows,qInfo,committed,remaining}=useMemo(
@@ -884,7 +885,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
     </div>
     {drawer&&<div style={{padding:"0 12px 12px"}}>{paceInner}</div>}
   </div>;
-  const calEl=<><Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling} sel={sel} setSel={setSel} goto={goto} mobile={mobile}/>{!mobile&&<FootLegend/>}</>;
+  const calEl=<><Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling} sel={sel} setSel={setSel} goto={goto} mobile={mobile} preview={tripDrag}/>{!mobile&&<FootLegend/>}</>;
   const layersEl=<LayersPanel state={state} setState={setState}/>;
   const tripsEl=<TripsDrawer state={state} setState={setState}/>;
   const sitesEl=<SitesWorksheet state={state} setState={setState}/>;
@@ -962,7 +963,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
     })}
   </>;
 
-  const tripsPaletteEl=<TripsPalette state={state} setState={setState} sel={sel} setSel={setSel} goto={goto}/>;
+  const tripsPaletteEl=<TripsPalette state={state} setState={setState} sel={sel} setSel={setSel} goto={goto} onPreview={setTripDrag}/>;
   let body;
   if(view==="pace")body=<><div style={{fontSize:15.5,fontWeight:800,marginBottom:10}}>Pace</div>{paceInner}</>;
   else if(view==="setup")body=<>{layersEl}{sp}{tripsEl}{sp}{sitesEl}</>;
@@ -1474,10 +1475,11 @@ function dayVisual(d,ctx){
   else if(smear){inner="dotted";}
   const cost=lays.length>0&&!!(conf||neg||pend||cand||smear);   // working a family-off day → family-time cost
   const drawing=ctx.drawSet&&ctx.drawSet.has(str),inSel=ctx.selReqDates&&ctx.selReqDates.has(str),inTrip=ctx.selTripDates&&ctx.selTripDates.has(str);
+  const prev=!!(ctx.preview&&ctx.preview.set&&ctx.preview.set.has(str));   // a trip drag is hovering this day
   if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
   const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
   const title=`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · negotiating ${neg.site.name}`:""}${pend?` · submitted ${pend.site.name}`:""}${cand?` · draft ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
-  return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,cost,bg,border,inner,drawing,inSel,inTrip,title};
+  return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,cost,bg,border,inner,drawing,inSel,inTrip,prev,prevColor:ctx.preview&&ctx.preview.color,title};
 }
 function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandle}){
   const base={...box,marginLeft:ml||0,flexShrink:0,borderRadius:2,position:"relative",boxSizing:"border-box"};
@@ -1500,16 +1502,18 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandl
     {v.lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:v.lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
     {v.lays.length>0&&<div style={{position:"absolute",left:0,right:0,bottom:0,height:num?4:3,display:"flex",overflow:"hidden",borderRadius:"0 0 1px 1px",pointerEvents:"none"}}>
       {v.lays.slice(0,4).map((x,i)=><span key={i} style={{flex:1,background:x.color,opacity:x.inferred?0.4:0.95}}/>)}</div>}
+    {v.prev&&<><span style={{position:"absolute",inset:0,borderRadius:2,background:v.prevColor||C.ocean,opacity:0.16,pointerEvents:"none",zIndex:0}}/>
+      <span style={{position:"absolute",inset:0,borderRadius:2,border:`2px dashed ${v.prevColor||C.ocean}`,pointerEvents:"none",zIndex:6}}/></>}
     {hStart&&nub("start")}{hEnd&&nub("end")}
   </div>;
 }
 /* one month as a weekday-aligned by-row strip — cells are the drawing surface */
-function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,selTripDates,onCellDown,onTap,selStart,selEnd,onHandle}){
+function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,selTripDates,preview,onCellDown,onTap,selStart,selEnd,onHandle}){
   const {byDay,famBy,lockBy,perYM,loadYM}=footprint;
   const g=monthGrid(y,m),isNow=y===YEAR&&m===TODAY.getMonth();
   const pm=perYM[`${y}-${m}`],ld=loadYM[`${y}-${m}`]||{conf:0,win:0},load=ld.conf+ld.win;
   const tint=pressureTint(load,ceiling),hot=load>ceiling;
-  const ctx={byDay,famBy,lockBy,layerCov,tint,drawSet,selReqDates,selTripDates};
+  const ctx={byDay,famBy,lockBy,layerCov,tint,drawSet,selReqDates,selTripDates,preview};
   const barW=44,confW=Math.min(barW,ld.conf/Math.max(1,ceil2(ceiling))*barW),winW=Math.min(barW-confW,ld.win/Math.max(1,ceil2(ceiling))*barW);
   function ceil2(c){return Math.max(c,load);}                 // bar scales to whichever is larger
   const GW=200,gsc=Math.max(ceiling,load)||1,gcw=ld.conf/gsc*GW,gww=Math.min(GW-gcw,ld.win/gsc*GW),gtick=Math.min(GW-1,ceiling/gsc*GW);  // focused-month pressure gauge
@@ -1565,7 +1569,7 @@ function LayerFilters({layers,setLayers,goto}){
         border:`1px dashed ${C.line}`,background:"transparent",color:C.gray}}>✎ edit</button>
   </div>;
 }
-function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto,mobile}){
+function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto,mobile,preview}){
   const sites=state.sites;
   const [mode,setMode]=useState("cal");
   const [range,setRange]=useState({s:YEAR-1,e:YEAR+2});
@@ -1689,7 +1693,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   if(mobile){
     const fM=selected,fld=footprint.loadYM[`${focusY}-${fM}`]||{conf:0,win:0},ftint=pressureTint(fld.conf+fld.win,ceiling);
     const fctx={byDay:footprint.byDay,famBy:footprint.famBy,lockBy:footprint.lockBy,layerCov:focusCov,tint:ftint,
-      drawSet:draw&&draw.y===focusY&&draw.m===fM?drawSet:null,selReqDates:srDates,selTripDates:stpDates};
+      drawSet:draw&&draw.y===focusY&&draw.m===fM?drawSet:null,selReqDates:srDates,selTripDates:stpDates,preview};
     const fg=monthGrid(focusY,fM);
     const dow=<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
       {"MTWTFSS".split("").map((c,i)=><div key={i} style={{textAlign:"center",fontSize:9.5,fontWeight:700,color:C.mute}}>{c}</div>)}</div>;
@@ -1763,7 +1767,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
           ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:13,fontWeight:900,color:C.ink}}>{it.h}</div>
           : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
               selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}
-              tool={editing?tool:null} drawSet={editing&&draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selTripDates={stpDates}
+              tool={editing?tool:null} drawSet={editing&&draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selTripDates={stpDates} preview={preview}
               onCellDown={cellDown} onTap={editing?undefined:tapSelect}
               selStart={editing?srStart:null} selEnd={editing?srEnd:null} onHandle={(e,which)=>sr&&handleResize(e,which,sr)}/>)}
         <div style={{textAlign:"center",marginTop:4}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
@@ -1843,7 +1847,7 @@ function SitesWorksheet({state,setState}){
   </Drawer>;
 }
 /* ════════ TRIPS PALETTE — the third workspace pillar: hideable, horizontal, drag onto the calendar ════════ */
-function TripsPalette({state,setState,sel,setSel,goto}){
+function TripsPalette({state,setState,sel,setSel,goto,onPreview}){
   const [ghost,setGhost]=useState(null);
   const [open,setOpen]=useState(true);
   const trips=state.trips;
@@ -1853,15 +1857,17 @@ function TripsPalette({state,setState,sel,setSel,goto}){
   const addTrip=()=>{const id="t"+Date.now();setTrips(ts=>[...ts,{id,name:"New trip",from:`${YEAR}-07-06`,to:`${YEAR}-07-10`,loc:Object.keys(LOC_NAME)[0],workFactor:"closed",placed:false}]);setSel&&setSel({kind:"trip",id});};
   const start=(e,t)=>{
     e.preventDefault();e.stopPropagation();                 // grip is touch-action:none → drag in any direction
-    let moved=false; const sx=e.clientX, sy=e.clientY;
+    let moved=false,lastD; const sx=e.clientX, sy=e.clientY;
+    const previewAt=d=>onPreview&&onPreview(d?{set:new Set(Array.from({length:dur(t)},(_,i)=>ds(ad(pd(d),i)))),color:WFC[t.workFactor]}:null);
     const move=ev=>{const p=ev.touches?ev.touches[0]:ev;
       if(!moved&&Math.abs(p.clientX-sx)+Math.abs(p.clientY-sy)<5)return;   // ignore taps / micro-jitter
       moved=true; const d=nearestDate(p.clientX,p.clientY);
-      setGhost({name:t.name,x:p.clientX,y:p.clientY,date:d});};
+      setGhost({name:t.name,x:p.clientX,y:p.clientY,date:d});
+      if(d!==lastD){lastD=d;previewAt(d);}};   // live drop preview — only when the hovered day changes
     const cleanup=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",cancel);};
     const up=ev=>{cleanup();const p=ev.touches?ev.touches[0]:ev;const d=nearestDate(p.clientX,p.clientY);
-      if(moved&&d)place(t.id,d); setSel&&setSel({kind:"trip",id:t.id}); setGhost(null);};
-    const cancel=()=>{cleanup();setGhost(null);};
+      if(moved&&d)place(t.id,d); setSel&&setSel({kind:"trip",id:t.id}); setGhost(null); previewAt(null);};
+    const cancel=()=>{cleanup();setGhost(null);previewAt(null);};
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);window.addEventListener("pointercancel",cancel);
   };
   const WFC={colocate:C.juniper,commute:C.ocean,closed:C.pressHot};
