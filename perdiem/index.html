@@ -1566,9 +1566,8 @@ function App(){
     try{const s=localStorage.getItem("perDiemState");if(s){const v=sanitizeState(JSON.parse(s));if(v)return v;}}catch(e){}
     return seedState();
   });
-  const [surface,setSurface]=useState("board");
+  const [view,setView]=useState("calendar");   // one tab set, top on desktop / bottom on mobile
   const [monthIdx,setMonthIdx]=useState(7); // August — requests are open now
-  const [mtab,setMtab]=useState("calendar"); // mobile bottom tab
   const [isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width: 760px)").matches);
   const [toast,setToast]=useState(null);
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}}); // system|light|dark
@@ -1606,7 +1605,10 @@ function App(){
     else prompt("Copy this share link:",url);
   };
 
-  const tabs=[["board","Board"],["pending","Pending"]];
+  const VIEWS=[["calendar","▦","Calendar"],["windows","▤","Windows"],["pending","◷","Pending"],["pace","∿","Pace"],["setup","⚙","Setup"]];
+  const content=view==="pending"
+    ? <Pending state={state} setState={setState} tsp={tsp}/>
+    : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view}/>;
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
     {/* header */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
@@ -1628,29 +1630,21 @@ function App(){
     {toast&&<div style={{position:"fixed",bottom:isMobile?68:18,left:"50%",transform:"translateX(-50%)",zIndex:300,
       background:C.ink,color:C.bg,fontSize:10,fontWeight:600,padding:"8px 14px",borderRadius:6,
       boxShadow:"0 8px 24px rgba(0,0,0,.25)",maxWidth:"90vw",textAlign:"center"}}>{toast}</div>}
-    {/* desktop: top tabs (Board = the whole workbench, Pending = the lifecycle) */}
+    {/* desktop: top tabs — each a view into the same model (calendar and windows are separate) */}
     {!isMobile&&<div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
-      {tabs.map(([id,label])=><button key={id} onClick={()=>setSurface(id)}
-        style={{fontFamily:MONO,fontSize:11,fontWeight:800,padding:"9px 16px",border:"none",cursor:"pointer",
-          background:"transparent",color:surface===id?C.ink:C.mute,letterSpacing:"-0.01em",
-          borderBottom:surface===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
+      {VIEWS.map(([id,ic,label])=><button key={id} onClick={()=>setView(id)}
+        style={{fontFamily:MONO,fontSize:11,fontWeight:800,padding:"9px 15px",border:"none",cursor:"pointer",
+          background:"transparent",color:view===id?C.ink:C.mute,letterSpacing:"-0.01em",
+          borderBottom:view===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
       <span style={{marginLeft:"auto",alignSelf:"center",fontSize:8,color:C.mute,padding:"0 14px"}}>today {ds(TODAY)}</span>
     </div>}
-    {/* surface — same model either way; desktop scrolls it all, mobile shows one tab at a time */}
-    <div style={{flex:1,minHeight:0}}>
-      {isMobile
-        ? (mtab==="pending"
-            ? <Pending state={state} setState={setState} tsp={tsp}/>
-            : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={mtab}/>)
-        : (surface==="pending"
-            ? <Pending state={state} setState={setState} tsp={tsp}/>
-            : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view="all"/>)}
-    </div>
-    {/* mobile: bottom tab bar — views into the same model */}
+    {/* surface — one active view */}
+    <div style={{flex:1,minHeight:0}}>{content}</div>
+    {/* mobile: bottom tab bar — the same views */}
     {isMobile&&<div style={{display:"flex",borderTop:`1px solid ${C.line}`,background:C.panel,flexShrink:0,paddingBottom:"env(safe-area-inset-bottom)"}}>
-      {[["calendar","▦","Calendar"],["windows","▤","Windows"],["pending","◷","Pending"],["pace","∿","Pace"],["setup","⚙","Setup"]].map(([id,ic,label])=>{
-        const on=mtab===id;
-        return <button key={id} onClick={()=>setMtab(id)} style={{flex:1,fontFamily:MONO,border:"none",cursor:"pointer",background:"transparent",
+      {VIEWS.map(([id,ic,label])=>{
+        const on=view===id;
+        return <button key={id} onClick={()=>setView(id)} style={{flex:1,fontFamily:MONO,border:"none",cursor:"pointer",background:"transparent",
           padding:"7px 2px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,
           color:on?C.ink:C.mute,borderTop:on?`2px solid ${C.ink}`:"2px solid transparent",marginTop:-1}}>
           <span style={{fontSize:14,lineHeight:1}}>{ic}</span>
