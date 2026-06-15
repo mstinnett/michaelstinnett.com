@@ -145,7 +145,7 @@ function seedState(){
      submissionType:"by_shift",  cadence:{opensDaysBefore:75,dueByDaysBefore:21,expectedResponseDays:14}},
     {id:"santa_fe",name:"Santa Fe ED", note:"good people. depends on hearing from ABQ first.",
      reach:"nm",      homeBaseLoc:"santa_fe",dayRate:170,nightRate:210,dayHours:10,nightHours:10,
-     submissionType:"by_window", cadence:{opensDaysBefore:90,dueByDaysBefore:30,expectedResponseDays:10}, dependsOn:"abq"},
+     submissionType:"by_window", cadence:{opensDaysBefore:90,dueByDaysBefore:30,expectedResponseDays:10}},
     {id:"abq",     name:"Albuquerque ED",note:"high volume, fast. anchors the NM trip.",
      reach:"nm",      homeBaseLoc:"abq",     dayRate:180,nightRate:200,dayHours:9, nightHours:10,
      submissionType:"by_shift",  cadence:{opensDaysBefore:80,dueByDaysBefore:25,expectedResponseDays:7}},
@@ -210,7 +210,7 @@ function seedState(){
     // confirmed work (real) → Past (worked) + Confirmed (upcoming), both on the calendar
     ...LYDIA.map((s,i)=>cReq("L"+String(i+1).padStart(2,"0"),"boston",s[1],[s[0]])),
     // ── per-diem requests in flight (illustrative — the sources carry no per-diem asks) ──
-    // submitted, awaiting the site's response → Pending (also the chain upstream for santa_fe)
+    // submitted, awaiting the site's response → Pending (its earlier due date anchors the emergent chain)
     {id:"s1",siteId:"abq",shiftType:"day",opens:"2026-04-13",dueBy:"2026-05-08",
      state:"pending",submittedOn:"2026-05-02",expectedResponseBy:"2026-06-20",
      footprint:{kind:"pinned",dates:["2026-07-23","2026-07-24","2026-07-27"]}},
@@ -265,12 +265,10 @@ function sanitizeState(obj){
         dayHours:numOr(s.dayHours,9),nightHours:numOr(s.nightHours,9),
         submissionType:s.submissionType==="by_window"?"by_window":"by_shift",
         cadence:{opensDaysBefore:numOr(c.opensDaysBefore,60),dueByDaysBefore:numOr(c.dueByDaysBefore,21),expectedResponseDays:numOr(c.expectedResponseDays,14)}};
-      if(s.dependsOn)out.dependsOn=String(s.dependsOn);
       return out;
     }).filter(Boolean);
     if(!sites.length)sites=seed.sites;
     const ids=new Set(sites.map(s=>s.id));
-    sites.forEach(s=>{if(s.dependsOn&&!ids.has(s.dependsOn))delete s.dependsOn;});
     const pace=sanitizePace(obj.pace,seed.pace);
     const cleanRanges=a=>(Array.isArray(a)?a:[]).filter(r=>r&&DATE_RE.test(r.from||"")).map(r=>({from:r.from,to:DATE_RE.test(r.to||"")?r.to:r.from,label:String(r.label||"")}));
     const LK=["school","holiday","event","custom"];
@@ -775,7 +773,8 @@ function PaceCurve({pace,setPace,tsp}){
       <div style={{fontSize:11,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase"}}>Pace curve <span style={{fontWeight:600,textTransform:"none",color:C.mute}}>· drag months · shifts/mo</span></div>
       <div style={{textAlign:"right",fontSize:11,color:C.gray}}>
         <b style={{color:C.ink,fontSize:13}}>{total}</b> shifts/yr · avg <b style={{color:C.ink}}>{avg.toFixed(1)}</b>/mo
-        <div style={{fontSize:10}}>≈ <Num e={est(annual$,tsp.assumptions)} money k/> extrapolated</div>
+        <div style={{fontSize:10}}>≈ <Num e={est(annual$,tsp.assumptions)} money k/>/yr · <b style={{color:C.ink}}>{fmt$(avg*tsp.value)}</b>/mo avg</div>
+        <div style={{fontSize:9.5,color:C.mute}}>at <Num e={tsp} money/>/shift avg rate</div>
       </div>
     </div>
     <div style={{position:"relative",display:"flex",alignItems:"flex-end",gap:2,height:H,marginTop:4}}>
@@ -1029,10 +1028,12 @@ function Pending({state,setState,tsp}){
   const payOf=r=>{const s=siteById[r.siteId];return s?shiftCount(r)*reqShiftPay(r,s):0;};
 
   function chainFor(r){
-    const site=siteById[r.siteId];if(!site||!site.dependsOn)return null;
-    const up=siteById[site.dependsOn];
-    const upstream=state.requests.find(u=>u.siteId===site.dependsOn&&(u.state==="pending"||u.state==="override"||u.state==="confirmed"));
-    if(!upstream)return {up,missing:true};
+    // no manual dependency — the chain emerges from due dates: r "waits on" the still-open
+    // request (awaiting a response) that's furthest along the queue yet due before r is.
+    const ahead=state.requests.filter(u=>u.id!==r.id&&(u.state==="pending"||u.state==="override")&&pd(u.dueBy)<pd(r.dueBy));
+    if(!ahead.length)return null;
+    const upstream=ahead.reduce((a,b)=>pd(b.dueBy)>pd(a.dueBy)?b:a);
+    const up=siteById[upstream.siteId];
     const slack=days(pd(upstream.expectedResponseBy||upstream.dueBy),pd(r.dueBy));
     return {up,upstream,slack};
   }
@@ -1085,9 +1086,8 @@ function Pending({state,setState,tsp}){
             </div>
           </div>
           {chain&&<div style={{marginTop:6,fontSize:10,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-            <span style={{color:C.gray}}>⛓ waits on <b>{chain.up?chain.up.name:"?"}</b></span>
-            {chain.missing? <Tag bg={C.line2} col={C.mute}>no live upstream request</Tag>
-              : chain.slack<0? <Tag bg={C.softWarn} col={C.red}>slack {chain.slack}d — due before they respond</Tag>
+            <span style={{color:C.gray}}>⛓ hear back from <b>{chain.up?chain.up.name:"?"}</b> first</span>
+            {chain.slack<0? <Tag bg={C.softWarn} col={C.red}>slack {chain.slack}d — due before they respond</Tag>
               : <Tag bg={C.softGood} col={C.green}>{chain.slack}d slack</Tag>}
           </div>}
           <div style={{display:"flex",gap:6,marginTop:8}}>
@@ -1209,7 +1209,7 @@ function SiteWizard({state,setState,embed,onClose}){
               <span style={{fontSize:13,fontWeight:800}}>{s.name||"(unnamed)"}</span>
               <Tag>{REACH_LABEL[s.reach]}</Tag>
               <Tag bg={C.line2}>{s.submissionType==="by_window"?"by window":"by shift"}</Tag>
-              {s.dependsOn&&<Tag bg={C.softInfo} col={C.blue}>after {sites.find(x=>x.id===s.dependsOn)?.name||"?"}</Tag>}
+              <Tag bg={C.line2}>due {s.cadence.dueByDaysBefore}d before</Tag>
               <span style={{marginLeft:"auto",fontSize:11,color:C.mute}}>{open?"▾":"▸"}</span>
             </div>
             {open&&<div style={{padding:"4px 10px 10px",borderTop:`1px solid ${C.line2}`}}>
@@ -1231,12 +1231,10 @@ function SiteWizard({state,setState,embed,onClose}){
                 <option value="by_shift">by shift (pinned)</option><option value="by_window">by window (smeared)</option></select></Field>
               <div style={{display:"flex",gap:8}}>
                 <Field label="Opens (days before)"><N value={s.cadence.opensDaysBefore} onChange={e=>updCad(s.id,{opensDaysBefore:+e.target.value||0})}/></Field>
-                <Field label="Due (days before)"><N value={s.cadence.dueByDaysBefore} onChange={e=>updCad(s.id,{dueByDaysBefore:+e.target.value||0})}/></Field>
+                <Field label="Requests due by (days before)"><N value={s.cadence.dueByDaysBefore} onChange={e=>updCad(s.id,{dueByDaysBefore:+e.target.value||0})}/></Field>
                 <Field label="Response (days)"><N value={s.cadence.expectedResponseDays} onChange={e=>updCad(s.id,{expectedResponseDays:+e.target.value||0})}/></Field>
               </div>
-              <Field label="Depends on (chain — must hear back first)"><select style={inp} value={s.dependsOn||""} onChange={e=>upd(s.id,{dependsOn:e.target.value||undefined})}>
-                <option value="">— none —</option>
-                {sites.filter(x=>x.id!==s.id).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+              <div style={{fontSize:9.5,color:C.mute,margin:"2px 0 4px"}}>No manual dependencies — the chain emerges from each site's due-by date. The earliest-due request leads.</div>
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
                 <Btn small kind="danger" disabled={refs>0} onClick={()=>rm(s.id)}>remove</Btn>
                 {refs>0&&<span style={{fontSize:10,color:C.mute}}>{refs} request{refs>1?"s":""} reference this site — can’t remove</span>}
