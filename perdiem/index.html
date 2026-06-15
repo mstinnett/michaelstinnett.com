@@ -11,19 +11,50 @@
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" as="script">
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js" as="script">
 <style>
-  *{margin:0;padding:0;box-sizing:border-box;}
+  *{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none;}
+  input,textarea,select{user-select:text;-webkit-user-select:text;font-family:inherit;}
   html,body,#root{height:100%;}
-  body{overflow:hidden;background:#FAFAF9;-webkit-font-smoothing:antialiased;}
-  input,textarea,select{font-family:inherit;}
-  #loader{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;background:#FAFAF9;font-family:'SF Mono','JetBrains Mono',monospace;}
-  #loader span{font-size:13px;font-weight:600;color:#78716C;letter-spacing:-0.02em;}
-  #loader .bar{width:120px;height:3px;background:#E7E5E4;border-radius:2px;overflow:hidden;}
-  #loader .bar::after{content:'';display:block;width:40%;height:100%;background:#1C1917;border-radius:2px;animation:load 1s ease infinite;}
+  /* ── theme tokens: grayscale + Juniper Green / Ocean Blue ── */
+  :root{
+    --bg:#F7F6F4;--panel:#FFFFFF;--panel2:#FBFAF8;--ink:#1C1A18;--gray:#6B6660;--mute:#A6A09A;
+    --line:#E6E3E0;--line2:#EFEDEA;--faint:#D5D1CD;
+    --juniper:#3E7D63;--ocean:#356C88;--danger:#7A645E;
+    --est:#7C766F;--est-line:#B8B2AB;
+    --shift-day:#6E6A64;--shift-night:#2C2A27;--ov-day:#B7B2AB;--ov-night:#8A857E;
+    --tint-fam:#EEEAE3;--tint-out:#ECE7E0;--weekend:#F1EFEC;--sel:#EFEAE1;
+    --good-soft:#E6F0E9;--info-soft:#E6EEF3;--warn-soft:#EFE9E5;--press-hot:#6E5F5A;
+    --bar:#C7C1B9;--glow-bd:#BDB7AF;--glow-bd2:#9A948C;
+    --press-1:#F0EEEA;--press-2:#E2DDD6;--press-3:#CEC8BF;--press-4:#B2ABA1;
+    --shadow:rgba(28,26,24,.14);--shadow-sm:rgba(28,26,24,.08);
+  }
+  :root[data-theme="dark"]{
+    --bg:#171614;--panel:#211F1D;--panel2:#1D1B19;--ink:#ECE8E3;--gray:#A6A09A;--mute:#6E685F;
+    --line:#332F2B;--line2:#2A2723;--faint:#454039;
+    --juniper:#76BA92;--ocean:#65AAC9;--danger:#C99B93;
+    --est:#A39C93;--est-line:#5A554E;
+    --shift-day:#A39C92;--shift-night:#DAD4CC;--ov-day:#6A655E;--ov-night:#8E897F;
+    --tint-fam:#262320;--tint-out:#2B2724;--weekend:#1E1C1A;--sel:#2D2924;
+    --good-soft:#1F2E27;--info-soft:#1E2B33;--warn-soft:#2C2622;--press-hot:#C99B93;
+    --bar:#5C574F;--glow-bd:#4A453E;--glow-bd2:#69635B;
+    --press-1:#211F1D;--press-2:#2A2723;--press-3:#3A352E;--press-4:#4C463D;
+    --shadow:rgba(0,0,0,.45);--shadow-sm:rgba(0,0,0,.30);
+  }
+  body{overflow:hidden;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;transition:background .2s ease,color .2s ease;}
+  #loader{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;background:var(--bg);font-family:'SF Mono','JetBrains Mono',monospace;}
+  #loader span{font-size:13px;font-weight:600;color:var(--gray);letter-spacing:-0.02em;}
+  #loader .bar{width:120px;height:3px;background:var(--line);border-radius:2px;overflow:hidden;}
+  #loader .bar::after{content:'';display:block;width:40%;height:100%;background:var(--ink);border-radius:2px;animation:load 1s ease infinite;}
   @keyframes load{0%{transform:translateX(-100%)}50%{transform:translateX(200%)}100%{transform:translateX(-100%)}}
   ::-webkit-scrollbar{width:8px;height:8px;}
-  ::-webkit-scrollbar-thumb{background:#D6D3D1;border-radius:4px;}
-  @keyframes heat{0%{box-shadow:inset 0 0 60px rgba(220,60,30,.20)}50%{box-shadow:inset 0 0 90px rgba(220,60,30,.34)}100%{box-shadow:inset 0 0 60px rgba(220,60,30,.20)}}
+  ::-webkit-scrollbar-thumb{background:var(--faint);border-radius:4px;}
+  @media (prefers-color-scheme:dark){:root:not([data-theme]){color-scheme:dark;}}
 </style>
+<script>
+  /* set theme before paint to avoid a flash */
+  (function(){try{var t=localStorage.getItem('perDiemTheme')||'system';
+    var d=t==='dark'||(t==='system'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme',d?'dark':'light');}catch(e){}})();
+</script>
 </head>
 <body>
 <div id="root"><div id="loader"><span>PER DIEM</span><div class="bar"></div></div></div>
@@ -43,10 +74,15 @@ const {useState,useMemo,useCallback,useRef,useEffect}=React;
    ranks, recommends, or acts.
    ════════════════════════════════════════════════════════════ */
 
-/* ─── palette (matches the planner) ─── */
-const C={ink:"#1C1917",bg:"#FAFAF9",panel:"#fff",line:"#E7E5E4",line2:"#ECEAE7",
-  gray:"#78716C",mute:"#A8A29E",faint:"#D6D3D1",blue:"#3B82F6",red:"#DC2626",
-  est:"#A8732C",estLine:"#D9B25A",green:"#0E7C5A"};
+/* ─── palette → CSS variables (grayscale + Juniper Green / Ocean Blue; dark-mode aware).
+   Call sites keep using C.x; the value is now a var() the browser resolves per theme.
+   Semantic accents remap: blue→ocean, green→juniper, red→danger (muted). ─── */
+const V=k=>`var(--${k})`;
+const C={ink:V("ink"),bg:V("bg"),panel:V("panel"),panel2:V("panel2"),line:V("line"),line2:V("line2"),
+  gray:V("gray"),mute:V("mute"),faint:V("faint"),blue:V("ocean"),red:V("danger"),
+  est:V("est"),estLine:V("est-line"),green:V("juniper"),juniper:V("juniper"),ocean:V("ocean"),
+  softGood:V("good-soft"),softInfo:V("info-soft"),softWarn:V("warn-soft"),sel:V("sel"),
+  weekend:V("weekend"),tintOut:V("tint-out"),pressHot:V("press-hot"),bar:V("bar")};
 const MONO="'SF Mono','JetBrains Mono','Fira Code',ui-monospace,monospace";
 const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const MONL=["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -353,12 +389,12 @@ function loadByMonth(state){
 function pressureTint(load,ceil){
   if(load<=0)return null;
   const p=load/Math.max(1,ceil);
-  if(p<0.5)return "#FCFAF4";
-  if(p<0.85)return "#FBF1DC";
-  if(p<1.05)return "#F6E2B8";    // at the comfortable ceiling
-  if(p<1.4)return "#F0CDA8";
-  return "#E9B59C";              // over the ceiling — hot
+  if(p<0.5)return "var(--press-1)";
+  if(p<0.85)return "var(--press-2)";
+  if(p<1.05)return "var(--press-3)";   // at the comfortable ceiling
+  return "var(--press-4)";             // over the ceiling
 }
+const PRESS_RAMP=["var(--press-1)","var(--press-2)","var(--press-3)","var(--press-4)"];
 
 /* §4.4 the curve is now SHIFTS per month; dollars extrapolate as shifts × typicalShiftPay.
    annualTarget$ is derived (no longer a stored dial). Shares = each month's slice of the year. */
@@ -393,12 +429,19 @@ function coolingAggregate(state,tsp){
   const annualTarget=annualTargetOf(pace,tsp);          // extrapolated from the shift curve
   const fracYearElapsed=days(new Date(YEAR,0,1),TODAY)/365;
   const expectedToDate$=annualTarget*curveCumulativeFraction(pace,TODAY);
-  let bookedToDate$=0;
+  let bookedToDate$=0,bookedFuture$=0,requested$=0;
   for(const r of requests){
     const s=siteById[r.siteId];if(!s)continue;
     if(r.state==="confirmed"&&r.footprint.kind==="pinned"){
-      const inYr=r.footprint.dates.filter(d=>pd(d)<=TODAY&&pd(d).getFullYear()===YEAR);
-      bookedToDate$+=inYr.length*reqRate(r,s);
+      const yr=r.footprint.dates.filter(d=>pd(d).getFullYear()===YEAR);
+      const worked=yr.filter(d=>pd(d)<=TODAY).length;
+      bookedToDate$+=worked*reqRate(r,s);                 // already worked
+      bookedFuture$+=(yr.length-worked)*reqRate(r,s);     // confirmed, not yet worked
+    }else if(r.state==="candidate"||r.state==="pending"||r.state==="override"){
+      const n=r.footprint.kind==="pinned"
+        ?r.footprint.dates.filter(d=>pd(d).getFullYear()===YEAR).length
+        :(r.footprint.candidates.some(d=>pd(d).getFullYear()===YEAR)?r.footprint.take:0);
+      requested$+=n*(r.footprint.kind==="pinned"?reqRate(r,s):tsp.value);   // speculative ask
     }
   }
   const flatRunRate$=fracYearElapsed>0?bookedToDate$/fracYearElapsed:0;
@@ -410,7 +453,7 @@ function coolingAggregate(state,tsp){
   const feasible=maxReachable$>=annualTarget;
   const shortfall=Math.max(0,annualTarget-maxReachable$);
   const heat=feasible?0:clamp01(shortfall/Math.max(1,annualTarget*0.5));
-  return {fracYearElapsed,expectedToDate$,bookedToDate$,flatRunRate$,onCurveProjection$,coolingGap$,feasible,heat,maxReachable$,monthsLeft,annualTarget};
+  return {fracYearElapsed,expectedToDate$,bookedToDate$,bookedFuture$,requested$,flatRunRate$,onCurveProjection$,coolingGap$,feasible,heat,maxReachable$,monthsLeft,annualTarget};
 }
 
 /* §4.6 exposure per week off the footprint */
@@ -545,57 +588,54 @@ function Num({e,money,k,dp,bold}){
 const Tag=({children,bg,col})=> <span style={{fontSize:8,fontWeight:800,letterSpacing:"0.04em",
   padding:"1px 5px",borderRadius:3,background:bg||C.line2,color:col||C.gray,textTransform:"uppercase",whiteSpace:"nowrap"}}>{children}</span>;
 const Btn=({children,onClick,kind,small,disabled})=>{
-  const styles={prim:{bg:C.ink,col:"#fff",bd:C.ink},ghost:{bg:"transparent",col:C.gray,bd:C.line},
-    danger:{bg:"transparent",col:C.red,bd:"#F1C9C4"},good:{bg:"transparent",col:C.green,bd:"#BFE3D3"}}[kind||"ghost"];
+  const styles={prim:{bg:C.ink,col:C.bg,bd:C.ink},ghost:{bg:"transparent",col:C.gray,bd:C.line},
+    danger:{bg:"transparent",col:C.red,bd:C.red},good:{bg:"transparent",col:C.green,bd:C.juniper}}[kind||"ghost"];
   return <button onClick={onClick} disabled={disabled} style={{fontFamily:MONO,fontSize:small?9:10,fontWeight:700,
     padding:small?"3px 7px":"5px 10px",borderRadius:4,cursor:disabled?"not-allowed":"pointer",
     background:styles.bg,color:disabled?C.faint:styles.col,border:`1px solid ${disabled?C.line:styles.bd}`,
     opacity:disabled?0.6:1,letterSpacing:"0.02em",whiteSpace:"nowrap"}}>{children}</button>;
 };
-const inp={fontFamily:MONO,fontSize:11,padding:"5px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:"#fff",color:C.ink,width:"100%"};
+const inp={fontFamily:MONO,fontSize:11,padding:"5px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.ink,width:"100%"};
 const Field=({label,children})=> <label style={{display:"block",marginBottom:7}}>
   <div style={{fontSize:7.5,fontWeight:800,color:C.gray,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:3}}>{label}</div>
   {children}</label>;
 function glowStyle(bucket){
   switch(bucket){
-    case"brightest":return{border:`1px solid #E0A92E`,background:"#FFFAEC",boxShadow:"0 0 0 1px #E8B53D, 0 5px 20px rgba(220,150,20,.30)"};
-    case"bright":   return{border:`1px solid #E8C97A`,background:"#FFFDF5",boxShadow:"0 0 0 1px #F0D78A, 0 3px 12px rgba(220,170,40,.18)"};
+    case"brightest":return{border:`1px solid ${C.gray}`,background:C.panel,boxShadow:`0 5px 18px var(--shadow), 0 0 0 1px var(--glow-bd2)`};
+    case"bright":   return{border:`1px solid var(--glow-bd2)`,background:C.panel,boxShadow:`0 3px 11px var(--shadow-sm)`};
     case"normal":   return{border:`1px solid ${C.line}`,background:C.panel,boxShadow:"none"};
-    default:        return{border:`1px solid ${C.line2}`,background:"#FCFBFA",boxShadow:"none"};
+    default:        return{border:`1px solid ${C.line2}`,background:C.panel2,boxShadow:"none"};
   }
 }
 
-/* ════════ COOLING AGGREGATE — never shown raw (Inv 6) ════════ */
-function CoolingBar({cool,compact}){
-  const hot=!cool.feasible;
-  return <div style={{padding:compact?"8px 10px":"12px 14px",borderRadius:7,
-    border:`1px solid ${hot?"#E8B4A8":C.line}`,background:hot?"#FCEFEA":"#fff",position:"relative",overflow:"hidden",
-    animation:hot?"heat 2.4s ease-in-out infinite":"none"}}>
-    {!hot? <>
-      <div style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase",marginBottom:6}}>On current pace</div>
-      <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
-        <span style={{fontSize:compact?20:24,fontWeight:800,color:C.ink,letterSpacing:"-0.02em"}}>{fmtK(cool.onCurveProjection$)}</span>
-        <span style={{fontSize:10,color:C.gray}}>projected this year</span>
-      </div>
-      <div style={{fontSize:9.5,color:C.gray,marginTop:6,lineHeight:1.5}}>
-        Booked <b style={{color:C.ink}}>{fmt$(cool.bookedToDate$)}</b> of an expected <Num e={est(cool.expectedToDate$,["curve-weighted to-date"])} money/> so far.
-        The flat run-rate reads <span style={{color:C.mute}}>{fmtK(cool.flatRunRate$)}</span> — but the curve says you ramp in the fall, so on-pace it
-        cools {cool.coolingGap$>=0?"up":"down"} to <b style={{color:C.green}}>{fmtK(cool.onCurveProjection$)}</b> (cooling moves <Num e={est(cool.coolingGap$,["onCurve − flatRunRate"])} k money/>).
-      </div>
-    </> : <>
-      <div style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.red,textTransform:"uppercase",marginBottom:6}}>The display will not cool</div>
-      <div style={{fontSize:11,color:"#9A2D1A",lineHeight:1.55,fontWeight:500}}>
-        Even at the comfortable ceiling for the rest of the year you top out near <b>{fmtK(cool.maxReachable$)}</b>,
-        short of the <b>{fmtK(cool.annualTarget)}</b> the curve implies. This is genuine heat — not an alert.
-        Drag the pace curve down, or the comfort ceiling up.
-      </div>
-    </>}
+/* ════════ STATS READOUT — the figures, broken out; no prescription, no warning ════════ */
+function StatItem({label,value,e,strong,accent}){
+  return <div style={{minWidth:0}}>
+    <div style={{fontSize:7.5,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{label}</div>
+    <div style={{fontSize:strong?15:12,fontWeight:strong?800:700,color:accent||C.ink,letterSpacing:"-0.01em"}}>
+      {e?<Num e={e} money k/>:value}</div>
+  </div>;
+}
+function StatsReadout({cool}){
+  return <div style={{padding:"11px 13px",borderRadius:7,border:`1px solid ${C.line}`,background:C.panel}}>
+    <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:9}}>
+      <span style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>This year</span>
+      <span style={{fontSize:8.5,color:C.mute}}>target <b style={{color:C.ink}}>{fmtK(cool.annualTarget)}</b></span>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"11px 10px"}}>
+      <StatItem label="On pace" e={est(cool.onCurveProjection$,["curve-weighted projection"])} strong accent={C.juniper}/>
+      <StatItem label="Annualized" e={est(cool.flatRunRate$,["flat run-rate × full year"])}/>
+      <StatItem label="Requested" e={est(cool.requested$,["pending + candidate + override"])} accent={C.ocean}/>
+      <StatItem label="Worked" value={fmtK(cool.bookedToDate$)}/>
+      <StatItem label="Booked ahead" value={fmtK(cool.bookedFuture$)}/>
+      <StatItem label="Expected by now" e={est(cool.expectedToDate$,["curve-weighted to-date"])}/>
+    </div>
   </div>;
 }
 
 /* ════════ BRIGHTNESS DECOMPOSITION (the "shows its work" safeguard) ════════ */
 function WhyBright({w}){
-  return <div style={{padding:"10px 12px",background:"#FBFAF8",borderTop:`1px dashed ${C.line}`}}>
+  return <div style={{padding:"10px 12px",background:C.panel2,borderTop:`1px dashed ${C.line}`}}>
     <div style={{fontSize:8.5,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>
       Why it glows — components combine for surfacing only
     </div>
@@ -606,7 +646,7 @@ function WhyBright({w}){
           {BW_LABEL[k]}{BW_EST[k]&&" ~"}</div>
         <div style={{flex:1,height:6,background:C.line2,borderRadius:3,overflow:"hidden"}}>
           <div style={{width:pct+"%",height:"100%",borderRadius:3,
-            background:BW_EST[k]?C.estLine:"#C8973A"}}/>
+            background:BW_EST[k]?C.estLine:C.juniper}}/>
         </div>
         <div style={{width:64,fontSize:8,color:C.mute,textAlign:"right",flexShrink:0}}>×{BW[k]} = {(v*BW[k]).toFixed(2)}</div>
       </div>;
@@ -654,17 +694,17 @@ function PaceCurve({pace,setPace,tsp}){
       <div onPointerDown={e=>drag(e,()=>ceiling,setCeiling)}
         title={`comfort ceiling ${ceiling}/mo — drag`}
         style={{position:"absolute",left:0,right:0,bottom:Math.min(H,ceiling*SPX)-6,height:12,zIndex:3,cursor:"ns-resize",touchAction:"none"}}>
-        <div style={{position:"absolute",left:0,right:0,top:6,borderTop:`1.5px dashed #C77E55`}}/>
-        <span style={{position:"absolute",right:0,top:-3,fontSize:6.5,fontWeight:700,color:"#B5573A",background:"#FCFBFA",padding:"0 2px"}}>ceil {ceiling}</span>
+        <div style={{position:"absolute",left:0,right:0,top:6,borderTop:`1.5px dashed ${C.gray}`}}/>
+        <span style={{position:"absolute",right:0,top:-3,fontSize:6.5,fontWeight:700,color:C.pressHot,background:C.panel2,padding:"0 2px"}}>ceil {ceiling}</span>
       </div>
       {MON.map((mn,m)=>{
         const sh=shifts[m],h=Math.max(2,Math.min(H,sh*SPX)),isNow=m===TODAY.getMonth(),hot=sh>ceiling;
         return <div key={m} onPointerDown={e=>drag(e,()=>shifts[m],v=>setMonthShifts(m,v))} title={`${MONL[m]}: ${sh} shifts ≈ ${fmt$(sh*tsp.value)} — drag`}
           style={{flex:1,height:H,display:"flex",flexDirection:"column",justifyContent:"flex-end",alignItems:"center",
             cursor:"ns-resize",touchAction:"none"}}>
-          <div style={{fontSize:7,fontWeight:700,color:hot?"#B5573A":(sh?C.gray:C.mute),marginBottom:1}}>{sh}</div>
-          <div style={{width:"74%",height:h,background:isNow?C.ink:(hot?"#E0A98C":"#DAC79E"),borderRadius:"3px 3px 0 0",
-            border:isNow?"none":`1px solid ${hot?"#CE8E6E":"#CDB888"}`}}/>
+          <div style={{fontSize:7,fontWeight:700,color:hot?C.pressHot:(sh?C.gray:C.mute),marginBottom:1}}>{sh}</div>
+          <div style={{width:"74%",height:h,background:isNow?C.ink:(hot?C.pressHot:C.bar),borderRadius:"3px 3px 0 0",
+            border:isNow?"none":`1px solid ${hot?C.pressHot:C.faint}`}}/>
         </div>;
       })}
     </div>
@@ -694,48 +734,19 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
     setCreating(null);
   }
 
-  // running month $ from confirmed + the quota readout (the one signal allowed to cross from footprint, §7)
-  const monthBooked$=state.requests.reduce((a,r)=>{
-    if(r.state!=="confirmed"||r.footprint.kind!=="pinned")return a;
-    const s=siteById[r.siteId];if(!s)return a;
-    const n=r.footprint.dates.filter(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR).length;
-    return a+n*reqRate(r,s);
-  },0);
-
   return <div style={{height:"100%",overflow:"auto"}}>
     <div style={{maxWidth:980,margin:"0 auto",padding:"12px 16px 60px"}}>
 
-      {/* ── FACTORS DRAWER (top) ── */}
-      <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:"#FCFBFA",marginBottom:12,overflow:"hidden"}}>
+      {/* ── PACE DRAWER (top) — the graph + the broken-out stats ── */}
+      <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel2,marginBottom:12,overflow:"hidden"}}>
         <div onClick={()=>setDrawer(d=>!d)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",cursor:"pointer"}}>
-          <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Factors</span>
-          <span style={{fontSize:9,color:C.mute}}>{MONL[monthIdx]}: pace ~{qInfo.quota.value} · {committed} committed · {fmtK(cool.onCurveProjection$)} on pace{!cool.feasible&&" · ⚠ won’t cool"}</span>
+          <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Pace</span>
+          <span style={{fontSize:9,color:C.mute}}>on pace <b style={{color:C.ink}}>{fmtK(cool.onCurveProjection$)}</b> · worked {fmtK(cool.bookedToDate$)} · requested {fmtK(cool.requested$)}</span>
           <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{drawer?"▾ hide":"▸ show"}</span>
         </div>
         {drawer&&<div style={{padding:"0 12px 12px"}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div style={{padding:"11px 13px",borderRadius:7,border:`1px solid ${C.line}`,background:"#fff"}}>
-              <div style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase",marginBottom:6}}>Pace suggests · {MON[monthIdx]}</div>
-              <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                <span style={{fontSize:22,fontWeight:800}}>~<Num e={qInfo.quota}/></span>
-                <span style={{fontSize:10,color:C.gray}}>shifts this month</span>
-              </div>
-              <div style={{marginTop:9}}>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.gray,marginBottom:3}}>
-                  <span>{committed} committed · {remaining>0?remaining+" to go":"quota met"}</span>
-                  <span>{fmt$(monthBooked$)} booked</span>
-                </div>
-                <div style={{height:7,background:C.line2,borderRadius:4,overflow:"hidden",display:"flex"}}>
-                  <div style={{width:Math.min(100,committed/Math.max(1,qInfo.quota.value)*100)+"%",background:C.ink}}/>
-                </div>
-                <div style={{fontSize:8,color:C.mute,marginTop:4}}>soft readout — a cap is never enforced</div>
-              </div>
-            </div>
-            <CoolingBar cool={cool} compact/>
-          </div>
-          <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.line2}`}}>
-            <PaceCurve pace={state.pace} setPace={setPace} tsp={tsp}/>
-          </div>
+          <PaceCurve pace={state.pace} setPace={setPace} tsp={tsp}/>
+          <div style={{marginTop:12}}><StatsReadout cool={cool}/></div>
         </div>}
       </div>
 
@@ -773,13 +784,13 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
             {/* exposure band: floor → ceiling (her hedge, §4.6) */}
             <div style={{flex:1,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
               <div style={{flex:1,height:6,background:C.line2,borderRadius:3,position:"relative",overflow:"hidden"}}>
-                <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,#E8DCC0,#E8DCC0 4px,transparent 4px,transparent 7px)"}}/>
+                <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,var(--faint),var(--faint) 4px,transparent 4px,transparent 7px)"}}/>
                 <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.floor$/8000*100)+"%",background:C.ink}}/>
               </div>
               <span style={{fontSize:8,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
             </div>
-            {exp.collision&&<Tag bg="#FCE8E6" col={C.red}>double-book</Tag>}
-            {exp.hole&&<Tag bg="#FEF6E7" col={C.est}>thin</Tag>}
+            {exp.collision&&<Tag bg={C.softWarn} col={C.red}>double-book</Tag>}
+            {exp.hole&&<Tag bg={C.softWarn} col={C.est}>thin</Tag>}
           </div>
 
           {wkWins.map(w=>{
@@ -792,8 +803,8 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                     <span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
                     <Tag>{REACH_LABEL[w.site.reach]}</Tag>
-                    {w.co.coLocated&&<Tag bg="#E6F2EC" col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
-                    {w.lockHit.length>0&&<Tag bg="#EEEAF6" col="#6D5BA8">lock</Tag>}
+                    {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
+                    {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
                     {w.closed&&<Tag bg={C.line2} col={C.mute}>window closed</Tag>}
                     {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
                   </div>
@@ -816,9 +827,9 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
                 <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
                   {["day","night"].map(t=><button key={t} onClick={()=>setType(w.id,t)}
                     style={{fontFamily:MONO,fontSize:9,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
-                      background:w.type===t?C.ink:"transparent",color:w.type===t?"#fff":C.gray}}>{t}</button>)}
+                      background:w.type===t?C.ink:"transparent",color:w.type===t?C.bg:C.gray}}>{t}</button>)}
                 </div>
-                {w.existing? <Tag bg="#EEF4FB" col={C.blue}>request exists · {w.existing.state}</Tag>
+                {w.existing? <Tag bg={C.softInfo} col={C.blue}>request exists · {w.existing.state}</Tag>
                   : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>+ request</Btn>}
                 <span style={{marginLeft:"auto",fontSize:8,color:C.mute}}>{w.site.submissionType==="by_window"?"by window":"by shift"}</span>
                 <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why bright"}</Btn>
@@ -864,12 +875,12 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
     <div style={{fontSize:9,color:C.gray,marginBottom:12}}>{byWindow?"by window — pick candidates + how many to take":"by shift — pick the dates"}</div>
     <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginBottom:12}}>
       {["day","night"].map(t=><button key={t} onClick={()=>setType(t)} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
-        padding:"5px 14px",border:"none",cursor:"pointer",background:type===t?C.ink:"transparent",color:type===t?"#fff":C.gray}}>{t}</button>)}
+        padding:"5px 14px",border:"none",cursor:"pointer",background:type===t?C.ink:"transparent",color:type===t?C.bg:C.gray}}>{t}</button>)}
     </div>
     <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
       {weekdays.map(d=>{const on=picked.includes(d);return <button key={d} onClick={()=>toggle(d)}
         style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 9px",borderRadius:5,cursor:"pointer",
-          border:`1px solid ${on?C.ink:C.line}`,background:on?C.ink:"#fff",color:on?"#fff":C.gray}}>
+          border:`1px solid ${on?C.ink:C.line}`,background:on?C.ink:C.panel,color:on?C.bg:C.gray}}>
         {MON[pd(d).getMonth()]} {pd(d).getDate()}</button>;})}
     </div>
     {byWindow&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
@@ -880,7 +891,7 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
       <span style={{fontSize:9,color:C.mute}}>of {picked.length} candidates · ceiling at <Num e={tsp} money/>/shift</span>
     </div>}
     {/* live readout — what this candidate records */}
-    <div style={{border:`1px solid ${C.line}`,borderRadius:7,background:"#FCFBFA",padding:"10px 12px",marginBottom:14}}>
+    <div style={{border:`1px solid ${C.line}`,borderRadius:7,background:C.panel2,padding:"10px 12px",marginBottom:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
         <span style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>This candidate records</span>
         <span style={{fontSize:11,fontWeight:800}}>{count}× · {fmt$(totalPay)}{byWindow&&count<picked.length?" if all land":""}</span>
@@ -909,7 +920,7 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
 function Overlay({children,onClose}){
   return <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(28,25,23,.4)",display:"flex",
     alignItems:"center",justifyContent:"center",zIndex:200,padding:16}}>
-    <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:10,padding:"18px 20px",maxWidth:460,width:"100%",
+    <div onClick={e=>e.stopPropagation()} style={{background:C.panel,borderRadius:10,padding:"18px 20px",maxWidth:460,width:"100%",
       boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>{children}</div>
   </div>;
 }
@@ -922,7 +933,7 @@ function Overlay({children,onClose}){
    One scrolling column: Candidates (apply, with deadline chain) → Confirmed →
    Pending (awaiting + in-negotiation overrides) → Past (worked, scrolling down). */
 const md=d=>`${MON[pd(d).getMonth()]} ${pd(d).getDate()}`;
-const ST_COL={candidate:C.gray,pending:C.blue,override:"#B5573A",confirmed:C.green,rejected:C.red,expired:C.mute};
+const ST_COL={candidate:C.gray,pending:C.blue,override:C.pressHot,confirmed:C.green,rejected:C.red,expired:C.mute};
 const ST_LABEL={candidate:"candidate",pending:"pending",override:"in negotiation",confirmed:"confirmed",rejected:"rejected",expired:"expired"};
 function Pending({state,setState,tsp}){
   const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
@@ -960,12 +971,12 @@ function Pending({state,setState,tsp}){
   </div>;
   const Empty=({t})=> <div style={{fontSize:9,color:C.mute,fontStyle:"italic",padding:"4px 2px 0"}}>{t}</div>;
   const RowCard=({children,dim,accent})=> <div style={{padding:"9px 11px",border:`1px solid ${accent||C.line}`,borderRadius:7,
-    background:"#fff",marginBottom:6,opacity:dim?0.5:1}}>{children}</div>;
+    background:C.panel,marginBottom:6,opacity:dim?0.5:1}}>{children}</div>;
   const Ident=({r})=>{const site=siteById[r.siteId];return <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
     <span style={{fontSize:11,fontWeight:800}}>{site?site.name:"(removed site)"}</span>
-    <Tag bg="#F4F2F0" col={ST_COL[r.state]}>{ST_LABEL[r.state]}</Tag>
+    <Tag bg={C.line2} col={ST_COL[r.state]}>{ST_LABEL[r.state]}</Tag>
     <Tag>{r.shiftType}</Tag>
-    {Number.isFinite(r.rateOverride)&&<Tag bg="#FBEFE6" col="#B5573A">rate {fmt$(r.rateOverride)}</Tag>}
+    {Number.isFinite(r.rateOverride)&&<Tag bg={C.softWarn} col={C.pressHot}>rate {fmt$(r.rateOverride)}</Tag>}
     <span style={{marginLeft:"auto",fontSize:9,fontWeight:700,color:C.ink}}>{fmt$(payOf(r))}</span>
   </div>;};
   const Dates=({r})=> <div style={{fontSize:8.5,color:C.gray,marginTop:4}}>
@@ -996,8 +1007,8 @@ function Pending({state,setState,tsp}){
           {chain&&<div style={{marginTop:6,fontSize:8.5,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
             <span style={{color:C.gray}}>⛓ waits on <b>{chain.up?chain.up.name:"?"}</b></span>
             {chain.missing? <Tag bg={C.line2} col={C.mute}>no live upstream request</Tag>
-              : chain.slack<0? <Tag bg="#FCE8E6" col={C.red}>slack {chain.slack}d — due before they respond</Tag>
-              : <Tag bg="#E6F2EC" col={C.green}>{chain.slack}d slack</Tag>}
+              : chain.slack<0? <Tag bg={C.softWarn} col={C.red}>slack {chain.slack}d — due before they respond</Tag>
+              : <Tag bg={C.softGood} col={C.green}>{chain.slack}d slack</Tag>}
           </div>}
           <div style={{display:"flex",gap:6,marginTop:8}}>
             <Btn small kind="prim" onClick={()=>submit(r)}>submit</Btn>
@@ -1009,7 +1020,7 @@ function Pending({state,setState,tsp}){
       {/* ── CONFIRMED (upcoming) ── */}
       <div style={{marginTop:18}}><Head title="Confirmed" n={confirmedUp.length} sub="upcoming · on the calendar"/></div>
       {confirmedUp.length===0&&<Empty t="No upcoming confirmed shifts."/>}
-      {confirmedUp.map(r=><RowCard key={r.id} accent="#BFE3D3">
+      {confirmedUp.map(r=><RowCard key={r.id} accent={C.juniper}>
         <Ident r={r}/><Dates r={r}/>
         <div style={{fontSize:8,color:C.green,fontWeight:700,marginTop:6}}>→ hardened placement (home base, §7)</div>
       </RowCard>)}
@@ -1019,7 +1030,7 @@ function Pending({state,setState,tsp}){
       {inflight.length===0&&<Empty t="Nothing out for response."/>}
       {inflight.map(r=>{
         const wait=responseWait(r),neg=r.state==="override";
-        return <RowCard key={r.id} accent={neg?"#E8C9AE":undefined}>
+        return <RowCard key={r.id} accent={neg?C.pressHot:undefined}>
           <Ident r={r}/><Dates r={r}/>
           {wait&&<div style={{marginTop:7}}>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:C.mute,marginBottom:2}}>
@@ -1071,11 +1082,11 @@ function Pending({state,setState,tsp}){
 /* inline negotiation editor — edits commit live (shows on the calendar / pressure) */
 function OverrideEditor({r,site,onRm,onAdd,onRate,onConfirm,onReject}){
   const [add,setAdd]=useState("");
-  return <div style={{marginTop:8,padding:"9px 10px",border:`1px dashed #E0A92E`,borderRadius:6,background:"#FFFCF4"}}>
-    <div style={{fontSize:8,fontWeight:800,color:"#B5573A",letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated terms · can fall outside the original window</div>
+  return <div style={{marginTop:8,padding:"9px 10px",border:`1px dashed ${C.pressHot}`,borderRadius:6,background:C.softWarn}}>
+    <div style={{fontSize:8,fontWeight:800,color:C.pressHot,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated terms · can fall outside the original window</div>
     <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
       {r.footprint.dates.map(d=><span key={d} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9,fontWeight:700,
-        padding:"2px 4px 2px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:"#fff"}}>
+        padding:"2px 4px 2px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel}}>
         {md(d)}<button onClick={()=>onRm(d)} style={{border:"none",background:"none",cursor:"pointer",color:C.red,fontFamily:MONO,fontSize:10}}>×</button></span>)}
     </div>
     <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
@@ -1114,12 +1125,12 @@ function SiteWizard({state,setState,onClose}){
       <div style={{flex:1,overflow:"auto",margin:"0 -2px",padding:"0 2px"}}>
         {sites.map(s=>{
           const open=openId===s.id, refs=reqCount(s.id);
-          return <div key={s.id} style={{border:`1px solid ${C.line}`,borderRadius:7,marginBottom:7,background:"#fff",overflow:"hidden"}}>
+          return <div key={s.id} style={{border:`1px solid ${C.line}`,borderRadius:7,marginBottom:7,background:C.panel,overflow:"hidden"}}>
             <div onClick={()=>setOpenId(open?null:s.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",cursor:"pointer"}}>
               <span style={{fontSize:11,fontWeight:800}}>{s.name||"(unnamed)"}</span>
               <Tag>{REACH_LABEL[s.reach]}</Tag>
               <Tag bg={C.line2}>{s.submissionType==="by_window"?"by window":"by shift"}</Tag>
-              {s.dependsOn&&<Tag bg="#EEF4FB" col={C.blue}>after {sites.find(x=>x.id===s.dependsOn)?.name||"?"}</Tag>}
+              {s.dependsOn&&<Tag bg={C.softInfo} col={C.blue}>after {sites.find(x=>x.id===s.dependsOn)?.name||"?"}</Tag>}
               <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{open?"▾":"▸"}</span>
             </div>
             {open&&<div style={{padding:"4px 10px 10px",borderTop:`1px solid ${C.line2}`}}>
@@ -1207,7 +1218,7 @@ function ScheduleEditor({state,setState,onClose}){
       <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
         {cals.map(c=><button key={c.childId} onClick={()=>setAct(c.childId)} style={{fontFamily:MONO,fontSize:9,fontWeight:700,
           padding:"4px 9px",borderRadius:4,cursor:"pointer",border:`1px solid ${act===c.childId?C.ink:C.line}`,
-          background:act===c.childId?C.ink:"#fff",color:act===c.childId?"#fff":C.gray}}>{cap(c.childId)}</button>)}
+          background:act===c.childId?C.ink:C.panel,color:act===c.childId?C.bg:C.gray}}>{cap(c.childId)}</button>)}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:4}}>
           <Btn small onClick={()=>setYear(y=>y-1)}>◀</Btn>
           <span style={{fontSize:11,fontWeight:800,minWidth:38,textAlign:"center"}}>{year}</span>
@@ -1239,9 +1250,9 @@ function ScheduleEditor({state,setState,onClose}){
 }
 
 /* ════════ YEAR VIEW — the footprint / home base (§7): confirmed placements + pending ════════ */
-const SHIFT_COL={day:"#C8973A",night:"#6D5BA8"};
-const OVERRIDE_COL={day:"#E7CF9E",night:"#B6ABD6"};   // tentative (in-negotiation) shifts
-const LOC_TINT={boston:"#EAF1FB",santa_fe:"#FBF1E6",abq:"#F8EEE3",montana:"#E9F4EE",portland:"#F2EAFB"};
+const SHIFT_COL={day:"var(--shift-day)",night:"var(--shift-night)"};
+const OVERRIDE_COL={day:"var(--ov-day)",night:"var(--ov-night)"};   // tentative (in-negotiation) shifts
+const LOC_TINT={boston:"var(--tint-fam)",santa_fe:"var(--tint-fam)",abq:"var(--tint-fam)",montana:"var(--tint-fam)",portland:"var(--tint-fam)"};
 function monthGrid(y,m){
   const f=(new Date(y,m,1).getDay()+6)%7,n=dim(y,m),wk=Math.ceil((f+n)/7);
   const cells=[];for(let i=0;i<wk*7;i++){const dn=i-f+1;cells.push(dn>=1&&dn<=n?new Date(y,m,dn):null);}
@@ -1286,7 +1297,7 @@ function YearStrip({footprint,selected,onSelect,showOut,ceiling}){
   const grids=MON.map((_,m)=>monthGrid(YEAR,m));
   const maxCols=Math.max(...grids.map(g=>g.totalCols));
   const ml=ci=>(ci%7===0&&ci>0)?WG:(ci===0?0:CG);
-  return <div style={{overflowX:"auto",border:`1px solid ${C.line}`,borderRadius:8,background:"#fff",padding:"10px 12px"}}>
+  return <div style={{overflowX:"auto",border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"10px 12px"}}>
     <div style={{minWidth:LBL+maxCols*(CELL+CG)+(maxCols/7)*WG}}>
       <div style={{display:"flex",marginBottom:4}}>
         <div style={{width:LBL,flexShrink:0}}/>
@@ -1297,12 +1308,12 @@ function YearStrip({footprint,selected,onSelect,showOut,ceiling}){
         const g=grids[m],pm=perMonth[m],isNow=m===TODAY.getMonth(),sel=m===selected;
         const load=loadM?loadM[m]:0,tint=pressureTint(load,ceiling),hot=load>ceiling;
         return <div key={m} onClick={()=>onSelect(m)} style={{display:"flex",alignItems:"center",marginBottom:m<11?RG:0,
-          cursor:"pointer",borderRadius:5,background:sel?"#FBF6EA":"transparent",padding:"1px 0",
+          cursor:"pointer",borderRadius:5,background:sel?C.sel:"transparent",padding:"1px 0",
           boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
           <div style={{width:LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
             <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{mn.toUpperCase()}{sel&&" ◂"}</div>
             <div style={{fontSize:7,color:pm.n?C.ink:C.mute}}>{pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
-            <div title={`${load} of ~${ceiling} comfortable shifts`} style={{fontSize:6.5,fontWeight:700,color:hot?"#B5573A":(load>0?C.est:C.mute)}}>
+            <div title={`${load} of ~${ceiling} comfortable shifts`} style={{fontSize:6.5,fontWeight:700,color:hot?C.pressHot:(load>0?C.est:C.mute)}}>
               {load>0?`${load}/${ceiling}${hot?" ⚠":""}`:""}</div>
           </div>
           <div style={{display:"flex"}}>
@@ -1316,8 +1327,8 @@ function YearStrip({footprint,selected,onSelect,showOut,ceiling}){
               const pend=marks.find(x=>x.state==="pending");
               const cand=marks.find(x=>x.state==="candidate");
               const smear=marks.find(x=>x.state==="smeared");
-              let bg=fam?LOC_TINT[fam]:(tint||(we?"#FBFAF9":"#fff"));
-              if(showOut&&out&&!fam&&!tint)bg="#F4F1EB";
+              let bg=fam?LOC_TINT[fam]:(tint||(we?C.weekend:C.panel));
+              if(showOut&&out&&!fam&&!tint)bg=C.tintOut;
               let border=`1px solid ${C.line2}`,inner=null;
               if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
               else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
@@ -1328,7 +1339,7 @@ function YearStrip({footprint,selected,onSelect,showOut,ceiling}){
                 style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box"}}>
                 {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
                 {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",
-                  background:lk.kind==="hard"?C.ink:"#fff",border:`1.5px solid ${C.ink}`}}/>}
+                  background:lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
               </div>;
             })}
           </div>
@@ -1346,11 +1357,11 @@ const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignIt
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:LOC_TINT.santa_fe,border:`1px solid ${C.line}`}}/>family</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
   <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:3}}>month pressure
-    {["#FBF1DC","#F6E2B8","#F0CDA8","#E9B59C"].map(c=><span key={c} style={{width:11,height:11,borderRadius:2,background:c,border:`1px solid ${C.line}`}}/>)}
-    <span style={{color:"#B5573A"}}>over ceiling</span></span>
+    {PRESS_RAMP.map(c=><span key={c} style={{width:11,height:11,borderRadius:2,background:c,border:`1px solid ${C.line}`}}/>)}
+    <span style={{color:C.pressHot}}>over ceiling</span></span>
 </div>;
 const LegDot=({bg,ring,dotted,children})=> <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
-  <span style={{width:12,height:12,borderRadius:3,background:bg||"#fff",
+  <span style={{width:12,height:12,borderRadius:3,background:bg||C.panel,
     border:ring?`1.5px solid ${ring}`:(dotted?`1px dotted ${C.est}`:(bg?"none":`1px solid ${C.line}`))}}/>{children}</span>;
 
 /* ════════ APP SHELL ════════ */
@@ -1365,9 +1376,20 @@ function App(){
   const [monthIdx,setMonthIdx]=useState(7); // August — requests are open now
   const [modal,setModal]=useState(null);    // "sites" | "schedule"
   const [toast,setToast]=useState(null);
+  const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}}); // system|light|dark
   const fileRef=useRef();
   useEffect(()=>{try{localStorage.setItem("perDiemState",JSON.stringify(state));}catch(e){}},[state]);
   useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),4000);return ()=>clearTimeout(t);},[toast]);
+  // theme: follow device when "system", else explicit; reflected on <html data-theme>
+  useEffect(()=>{
+    const mq=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)");
+    const apply=()=>{const eff=theme==="system"?((mq&&mq.matches)?"dark":"light"):theme;
+      document.documentElement.setAttribute("data-theme",eff);};
+    apply();try{localStorage.setItem("perDiemTheme",theme);}catch(e){}
+    if(theme==="system"&&mq&&mq.addEventListener){mq.addEventListener("change",apply);return ()=>mq.removeEventListener("change",apply);}
+  },[theme]);
+  const themeIcon={system:"◐",light:"☀",dark:"☾"}[theme];
+  const cycleTheme=()=>setTheme(t=>t==="system"?"light":t==="light"?"dark":"system");
   const tsp=useMemo(()=>typicalShiftPay(state.sites),[state.sites]);
 
   const exportJSON=()=>{
@@ -1391,12 +1413,13 @@ function App(){
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
     {/* header */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
-      borderBottom:`1px solid ${C.line}`,background:"#fff",flexShrink:0,gap:8,flexWrap:"wrap"}}>
+      borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
       <div style={{display:"flex",alignItems:"baseline",gap:8}}>
         <span style={{fontSize:13,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM</span>
         <span style={{fontSize:8.5,color:C.mute}}>surface, don’t choose</span>
       </div>
       <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+        <Btn small onClick={cycleTheme} title={`theme: ${theme}`}>{themeIcon}</Btn>
         <Btn small onClick={()=>setModal("sites")}>sites</Btn>
         <Btn small onClick={()=>setModal("schedule")}>schedule</Btn>
         <span style={{width:1,height:16,background:C.line}}/>
@@ -1408,10 +1431,10 @@ function App(){
       </div>
     </div>
     {toast&&<div style={{position:"fixed",bottom:18,left:"50%",transform:"translateX(-50%)",zIndex:300,
-      background:C.ink,color:"#fff",fontSize:10,fontWeight:600,padding:"8px 14px",borderRadius:6,
+      background:C.ink,color:C.bg,fontSize:10,fontWeight:600,padding:"8px 14px",borderRadius:6,
       boxShadow:"0 8px 24px rgba(0,0,0,.25)",maxWidth:"90vw",textAlign:"center"}}>{toast}</div>}
     {/* tabs */}
-    <div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:"#fff",flexShrink:0}}>
+    <div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
       {tabs.map(([id,label])=><button key={id} onClick={()=>setSurface(id)}
         style={{fontFamily:MONO,fontSize:11,fontWeight:800,padding:"9px 16px",border:"none",cursor:"pointer",
           background:"transparent",color:surface===id?C.ink:C.mute,letterSpacing:"-0.01em",
@@ -1442,9 +1465,9 @@ class Boundary extends React.Component{
       </div>
       <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
         <button onClick={()=>{try{history.replaceState(null,"",location.pathname);}catch(_){}location.reload();}}
-          style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.line}`,background:"#fff",color:C.ink}}>Drop link &amp; reload</button>
+          style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.line}`,background:C.panel,color:C.ink}}>Drop link &amp; reload</button>
         <button onClick={()=>{try{localStorage.removeItem("perDiemState");history.replaceState(null,"",location.pathname);}catch(_){}location.reload();}}
-          style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.ink}`,background:C.ink,color:"#fff"}}>Reset to sample</button>
+          style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.ink}`,background:C.ink,color:C.bg}}>Reset to sample</button>
       </div>
     </div>;
   }
