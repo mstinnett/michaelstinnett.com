@@ -1410,8 +1410,8 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandl
     {v.closed&&!v.conf&&!v.neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
     {v.inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
     {v.lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:v.lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
-    {v.lays.length>0&&<div style={{position:"absolute",left:1,right:1,bottom:1,display:"flex",gap:1,justifyContent:"center",pointerEvents:"none"}}>
-      {v.lays.slice(0,4).map((x,i)=><span key={i} style={{width:3,height:3,borderRadius:"50%",background:x.color,opacity:x.inferred?0.45:1}}/>)}</div>}
+    {v.lays.length>0&&<div style={{position:"absolute",left:0,right:0,bottom:0,height:num?4:3,display:"flex",overflow:"hidden",borderRadius:"0 0 1px 1px",pointerEvents:"none"}}>
+      {v.lays.slice(0,4).map((x,i)=><span key={i} style={{flex:1,background:x.color,opacity:x.inferred?0.4:0.95}}/>)}</div>}
     {hStart&&nub("start")}{hEnd&&nub("end")}
   </div>;
 }
@@ -1449,6 +1449,20 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
   </div>;
 }
 /* the calendar engine + workbench: dual-mode, infinite scroll, future inference, draw/erase/edit */
+/* calendar filters — toggle which presence layers paint the days, right on the workspace */
+function LayerFilters({layers,setLayers}){
+  return <div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",padding:"6px 10px",borderBottom:`1px solid ${C.line2}`}}>
+    <span style={{fontSize:8,fontWeight:800,color:C.mute,textTransform:"uppercase",letterSpacing:"0.05em",flexShrink:0}}>show</span>
+    {layers.map(l=>{const on=l.visible!==false;
+      return <button key={l.id} onClick={()=>setLayers(ls=>ls.map(x=>x.id===l.id?{...x,visible:!on}:x))}
+        style={{flexShrink:0,display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:13,cursor:"pointer",
+          border:`1px solid ${on?l.color:C.line}`,background:on?C.panel2:"transparent",opacity:on?1:0.55}}>
+        <span style={{width:10,height:10,borderRadius:3,background:l.color}}/>
+        <span style={{fontSize:9,fontWeight:700,color:on?C.ink:C.mute,whiteSpace:"nowrap"}}>{l.name}</span>
+        {!on&&<span style={{fontSize:8,color:C.mute}}>off</span>}
+      </button>;})}
+  </div>;
+}
 function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto,mobile}){
   const sites=state.sites;
   const [mode,setMode]=useState("cal");
@@ -1463,6 +1477,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const focusCov=useMemo(()=>layerCoverage(layers,focusY-1,focusY+1),[layers,focusY]);
   const onScroll=e=>{const el=e.target;if(el.scrollHeight-el.scrollTop-el.clientHeight<140)setRange(r=>({...r,e:r.e+1}));};
   const setReqs=fn=>setState(s=>({...s,requests:fn(s.requests)}));
+  const setLayers=fn=>setState(s=>({...s,layers:fn(s.layers)}));
   const addReq=r=>setReqs(rs=>mergeCandidates([...rs,r]));
   const setReq=(id,fn)=>setReqs(rs=>rs.map(x=>x.id===id?fn(x):x));
   const delReq=id=>setReqs(rs=>rs.filter(x=>x.id!==id));
@@ -1580,6 +1595,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
             padding:"4px 7px",borderRadius:5,cursor:"pointer",border:`1px solid ${on?C.ink:C.line}`,
             background:on?C.ink:(t||C.panel),color:on?C.bg:C.ink}}>{mn[0]}</button>;})}
       </div>
+      <LayerFilters layers={layers} setLayers={setLayers}/>
       {/* focus month — inline. View: scrolls, tap to inspect. Edit: month locked for drags,
           but the rest of the workspace (candidates + trips) stays right here. */}
       <div style={{padding:"9px 11px"}}>
@@ -1608,6 +1624,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
           padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
       </div>
     </div>
+    <LayerFilters layers={layers} setLayers={setLayers}/>
     {editBars}
     <div onScroll={onScroll} style={{maxHeight:320,overflow:"auto",padding:"8px 12px"}}>
       <div style={{minWidth:width}}>
