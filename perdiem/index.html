@@ -124,6 +124,15 @@ const REACH_ADJ={
 const CHEAP_HRS=4;                                   // <= ⇒ co-located
 const ROUNDTRIP={local:1.5,nm:8,rural_nm:12};        // roundTripTravelHrs by reach
 const REST_HOURS={day:10,night:12};                  // restHours(type) — estimate
+// per-reach default travel schedule — when you leave home & when you get back, relative to the shift block.
+// Lydia edits these per site (real flight timing); a request can override with its own (incl. multi-day) window.
+const TRAVEL_DEFAULT={
+  local:   {beforeDays:0,departTime:"06:00",afterDays:0,returnTime:"20:00"},   // drive in, home that evening
+  nm:      {beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"22:00"},   // fly out the day before, home late after the last shift
+  rural_nm:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"},   // long haul out & back
+};
+const defaultTravel=reach=>({...(TRAVEL_DEFAULT[reach]||TRAVEL_DEFAULT.local)});
+const KID_AWAKE_START=7,KID_AWAKE_END=20;            // kid-awake band (7a–8p) — the only hours a trip can cost
 const LOC_NAME={boston:"Boston",santa_fe:"Santa Fe",abq:"Albuquerque",montana:"Montana",portland:"Portland"};
 const REACH_LABEL={local:"local",nm:"NM",rural_nm:"rural NM"};
 
@@ -145,16 +154,20 @@ function seedState(){
   const sites=[
     {id:"boston",  name:"Boston ED",   note:"home rink. easy charting, know the nurses.",
      reach:"local",   homeBaseLoc:"boston",  dayRate:210,nightRate:255,dayHours:9, nightHours:9,
-     submissionType:"by_shift",  cadence:{opensDaysBefore:75,dueByDaysBefore:21,expectedResponseDays:14}},
+     submissionType:"by_shift",  cadence:{opensDaysBefore:75,dueByDaysBefore:21,expectedResponseDays:14},
+     travel:{beforeDays:0,departTime:"06:00",afterDays:0,returnTime:"20:00"}},
     {id:"santa_fe",name:"Santa Fe ED", note:"good people. depends on hearing from ABQ first.",
      reach:"nm",      homeBaseLoc:"santa_fe",dayRate:170,nightRate:210,dayHours:10,nightHours:10,
-     submissionType:"by_window", cadence:{opensDaysBefore:90,dueByDaysBefore:30,expectedResponseDays:10}},
+     submissionType:"by_window", cadence:{opensDaysBefore:90,dueByDaysBefore:30,expectedResponseDays:10},
+     travel:{beforeDays:1,departTime:"16:00",afterDays:0,returnTime:"22:00"}},
     {id:"abq",     name:"Albuquerque ED",note:"high volume, fast. anchors the NM trip.",
      reach:"nm",      homeBaseLoc:"abq",     dayRate:180,nightRate:200,dayHours:9, nightHours:10,
-     submissionType:"by_shift",  cadence:{opensDaysBefore:80,dueByDaysBefore:25,expectedResponseDays:7}},
+     submissionType:"by_shift",  cadence:{opensDaysBefore:80,dueByDaysBefore:25,expectedResponseDays:7},
+     travel:{beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"21:00"}},
     {id:"gallup",  name:"Gallup ED",   note:"rural, long days, pays for it. tiring.",
      reach:"rural_nm",homeBaseLoc:"abq",     dayRate:175,nightRate:210,dayHours:12,nightHours:12,
-     submissionType:"by_window", cadence:{opensDaysBefore:70,dueByDaysBefore:14,expectedResponseDays:21}},
+     submissionType:"by_window", cadence:{opensDaysBefore:70,dueByDaysBefore:14,expectedResponseDays:21},
+     travel:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"}},
   ];
   // trips — family travel; workFactor: colocate (work locally), commute (leave to work), closed (no work)
   const trips=[
@@ -261,11 +274,13 @@ function sanitizeState(obj){
     let sites=(Array.isArray(obj.sites)?obj.sites:[]).map(s=>{
       if(!s||typeof s!=="object"||!s.id)return null;
       const c=s.cadence||{};
+      const rch=reach.includes(s.reach)?s.reach:"local";
       const out={id:String(s.id),name:String(s.name||"Unnamed"),note:String(s.note||""),
-        reach:reach.includes(s.reach)?s.reach:"local",
+        reach:rch,
         homeBaseLoc:LOC_NAME[s.homeBaseLoc]?s.homeBaseLoc:"boston",
         dayRate:numOr(s.dayRate,200),nightRate:numOr(s.nightRate,240),
         dayHours:numOr(s.dayHours,9),nightHours:numOr(s.nightHours,9),
+        travel:travelOf({reach:rch,travel:s.travel}),
         submissionType:s.submissionType==="by_window"?"by_window":"by_shift",
         cadence:{opensDaysBefore:numOr(c.opensDaysBefore,60),dueByDaysBefore:numOr(c.dueByDaysBefore,21),expectedResponseDays:numOr(c.expectedResponseDays,14)}};
       return out;
@@ -310,6 +325,7 @@ function sanitizeState(obj){
         state:REQ_STATES.includes(st)?st:"candidate",footprint,
         opens:DATE_RE.test(r.opens||"")?r.opens:ds(TODAY),dueBy:DATE_RE.test(r.dueBy||"")?r.dueBy:ds(TODAY)};
       if(Number.isFinite(+r.rateOverride))o.rateOverride=+r.rateOverride;
+      if(r.travel&&typeof r.travel==="object"){const st=sites.find(x=>x.id===r.siteId);o.travel=travelOf({reach:st?st.reach:"local",travel:r.travel});}
       ["expectedResponseBy","submittedOn","resolvedOn"].forEach(k=>{if(DATE_RE.test(r[k]||""))o[k]=r[k];});
       return o;
     }).filter(Boolean);
@@ -434,6 +450,32 @@ function windowMoney(site,type,weekDates,trips){
     [`restHours(${type})=${rest}`,`travelHours=${travel}`]);
   return {shiftPay,clinicalHours,erPerHr,awayPerHr,awayHours,travel};
 }
+
+/* ─── kid-awake hours: the family-time cost of a trip ───
+   A trip's away window runs from departure (beforeDays before the first shift, at departTime)
+   to return (afterDays after the last shift, at returnTime). Its cost is the kid-awake hours
+   (7a–8p) it overlaps, summed per day — so night shifts and late travel land precisely. */
+const parseHM=t=>{const m=/^(\d{1,2}):(\d{2})$/.exec(String(t||""));return m?Math.min(24,(+m[1])+(+m[2])/60):0;};
+const atHM=(d,h)=>{const x=new Date(d);x.setHours(0,0,0,0);return new Date(x.getTime()+h*36e5);};
+function awakeHoursLost(start,end){
+  if(!start||!end||end<=start)return 0;let total=0;
+  for(let day=atHM(start,0);day<=end;day=ad(day,1)){
+    const lo=Math.max(atHM(day,KID_AWAKE_START).getTime(),start.getTime());
+    const hi=Math.min(atHM(day,KID_AWAKE_END).getTime(),end.getTime());
+    if(hi>lo)total+=(hi-lo)/36e5;
+  }
+  return Math.round(total*10)/10;
+}
+// resolve a site's travel (or a per-request override) into clean {beforeDays,departTime,afterDays,returnTime}
+const travelOf=(site,ov)=>{const d=defaultTravel(site&&site.reach),t=(ov&&typeof ov==="object")?ov:((site&&site.travel)||{});
+  return {beforeDays:Math.max(0,numOr(t.beforeDays,d.beforeDays)),departTime:/^\d{1,2}:\d{2}$/.test(t.departTime||"")?t.departTime:d.departTime,
+    afterDays:Math.max(0,numOr(t.afterDays,d.afterDays)),returnTime:/^\d{1,2}:\d{2}$/.test(t.returnTime||"")?t.returnTime:d.returnTime};};
+function awayWindow(dates,site,ov){
+  if(!dates||!dates.length)return null;const s=dates.slice().sort();const t=travelOf(site,ov);
+  return {t,start:atHM(ad(pd(s[0]),-t.beforeDays),parseHM(t.departTime)),end:atHM(ad(pd(s[s.length-1]),t.afterDays),parseHM(t.returnTime))};
+}
+function kidHoursCost(dates,site,ov){const w=awayWindow(dates,site,ov);
+  return {hours:w?awakeHoursLost(w.start,w.end):0,window:w,t:w?w.t:travelOf(site,ov)};}
 
 const schoolLayers=layers=>layers.filter(l=>l.kind==="school");
 const layerCovers=(l,d)=>(l.ranges||[]).some(r=>d>=pd(r.from)&&d<=pd(r.to));
@@ -820,8 +862,9 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
 
   const setType=(id,t)=>setTypes(p=>({...p,[id]:t}));
   const setPace=p=>setState(s=>({...s,pace:{...s.pace,...p}}));
-  function createRequest(w,type,foot){
+  function createRequest(w,type,foot,travel){
     const r={id:"r"+Date.now(),siteId:w.site.id,shiftType:type,opens:w.opens,dueBy:w.dueBy,state:"candidate",footprint:foot};
+    if(travel)r.travel=travel;
     setState(s=>({...s,requests:[...s.requests,r]}));
     setCreating(null);
   }
@@ -937,16 +980,20 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
   const [take,setTake]=useState(2);
   const [picked,setPicked]=useState(byWindow?weekdays:[weekdays[0]]);
   const toggle=d=>setPicked(p=>p.includes(d)?p.filter(x=>x!==d):[...p,d]);
+  const [travelOn,setTravelOn]=useState(false);
+  const [tv,setTv]=useState(()=>travelOf(w.site));     // per-trip travel override (else the site default)
   function go(){
     const foot=byWindow?{kind:"smeared",candidates:picked,take:Math.min(take,picked.length)}
                        :{kind:"pinned",dates:picked};
-    onCreate(w,type,foot);
+    onCreate(w,type,foot,travelOn?tv:null);
   }
-  // live readout — money + per-kid days-out for what's being built
+  // live readout — money + kid-awake hours for what's being built
   const money=windowMoney(w.site,type,w.week.dates,state.trips);
   const count=byWindow?Math.min(take,picked.length):picked.length;
   const effDates=byWindow?picked.slice(0,Math.min(take,picked.length)):picked;
   const perKid=kidDaysOut(effDates,state.layers);
+  const cost=kidHoursCost(effDates,w.site,travelOn?tv:null);
+  const fmtDT=d=>`${MON[d.getMonth()]} ${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
   const totalPay=money.shiftPay*count;
   return <Overlay onClose={onClose}>
     <div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
@@ -968,6 +1015,16 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
       <Btn small onClick={()=>setTake(t=>Math.min(picked.length,t+1))}>+</Btn>
       <span style={{fontSize:11,color:C.mute}}>of {picked.length} candidates · ceiling at <Num e={tsp} money/>/shift</span>
     </div>}
+    <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.gray,marginBottom:travelOn?7:14,cursor:"pointer"}}>
+      <input type="checkbox" checked={travelOn} onChange={e=>setTravelOn(e.target.checked)}/>
+      custom travel for this trip {travelOn?"":`— else ${w.site.name}'s usual`}
+    </label>
+    {travelOn&&<div style={{display:"flex",gap:6,alignItems:"flex-end",flexWrap:"wrap",marginBottom:14}}>
+      <Field label="leave (days before)"><input type="number" min="0" style={{...inp,width:78}} value={tv.beforeDays} onChange={e=>setTv(v=>({...v,beforeDays:Math.max(0,+e.target.value||0)}))}/></Field>
+      <Field label="at"><input type="time" style={{...inp,width:104}} value={tv.departTime} onChange={e=>setTv(v=>({...v,departTime:e.target.value}))}/></Field>
+      <Field label="home (days after)"><input type="number" min="0" style={{...inp,width:78}} value={tv.afterDays} onChange={e=>setTv(v=>({...v,afterDays:Math.max(0,+e.target.value||0)}))}/></Field>
+      <Field label="at"><input type="time" style={{...inp,width:104}} value={tv.returnTime} onChange={e=>setTv(v=>({...v,returnTime:e.target.value}))}/></Field>
+    </div>}
     {/* live readout — what this candidate records */}
     <div style={{border:`1px solid ${C.line}`,borderRadius:7,background:C.panel2,padding:"10px 12px",marginBottom:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
@@ -981,11 +1038,15 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
           <div style={{fontSize:8.5,color:C.mute}}>{money.travel}h travel{w.co.coLocated?" · co-located":""}</div></div>
       </div>
       <div style={{borderTop:`1px solid ${C.line2}`,paddingTop:7}}>
-        <div style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase",marginBottom:4}}>Days out of school {byWindow?"(of the take)":""}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+          <span style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>Kid-awake hours away {byWindow?"(of the take)":""}</span>
+          <span style={{fontSize:15.5,fontWeight:800}}>{cost.hours}h</span>
+        </div>
+        {cost.window&&<div style={{fontSize:8.5,color:C.mute,marginBottom:6}}>away {fmtDT(cost.window.start)} → {fmtDT(cost.window.end)} · 7a–8p only{travelOn?"":` · ${w.site.name} travel`}</div>}
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {perKid.map(k=><span key={k.childId} style={{fontSize:12,fontWeight:700,color:k.count>0?C.est:C.green}}>
-            ◷ {k.name} <b>{k.count}</b>/{k.of}</span>)}
-          {perKid.every(k=>k.count===0)&&<span style={{fontSize:11,color:C.green}}>no family-time collision</span>}
+          {perKid.map(k=><span key={k.childId} style={{fontSize:11,fontWeight:700,color:k.count>0?C.est:C.green}}>
+            ◷ {k.name} <b>{k.count}</b>/{k.of} home</span>)}
+          {perKid.every(k=>k.count===0)&&<span style={{fontSize:11,color:C.green}}>kids at school every day</span>}
         </div>
       </div>
     </div>
@@ -1190,9 +1251,10 @@ function SiteWizard({state,setState,embed,onClose}){
   const reqCount=id=>state.requests.filter(r=>r.siteId===id).length;
   const upd=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,...patch}:s));
   const updCad=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,cadence:{...s.cadence,...patch}}:s));
+  const updTravel=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,travel:{...travelOf(s),...patch}}:s));
   const addSite=()=>{const id="site"+Date.now();
     setSites(p=>[...p,{id,name:"New site",note:"",reach:"local",homeBaseLoc:"boston",
-      dayRate:200,nightRate:240,dayHours:9,nightHours:9,submissionType:"by_shift",
+      dayRate:200,nightRate:240,dayHours:9,nightHours:9,submissionType:"by_shift",travel:defaultTravel("local"),
       cadence:{opensDaysBefore:60,dueByDaysBefore:21,expectedResponseDays:14}}]);
     setOpenId(id);};
   const rm=id=>{if(reqCount(id)>0)return;setSites(p=>p.filter(s=>s.id!==id));if(openId===id)setOpenId(null);};
@@ -1234,6 +1296,14 @@ function SiteWizard({state,setState,embed,onClose}){
                 <Field label="Response (days)"><N value={s.cadence.expectedResponseDays} onChange={e=>updCad(s.id,{expectedResponseDays:+e.target.value||0})}/></Field>
               </div>
               <div style={{fontSize:9.5,color:C.mute,margin:"2px 0 4px"}}>Every shift in a month shares one due date (month start − this lead). The site whose date lands earliest leads the chain.</div>
+              <div style={{fontSize:10,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.gray,margin:"8px 0 3px"}}>Travel (real flight timing)</div>
+              <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+                <Field label="Leave (days before)"><N value={travelOf(s).beforeDays} onChange={e=>updTravel(s.id,{beforeDays:Math.max(0,+e.target.value||0)})}/></Field>
+                <Field label="at"><input type="time" style={inp} value={travelOf(s).departTime} onChange={e=>updTravel(s.id,{departTime:e.target.value})}/></Field>
+                <Field label="Home (days after)"><N value={travelOf(s).afterDays} onChange={e=>updTravel(s.id,{afterDays:Math.max(0,+e.target.value||0)})}/></Field>
+                <Field label="at"><input type="time" style={inp} value={travelOf(s).returnTime} onChange={e=>updTravel(s.id,{returnTime:e.target.value})}/></Field>
+              </div>
+              <div style={{fontSize:9.5,color:C.mute,margin:"2px 0 4px"}}>When you leave home and get back, relative to the shift block. This away window drives the kid-awake hours a trip costs.</div>
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
                 <Btn small kind="danger" disabled={refs>0} onClick={()=>rm(s.id)}>remove</Btn>
                 {refs>0&&<span style={{fontSize:10,color:C.mute}}>{refs} request{refs>1?"s":""} reference this site — can’t remove</span>}
