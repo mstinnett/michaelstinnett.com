@@ -661,19 +661,19 @@ function Num({e,money,k,dp,bold}){
       style={{fontStyle:"italic",color:C.est,borderBottom:`1px dotted ${C.estLine}`,cursor:"help",fontWeight:bold?700:400}}>~{txt}</span>;
   return <span style={{fontWeight:bold?700:400}}>{txt}</span>;
 }
-const Tag=({children,bg,col})=> <span style={{fontSize:8,fontWeight:800,letterSpacing:"0.04em",
+const Tag=({children,bg,col})=> <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",
   padding:"1px 5px",borderRadius:3,background:bg||C.line2,color:col||C.gray,textTransform:"uppercase",whiteSpace:"nowrap"}}>{children}</span>;
 const Btn=({children,onClick,kind,small,disabled})=>{
   const styles={prim:{bg:C.ink,col:C.bg,bd:C.ink},ghost:{bg:"transparent",col:C.gray,bd:C.line},
     danger:{bg:"transparent",col:C.red,bd:C.red},good:{bg:"transparent",col:C.green,bd:C.juniper}}[kind||"ghost"];
-  return <button onClick={onClick} disabled={disabled} style={{fontFamily:MONO,fontSize:small?9:10,fontWeight:700,
-    padding:small?"3px 7px":"5px 10px",borderRadius:4,cursor:disabled?"not-allowed":"pointer",
+  return <button onClick={onClick} disabled={disabled} style={{fontFamily:MONO,fontSize:small?11:12,fontWeight:700,
+    padding:small?"4px 9px":"6px 12px",borderRadius:4,cursor:disabled?"not-allowed":"pointer",
     background:styles.bg,color:disabled?C.faint:styles.col,border:`1px solid ${disabled?C.line:styles.bd}`,
     opacity:disabled?0.6:1,letterSpacing:"0.02em",whiteSpace:"nowrap"}}>{children}</button>;
 };
-const inp={fontFamily:MONO,fontSize:11,padding:"5px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.ink,width:"100%"};
+const inp={fontFamily:MONO,fontSize:13,padding:"6px 9px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.ink,width:"100%"};
 const Field=({label,children})=> <label style={{display:"block",marginBottom:7}}>
-  <div style={{fontSize:7.5,fontWeight:800,color:C.gray,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:3}}>{label}</div>
+  <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:3}}>{label}</div>
   {children}</label>;
 function glowStyle(bucket){
   switch(bucket){
@@ -687,16 +687,16 @@ function glowStyle(bucket){
 /* ════════ STATS READOUT — the figures, broken out; no prescription, no warning ════════ */
 function StatItem({label,value,e,strong,accent}){
   return <div style={{minWidth:0}}>
-    <div style={{fontSize:7.5,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{label}</div>
-    <div style={{fontSize:strong?15:12,fontWeight:strong?800:700,color:accent||C.ink,letterSpacing:"-0.01em"}}>
+    <div style={{fontSize:9,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{label}</div>
+    <div style={{fontSize:strong?18:14.5,fontWeight:strong?800:700,color:accent||C.ink,letterSpacing:"-0.01em"}}>
       {e?<Num e={e} money k/>:value}</div>
   </div>;
 }
 function StatsReadout({cool}){
   return <div style={{padding:"11px 13px",borderRadius:7,border:`1px solid ${C.line}`,background:C.panel}}>
     <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:9}}>
-      <span style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>This year</span>
-      <span style={{fontSize:8.5,color:C.mute}}>target <b style={{color:C.ink}}>{fmtK(cool.annualTarget)}</b></span>
+      <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>This year</span>
+      <span style={{fontSize:10,color:C.mute}}>target <b style={{color:C.ink}}>{fmtK(cool.annualTarget)}</b></span>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"11px 10px"}}>
       <StatItem label="On pace" e={est(cool.onCurveProjection$,["curve-weighted projection"])} strong accent={C.juniper}/>
@@ -712,22 +712,22 @@ function StatsReadout({cool}){
 /* ════════ BRIGHTNESS DECOMPOSITION (the "shows its work" safeguard) ════════ */
 function WhyBright({w}){
   return <div style={{padding:"10px 12px",background:C.panel2,borderTop:`1px dashed ${C.line}`}}>
-    <div style={{fontSize:8.5,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>
+    <div style={{fontSize:10,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>
       Why it glows — components combine for surfacing only
     </div>
     {Object.keys(BW).map(k=>{
       const v=w.components[k],pct=Math.round(v*100);
       return <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
-        <div style={{width:108,fontSize:9,color:BW_EST[k]?C.est:C.gray,fontStyle:BW_EST[k]?"italic":"normal",flexShrink:0}}>
+        <div style={{width:108,fontSize:11,color:BW_EST[k]?C.est:C.gray,fontStyle:BW_EST[k]?"italic":"normal",flexShrink:0}}>
           {BW_LABEL[k]}{BW_EST[k]&&" ~"}</div>
         <div style={{flex:1,height:6,background:C.line2,borderRadius:3,overflow:"hidden"}}>
           <div style={{width:pct+"%",height:"100%",borderRadius:3,
             background:BW_EST[k]?C.estLine:C.juniper}}/>
         </div>
-        <div style={{width:64,fontSize:8,color:C.mute,textAlign:"right",flexShrink:0}}>×{BW[k]} = {(v*BW[k]).toFixed(2)}</div>
+        <div style={{width:64,fontSize:9.5,color:C.mute,textAlign:"right",flexShrink:0}}>×{BW[k]} = {(v*BW[k]).toFixed(2)}</div>
       </div>;
     })}
-    <div style={{marginTop:8,paddingTop:7,borderTop:`1px solid ${C.line}`,fontSize:9,color:C.gray,display:"flex",justifyContent:"space-between"}}>
+    <div style={{marginTop:8,paddingTop:7,borderTop:`1px solid ${C.line}`,fontSize:11,color:C.gray,display:"flex",justifyContent:"space-between"}}>
       <span>weighted score <b style={{color:C.ink}}>{w.score.toFixed(2)}</b> → bucket <b style={{color:C.ink}}>{w.bucket}</b></span>
       <span style={{color:C.mute}}>glow only · never orders / hides / recommends</span>
     </div>
@@ -759,10 +759,10 @@ function PaceCurve({pace,setPace,tsp}){
   };
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-      <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase"}}>Pace curve <span style={{fontWeight:600,textTransform:"none",color:C.mute}}>· drag months · shifts/mo</span></div>
-      <div style={{textAlign:"right",fontSize:9,color:C.gray}}>
-        <b style={{color:C.ink,fontSize:11}}>{total}</b> shifts/yr · avg <b style={{color:C.ink}}>{avg.toFixed(1)}</b>/mo
-        <div style={{fontSize:8.5}}>≈ <Num e={est(annual$,tsp.assumptions)} money k/> extrapolated</div>
+      <div style={{fontSize:11,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase"}}>Pace curve <span style={{fontWeight:600,textTransform:"none",color:C.mute}}>· drag months · shifts/mo</span></div>
+      <div style={{textAlign:"right",fontSize:11,color:C.gray}}>
+        <b style={{color:C.ink,fontSize:13}}>{total}</b> shifts/yr · avg <b style={{color:C.ink}}>{avg.toFixed(1)}</b>/mo
+        <div style={{fontSize:10}}>≈ <Num e={est(annual$,tsp.assumptions)} money k/> extrapolated</div>
       </div>
     </div>
     <div style={{position:"relative",display:"flex",alignItems:"flex-end",gap:2,height:H,marginTop:4}}>
@@ -771,21 +771,21 @@ function PaceCurve({pace,setPace,tsp}){
         title={`comfort ceiling ${ceiling}/mo — drag`}
         style={{position:"absolute",left:0,right:0,bottom:Math.min(H,ceiling*SPX)-6,height:12,zIndex:3,cursor:"ns-resize",touchAction:"none"}}>
         <div style={{position:"absolute",left:0,right:0,top:6,borderTop:`1.5px dashed ${C.gray}`}}/>
-        <span style={{position:"absolute",right:0,top:-3,fontSize:6.5,fontWeight:700,color:C.pressHot,background:C.panel2,padding:"0 2px"}}>ceil {ceiling}</span>
+        <span style={{position:"absolute",right:0,top:-3,fontSize:8,fontWeight:700,color:C.pressHot,background:C.panel2,padding:"0 2px"}}>ceil {ceiling}</span>
       </div>
       {MON.map((mn,m)=>{
         const sh=shifts[m],h=Math.max(2,Math.min(H,sh*SPX)),isNow=m===TODAY.getMonth(),hot=sh>ceiling;
         return <div key={m} onPointerDown={e=>drag(e,()=>shifts[m],v=>setMonthShifts(m,v))} title={`${MONL[m]}: ${sh} shifts ≈ ${fmt$(sh*tsp.value)} — drag`}
           style={{flex:1,height:H,display:"flex",flexDirection:"column",justifyContent:"flex-end",alignItems:"center",
             cursor:"ns-resize",touchAction:"none"}}>
-          <div style={{fontSize:7,fontWeight:700,color:hot?C.pressHot:(sh?C.gray:C.mute),marginBottom:1}}>{sh}</div>
+          <div style={{fontSize:8.5,fontWeight:700,color:hot?C.pressHot:(sh?C.gray:C.mute),marginBottom:1}}>{sh}</div>
           <div style={{width:"74%",height:h,background:isNow?C.ink:(hot?C.pressHot:C.bar),borderRadius:"3px 3px 0 0",
             border:isNow?"none":`1px solid ${hot?C.pressHot:C.faint}`}}/>
         </div>;
       })}
     </div>
     <div style={{display:"flex",gap:2,marginTop:3}}>
-      {MON.map((mn,m)=><div key={m} style={{flex:1,textAlign:"center",fontSize:6.5,fontWeight:700,color:m===TODAY.getMonth()?C.ink:C.mute}}>{mn[0]}</div>)}
+      {MON.map((mn,m)=><div key={m} style={{flex:1,textAlign:"center",fontSize:8,fontWeight:700,color:m===TODAY.getMonth()?C.ink:C.mute}}>{mn[0]}</div>)}
     </div>
   </div>;
 }
@@ -816,9 +816,9 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   const paceInner=<><PaceCurve pace={state.pace} setPace={setPace} tsp={tsp}/><div style={{marginTop:12}}><StatsReadout cool={cool}/></div></>;
   const paceDrawerEl=<div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel2,marginBottom:12,overflow:"hidden"}}>
     <div onClick={()=>setDrawer(d=>!d)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",cursor:"pointer"}}>
-      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Pace</span>
-      <span style={{fontSize:9,color:C.mute}}>on pace <b style={{color:C.ink}}>{fmtK(cool.onCurveProjection$)}</b> · worked {fmtK(cool.bookedToDate$)} · requested {fmtK(cool.requested$)}</span>
-      <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{drawer?"▾ hide":"▸ show"}</span>
+      <span style={{fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Pace</span>
+      <span style={{fontSize:11,color:C.mute}}>on pace <b style={{color:C.ink}}>{fmtK(cool.onCurveProjection$)}</b> · worked {fmtK(cool.bookedToDate$)} · requested {fmtK(cool.requested$)}</span>
+      <span style={{marginLeft:"auto",fontSize:11,color:C.mute}}>{drawer?"▾ hide":"▸ show"}</span>
     </div>
     {drawer&&<div style={{padding:"0 12px 12px"}}>{paceInner}</div>}
   </div>;
@@ -828,11 +828,11 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   const sitesEl=<SitesWorksheet state={state} setState={setState}/>;
   const winEl=<>
     <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 2px 8px",flexWrap:"wrap"}}>
-      <span style={{fontSize:13,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} windows</span>
-      <span style={{fontSize:9,color:C.gray}}>the “where” · glow by fit, never ranked</span>
-      <span style={{marginLeft:"auto",fontSize:8,color:C.est,fontStyle:"italic"}}>~amber = estimate</span>
+      <span style={{fontSize:15.5,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} windows</span>
+      <span style={{fontSize:11,color:C.gray}}>the “where” · glow by fit, never ranked</span>
+      <span style={{marginLeft:"auto",fontSize:9.5,color:C.est,fontStyle:"italic"}}>~amber = estimate</span>
     </div>
-    <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:8.5,color:C.mute,margin:"0 2px 10px"}}>
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:10,color:C.mute,margin:"0 2px 10px"}}>
       <span>glow = brightness:</span>
       {BUCKETS.map(b=><span key={b} style={{display:"inline-flex",alignItems:"center",gap:4}}>
         <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{b}</span>)}
@@ -844,13 +844,13 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
       const label=`${MON[inMonth[0].getMonth()]} ${inMonth[0].getDate()}–${inMonth[inMonth.length-1].getDate()}`;
       return <div key={wi} style={{marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 2px 6px"}}>
-          <span style={{fontSize:10,fontWeight:800,color:C.gray,letterSpacing:"0.02em"}}>{label}</span>
+          <span style={{fontSize:12,fontWeight:800,color:C.gray,letterSpacing:"0.02em"}}>{label}</span>
           <div style={{flex:1,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
             <div style={{flex:1,height:6,background:C.line2,borderRadius:3,position:"relative",overflow:"hidden"}}>
               <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,var(--faint),var(--faint) 4px,transparent 4px,transparent 7px)"}}/>
               <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.floor$/8000*100)+"%",background:C.ink}}/>
             </div>
-            <span style={{fontSize:8,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
+            <span style={{fontSize:9.5,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
           </div>
           {exp.collision&&<Tag bg={C.softWarn} col={C.red}>double-book</Tag>}
           {exp.hole&&<Tag bg={C.softWarn} col={C.est}>thin</Tag>}
@@ -862,17 +862,17 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
             <div style={{display:"flex",alignItems:"stretch"}}>
               <div style={{flex:"1 1 200px",minWidth:0,padding:"9px 11px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                  <span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
+                  <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
                   <Tag>{REACH_LABEL[w.site.reach]}</Tag>
                   {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
                   {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
                   {w.closed&&<Tag bg={C.line2} col={C.mute}>window closed</Tag>}
                   {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
                 </div>
-                <div style={{fontSize:9.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.note||w.site.note}</div>
+                <div style={{fontSize:11.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.note||w.site.note}</div>
                 <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
                   {w.perKid.map(k=><span key={k.childId} title={`${k.name}: ${k.count} of ${k.of} weekdays out of school`}
-                    style={{fontSize:8,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
+                    style={{fontSize:9.5,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
                 </div>
               </div>
               <div style={{display:"flex",borderLeft:`1px solid ${C.line2}`}}>
@@ -885,12 +885,12 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 11px",borderTop:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
               <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
                 {["day","night"].map(t=><button key={t} onClick={()=>setType(w.id,t)}
-                  style={{fontFamily:MONO,fontSize:9,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
+                  style={{fontFamily:MONO,fontSize:11,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
                     background:w.type===t?C.ink:"transparent",color:w.type===t?C.bg:C.gray}}>{t}</button>)}
               </div>
               {w.existing? <Tag bg={C.softInfo} col={C.blue}>request exists · {w.existing.state}</Tag>
                 : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>+ request</Btn>}
-              <span style={{marginLeft:"auto",fontSize:8,color:C.mute}}>{w.site.submissionType==="by_window"?"by window":"by shift"}</span>
+              <span style={{marginLeft:"auto",fontSize:9.5,color:C.mute}}>{w.site.submissionType==="by_window"?"by window":"by shift"}</span>
               <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why bright"}</Btn>
             </div>
             {isOpen&&<WhyBright w={w}/>}
@@ -898,7 +898,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
         })}
       </div>;
     })}
-    <p style={{fontSize:9,color:C.mute,textAlign:"center",marginTop:18,lineHeight:1.6}}>
+    <p style={{fontSize:11,color:C.mute,textAlign:"center",marginTop:18,lineHeight:1.6}}>
       Brightness is attention; order is structural; the choice is read from the raw facts.<br/>
       No window is hidden, reordered by desirability, or recommended.
     </p>
@@ -906,7 +906,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
 
   const tripsPaletteEl=<TripsPalette state={state} setState={setState} sel={sel} setSel={setSel} goto={goto}/>;
   let body;
-  if(view==="pace")body=<><div style={{fontSize:13,fontWeight:800,marginBottom:10}}>Pace</div>{paceInner}</>;
+  if(view==="pace")body=<><div style={{fontSize:15.5,fontWeight:800,marginBottom:10}}>Pace</div>{paceInner}</>;
   else if(view==="setup")body=<>{layersEl}{sp}{tripsEl}{sp}{sitesEl}</>;
   // main workspace: calendar + windows together, with the trips palette as the third pillar
   else body=<>{calEl}{sp}{tripsPaletteEl}{sp}<div ref={winRef}>{winEl}</div></>;
@@ -917,8 +917,8 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   </div>;
 }
 const Fact=({label,children})=> <div style={{padding:"9px 11px",textAlign:"right",minWidth:74,borderRight:`1px solid ${C.line2}`}}>
-  <div style={{fontSize:7.5,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:2}}>{label}</div>
-  <div style={{fontSize:12,fontWeight:700,color:C.ink}}>{children}</div>
+  <div style={{fontSize:9,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:2}}>{label}</div>
+  <div style={{fontSize:14.5,fontWeight:700,color:C.ink}}>{children}</div>
 </div>;
 
 function CreateModal({w,state,tsp,onClose,onCreate}){
@@ -940,43 +940,43 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
   const perKid=kidDaysOut(effDates,state.layers);
   const totalPay=money.shiftPay*count;
   return <Overlay onClose={onClose}>
-    <div style={{fontSize:13,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
-    <div style={{fontSize:9,color:C.gray,marginBottom:12}}>{byWindow?"by window — pick candidates + how many to take":"by shift — pick the dates"}</div>
+    <div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
+    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>{byWindow?"by window — pick candidates + how many to take":"by shift — pick the dates"}</div>
     <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginBottom:12}}>
-      {["day","night"].map(t=><button key={t} onClick={()=>setType(t)} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
+      {["day","night"].map(t=><button key={t} onClick={()=>setType(t)} style={{fontFamily:MONO,fontSize:12,fontWeight:700,
         padding:"5px 14px",border:"none",cursor:"pointer",background:type===t?C.ink:"transparent",color:type===t?C.bg:C.gray}}>{t}</button>)}
     </div>
     <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
       {weekdays.map(d=>{const on=picked.includes(d);return <button key={d} onClick={()=>toggle(d)}
-        style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 9px",borderRadius:5,cursor:"pointer",
+        style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"6px 9px",borderRadius:5,cursor:"pointer",
           border:`1px solid ${on?C.ink:C.line}`,background:on?C.ink:C.panel,color:on?C.bg:C.gray}}>
         {MON[pd(d).getMonth()]} {pd(d).getDate()}</button>;})}
     </div>
     {byWindow&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-      <span style={{fontSize:10,color:C.gray}}>take</span>
+      <span style={{fontSize:12,color:C.gray}}>take</span>
       <Btn small onClick={()=>setTake(t=>Math.max(1,t-1))}>−</Btn>
-      <span style={{fontSize:13,fontWeight:800,minWidth:18,textAlign:"center"}}>{take}</span>
+      <span style={{fontSize:15.5,fontWeight:800,minWidth:18,textAlign:"center"}}>{take}</span>
       <Btn small onClick={()=>setTake(t=>Math.min(picked.length,t+1))}>+</Btn>
-      <span style={{fontSize:9,color:C.mute}}>of {picked.length} candidates · ceiling at <Num e={tsp} money/>/shift</span>
+      <span style={{fontSize:11,color:C.mute}}>of {picked.length} candidates · ceiling at <Num e={tsp} money/>/shift</span>
     </div>}
     {/* live readout — what this candidate records */}
     <div style={{border:`1px solid ${C.line}`,borderRadius:7,background:C.panel2,padding:"10px 12px",marginBottom:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
-        <span style={{fontSize:8.5,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>This candidate records</span>
-        <span style={{fontSize:11,fontWeight:800}}>{count}× · {fmt$(totalPay)}{byWindow&&count<picked.length?" if all land":""}</span>
+        <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>This candidate records</span>
+        <span style={{fontSize:13,fontWeight:800}}>{count}× · {fmt$(totalPay)}{byWindow&&count<picked.length?" if all land":""}</span>
       </div>
       <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8}}>
-        <div><div style={{fontSize:7.5,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>$/hr ER</div><div style={{fontSize:13,fontWeight:700}}><Num e={money.erPerHr} money/></div></div>
-        <div><div style={{fontSize:7.5,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>$/hr away</div><div style={{fontSize:13,fontWeight:700}}><Num e={money.awayPerHr} money/></div></div>
-        <div><div style={{fontSize:7.5,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>away hrs</div><div style={{fontSize:13,fontWeight:700,color:C.gray}}>{money.awayHours}</div>
-          <div style={{fontSize:7,color:C.mute}}>{money.travel}h travel{w.co.coLocated?" · co-located":""}</div></div>
+        <div><div style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>$/hr ER</div><div style={{fontSize:15.5,fontWeight:700}}><Num e={money.erPerHr} money/></div></div>
+        <div><div style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>$/hr away</div><div style={{fontSize:15.5,fontWeight:700}}><Num e={money.awayPerHr} money/></div></div>
+        <div><div style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>away hrs</div><div style={{fontSize:15.5,fontWeight:700,color:C.gray}}>{money.awayHours}</div>
+          <div style={{fontSize:8.5,color:C.mute}}>{money.travel}h travel{w.co.coLocated?" · co-located":""}</div></div>
       </div>
       <div style={{borderTop:`1px solid ${C.line2}`,paddingTop:7}}>
-        <div style={{fontSize:7.5,fontWeight:700,color:C.mute,textTransform:"uppercase",marginBottom:4}}>Days out of school {byWindow?"(of the take)":""}</div>
+        <div style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase",marginBottom:4}}>Days out of school {byWindow?"(of the take)":""}</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {perKid.map(k=><span key={k.childId} style={{fontSize:10,fontWeight:700,color:k.count>0?C.est:C.green}}>
+          {perKid.map(k=><span key={k.childId} style={{fontSize:12,fontWeight:700,color:k.count>0?C.est:C.green}}>
             ◷ {k.name} <b>{k.count}</b>/{k.of}</span>)}
-          {perKid.every(k=>k.count===0)&&<span style={{fontSize:9,color:C.green}}>no family-time collision</span>}
+          {perKid.every(k=>k.count===0)&&<span style={{fontSize:11,color:C.green}}>no family-time collision</span>}
         </div>
       </div>
     </div>
@@ -1034,28 +1034,28 @@ function Pending({state,setState,tsp}){
   const past=reqs.filter(isPastReq).sort((a,b)=>reqMaxDate(b).localeCompare(reqMaxDate(a)));
 
   const Head=({title,n,sub})=> <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"0 2px 8px"}}>
-    <span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.01em"}}>{title}</span>
-    <span style={{fontSize:9,fontWeight:700,color:C.mute}}>{n}</span>
-    <span style={{fontSize:9,color:C.gray}}>{sub}</span>
+    <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em"}}>{title}</span>
+    <span style={{fontSize:11,fontWeight:700,color:C.mute}}>{n}</span>
+    <span style={{fontSize:11,color:C.gray}}>{sub}</span>
   </div>;
-  const Empty=({t})=> <div style={{fontSize:9,color:C.mute,fontStyle:"italic",padding:"4px 2px 0"}}>{t}</div>;
+  const Empty=({t})=> <div style={{fontSize:11,color:C.mute,fontStyle:"italic",padding:"4px 2px 0"}}>{t}</div>;
   const RowCard=({children,dim,accent})=> <div style={{padding:"9px 11px",border:`1px solid ${accent||C.line}`,borderRadius:7,
     background:C.panel,marginBottom:6,opacity:dim?0.5:1}}>{children}</div>;
   const Ident=({r})=>{const site=siteById[r.siteId];return <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
-    <span style={{fontSize:11,fontWeight:800}}>{site?site.name:"(removed site)"}</span>
+    <span style={{fontSize:13,fontWeight:800}}>{site?site.name:"(removed site)"}</span>
     <Tag bg={C.line2} col={ST_COL[r.state]}>{ST_LABEL[r.state]}</Tag>
     <Tag>{r.shiftType}</Tag>
     {Number.isFinite(r.rateOverride)&&<Tag bg={C.softWarn} col={C.pressHot}>rate {fmt$(r.rateOverride)}</Tag>}
-    <span style={{marginLeft:"auto",fontSize:9,fontWeight:700,color:C.ink}}>{fmt$(payOf(r))}</span>
+    <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:C.ink}}>{fmt$(payOf(r))}</span>
   </div>;};
-  const Dates=({r})=> <div style={{fontSize:8.5,color:C.gray,marginTop:4}}>
+  const Dates=({r})=> <div style={{fontSize:10,color:C.gray,marginTop:4}}>
     {r.footprint.kind==="smeared"?`${md(r.footprint.candidates[0])}–${md(r.footprint.candidates.at(-1))} · take ${r.footprint.take} of ${r.footprint.candidates.length}`
       :r.footprint.dates.map(md).join(" · ")}</div>;
 
   return <div style={{height:"100%",overflow:"auto"}}>
     <div style={{maxWidth:720,margin:"0 auto",padding:"14px 16px 80px"}}>
-      <div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Pending</div>
-      <div style={{fontSize:9.5,color:C.gray,marginBottom:16}}>the request lifecycle, newest intent on top, history scrolling down.</div>
+      <div style={{fontSize:18,fontWeight:800,letterSpacing:"-0.02em"}}>Pending</div>
+      <div style={{fontSize:11.5,color:C.gray,marginBottom:16}}>the request lifecycle, newest intent on top, history scrolling down.</div>
 
       {/* ── CANDIDATES ── */}
       <Head title="Candidates" n={candidates.length} sub="selected to apply for · deadline chain"/>
@@ -1065,7 +1065,7 @@ function Pending({state,setState,tsp}){
         return <RowCard key={r.id}>
           <Ident r={r}/><Dates r={r}/>
           <div style={{marginTop:7}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:C.mute,marginBottom:2}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:9.5,color:C.mute,marginBottom:2}}>
               <span>{notOpen?`opens ${r.opens}`:`window open`}</span>
               <span style={{color:press>0.7?C.red:C.gray}}>apply by {r.dueBy}</span>
             </div>
@@ -1073,7 +1073,7 @@ function Pending({state,setState,tsp}){
               <div style={{width:(press*100)+"%",height:"100%",background:press>0.7?C.red:C.ink}}/>
             </div>
           </div>
-          {chain&&<div style={{marginTop:6,fontSize:8.5,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          {chain&&<div style={{marginTop:6,fontSize:10,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
             <span style={{color:C.gray}}>⛓ waits on <b>{chain.up?chain.up.name:"?"}</b></span>
             {chain.missing? <Tag bg={C.line2} col={C.mute}>no live upstream request</Tag>
               : chain.slack<0? <Tag bg={C.softWarn} col={C.red}>slack {chain.slack}d — due before they respond</Tag>
@@ -1091,7 +1091,7 @@ function Pending({state,setState,tsp}){
       {confirmedUp.length===0&&<Empty t="No upcoming confirmed shifts."/>}
       {confirmedUp.map(r=><RowCard key={r.id} accent={C.juniper}>
         <Ident r={r}/><Dates r={r}/>
-        <div style={{fontSize:8,color:C.green,fontWeight:700,marginTop:6}}>→ hardened placement (home base, §7)</div>
+        <div style={{fontSize:9.5,color:C.green,fontWeight:700,marginTop:6}}>→ hardened placement (home base, §7)</div>
       </RowCard>)}
 
       {/* ── PENDING (awaiting + in negotiation) ── */}
@@ -1102,7 +1102,7 @@ function Pending({state,setState,tsp}){
         return <RowCard key={r.id} accent={neg?C.pressHot:undefined}>
           <Ident r={r}/><Dates r={r}/>
           {wait&&<div style={{marginTop:7}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:C.mute,marginBottom:2}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:9.5,color:C.mute,marginBottom:2}}>
               <span>submitted {r.submittedOn}</span>
               <span style={{color:wait.overdue?C.red:C.gray}}>{wait.overdue?"overdue":"response by"} {r.expectedResponseBy}</span>
             </div>
@@ -1124,11 +1124,11 @@ function Pending({state,setState,tsp}){
         </RowCard>;
       })}
       {resolved.length>0&&<div style={{marginTop:8}}>
-        <div style={{fontSize:8.5,fontWeight:700,color:C.mute,textTransform:"uppercase",letterSpacing:"0.04em",margin:"0 2px 6px"}}>resolved · persists (Inv 8)</div>
+        <div style={{fontSize:10,fontWeight:700,color:C.mute,textTransform:"uppercase",letterSpacing:"0.04em",margin:"0 2px 6px"}}>resolved · persists (Inv 8)</div>
         {resolved.map(r=><RowCard key={r.id} dim>
           <Ident r={r}/><Dates r={r}/>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
-            <span style={{fontSize:8,color:C.mute,fontStyle:"italic"}}>faded to legibility floor</span>
+            <span style={{fontSize:9.5,color:C.mute,fontStyle:"italic"}}>faded to legibility floor</span>
             <Btn small onClick={()=>discard(r.id)}>dismiss</Btn>
           </div>
         </RowCard>)}
@@ -1141,7 +1141,7 @@ function Pending({state,setState,tsp}){
         <Ident r={r}/><Dates r={r}/>
       </RowCard>)}
 
-      <p style={{fontSize:9,color:C.mute,textAlign:"center",marginTop:22,lineHeight:1.6}}>
+      <p style={{fontSize:11,color:C.mute,textAlign:"center",marginTop:22,lineHeight:1.6}}>
         Confirmed and in-negotiation shifts land on the calendar and press the month.<br/>
         Only the pace/exposure readout crosses back to the Board (the seam, §7).
       </p>
@@ -1152,18 +1152,18 @@ function Pending({state,setState,tsp}){
 function OverrideEditor({r,site,onRm,onAdd,onRate,onConfirm,onReject}){
   const [add,setAdd]=useState("");
   return <div style={{marginTop:8,padding:"9px 10px",border:`1px dashed ${C.pressHot}`,borderRadius:6,background:C.softWarn}}>
-    <div style={{fontSize:8,fontWeight:800,color:C.pressHot,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated terms · can fall outside the original window</div>
+    <div style={{fontSize:9.5,fontWeight:800,color:C.pressHot,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated terms · can fall outside the original window</div>
     <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
-      {r.footprint.dates.map(d=><span key={d} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9,fontWeight:700,
+      {r.footprint.dates.map(d=><span key={d} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,
         padding:"2px 4px 2px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel}}>
-        {md(d)}<button onClick={()=>onRm(d)} style={{border:"none",background:"none",cursor:"pointer",color:C.red,fontFamily:MONO,fontSize:10}}>×</button></span>)}
+        {md(d)}<button onClick={()=>onRm(d)} style={{border:"none",background:"none",cursor:"pointer",color:C.red,fontFamily:MONO,fontSize:12}}>×</button></span>)}
     </div>
     <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
       <input type="date" value={add} onChange={e=>setAdd(e.target.value)} style={{...inp,width:140}}/>
       <Btn small onClick={()=>{if(DATE_RE.test(add)){onAdd(add);setAdd("");}}}>+ add date</Btn>
-      <span style={{marginLeft:"auto",fontSize:8.5,color:C.gray}}>rate</span>
+      <span style={{marginLeft:"auto",fontSize:10,color:C.gray}}>rate</span>
       <input type="number" value={r.rateOverride} onChange={e=>onRate(+e.target.value||0)} style={{...inp,width:80}}/>
-      <span style={{fontSize:8.5,color:C.mute}}>={fmt$((r.footprint.dates.length)*(Number(r.rateOverride)||0))}</span>
+      <span style={{fontSize:10,color:C.mute}}>={fmt$((r.footprint.dates.length)*(Number(r.rateOverride)||0))}</span>
     </div>
     <div style={{display:"flex",gap:6}}>
       <Btn small kind="good" disabled={!r.footprint.dates.length} onClick={onConfirm}>confirm</Btn>
@@ -1188,18 +1188,18 @@ function SiteWizard({state,setState,embed,onClose}){
   const rm=id=>{if(reqCount(id)>0)return;setSites(p=>p.filter(s=>s.id!==id));if(openId===id)setOpenId(null);};
   const N=props=> <input type="number" style={inp} {...props}/>;
   const Inner=<div style={{maxHeight:embed?"none":"82vh",display:"flex",flexDirection:"column"}}>
-      {!embed&&<div style={{fontSize:13,fontWeight:800,marginBottom:2}}>Sites worksheet</div>}
-      <div style={{fontSize:9,color:C.gray,marginBottom:10}}>Sites carry satisfaction in their <b>name</b> + free-text <b>note</b> — never a rating (Inv 4). Edits are live.</div>
+      {!embed&&<div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>Sites worksheet</div>}
+      <div style={{fontSize:11,color:C.gray,marginBottom:10}}>Sites carry satisfaction in their <b>name</b> + free-text <b>note</b> — never a rating (Inv 4). Edits are live.</div>
       <div style={{flex:1,overflow:"auto",margin:"0 -2px",padding:"0 2px"}}>
         {sites.map(s=>{
           const open=openId===s.id, refs=reqCount(s.id);
           return <div key={s.id} style={{border:`1px solid ${C.line}`,borderRadius:7,marginBottom:7,background:C.panel,overflow:"hidden"}}>
             <div onClick={()=>setOpenId(open?null:s.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",cursor:"pointer"}}>
-              <span style={{fontSize:11,fontWeight:800}}>{s.name||"(unnamed)"}</span>
+              <span style={{fontSize:13,fontWeight:800}}>{s.name||"(unnamed)"}</span>
               <Tag>{REACH_LABEL[s.reach]}</Tag>
               <Tag bg={C.line2}>{s.submissionType==="by_window"?"by window":"by shift"}</Tag>
               {s.dependsOn&&<Tag bg={C.softInfo} col={C.blue}>after {sites.find(x=>x.id===s.dependsOn)?.name||"?"}</Tag>}
-              <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{open?"▾":"▸"}</span>
+              <span style={{marginLeft:"auto",fontSize:11,color:C.mute}}>{open?"▾":"▸"}</span>
             </div>
             {open&&<div style={{padding:"4px 10px 10px",borderTop:`1px solid ${C.line2}`}}>
               <Field label="Name (carries satisfaction)"><input style={inp} value={s.name} onChange={e=>upd(s.id,{name:e.target.value})}/></Field>
@@ -1228,7 +1228,7 @@ function SiteWizard({state,setState,embed,onClose}){
                 {sites.filter(x=>x.id!==s.id).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
                 <Btn small kind="danger" disabled={refs>0} onClick={()=>rm(s.id)}>remove</Btn>
-                {refs>0&&<span style={{fontSize:8.5,color:C.mute}}>{refs} request{refs>1?"s":""} reference this site — can’t remove</span>}
+                {refs>0&&<span style={{fontSize:10,color:C.mute}}>{refs} request{refs>1?"s":""} reference this site — can’t remove</span>}
               </div>
             </div>}
           </div>;
@@ -1270,8 +1270,8 @@ function LayersPanel({state,setState}){
   const KIND={school:"school",holiday:"holiday",event:"event",custom:"custom"};
   return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"9px 11px"}}>
     <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:7}}>
-      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Presence layers</span>
-      <span style={{fontSize:8,color:C.mute}}>tap to show/hide · ✎ to edit ranges & import JSON</span>
+      <span style={{fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Presence layers</span>
+      <span style={{fontSize:9.5,color:C.mute}}>tap to show/hide · ✎ to edit ranges & import JSON</span>
     </div>
     <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
       {layers.map(l=>{const on=l.visible!==false;return <span key={l.id}
@@ -1279,10 +1279,10 @@ function LayersPanel({state,setState}){
           border:`1px solid ${on?C.line:C.line2}`,background:on?C.panel2:"transparent",opacity:on?1:0.55}}>
         <span onClick={()=>toggle(l.id)} style={{display:"inline-flex",alignItems:"center",gap:5}}>
           <span style={{width:9,height:9,borderRadius:"50%",background:l.color,border:on?"none":`1px solid ${C.faint}`}}/>
-          <span style={{fontSize:9.5,fontWeight:700,color:on?C.ink:C.mute}}>{l.name}</span>
-          <span style={{fontSize:7.5,color:C.mute}}>{(l.ranges||[]).length}</span>
+          <span style={{fontSize:11.5,fontWeight:700,color:on?C.ink:C.mute}}>{l.name}</span>
+          <span style={{fontSize:9,color:C.mute}}>{(l.ranges||[]).length}</span>
         </span>
-        <span onClick={()=>setEditing(editing===l.id?null:l.id)} title="edit" style={{fontSize:9,color:editing===l.id?C.ink:C.mute,cursor:"pointer"}}>✎</span>
+        <span onClick={()=>setEditing(editing===l.id?null:l.id)} title="edit" style={{fontSize:11,color:editing===l.id?C.ink:C.mute,cursor:"pointer"}}>✎</span>
       </span>;})}
       <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
         <input value={adding} onChange={e=>setAdding(e.target.value)} placeholder="+ layer" onKeyDown={e=>{if(e.key==="Enter")addLayer();}}
@@ -1296,7 +1296,7 @@ function LayersPanel({state,setState}){
         <select value={ed.kind} onChange={e=>setLayer(ed.id,{kind:e.target.value})} style={{...inp,width:96}}>
           {Object.keys(KIND).map(k=><option key={k} value={k}>{k}</option>)}</select>
         {ed.kind!=="school"&&<input type="color" value={/^#/.test(ed.color)?ed.color:"#888880"} onChange={e=>setLayer(ed.id,{color:e.target.value})} style={{width:28,height:24,padding:0,border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,cursor:"pointer"}}/>}
-        {ed.kind==="school"&&<span style={{fontSize:8,color:C.mute}}>drives days-out (Inv 9)</span>}
+        {ed.kind==="school"&&<span style={{fontSize:9.5,color:C.mute}}>drives days-out (Inv 9)</span>}
         <div style={{marginLeft:"auto",display:"flex",gap:5}}>
           <Btn small onClick={()=>{target.current=ed.id;fileRef.current.click();}}>↥ import</Btn>
           <Btn small onClick={()=>expL(ed)}>↧ export</Btn>
@@ -1304,7 +1304,7 @@ function LayersPanel({state,setState}){
         </div>
       </div>
       <div style={{maxHeight:160,overflow:"auto"}}>
-        {(ed.ranges||[]).length===0&&<div style={{fontSize:9,color:C.mute,fontStyle:"italic",padding:"4px 0"}}>No ranges. Add one or import JSON ({`[{from,to,label}]`} or {`{s,e,l}`}).</div>}
+        {(ed.ranges||[]).length===0&&<div style={{fontSize:11,color:C.mute,fontStyle:"italic",padding:"4px 0"}}>No ranges. Add one or import JSON ({`[{from,to,label}]`} or {`{s,e,l}`}).</div>}
         {(ed.ranges||[]).map((r,i)=><div key={i} style={{display:"flex",gap:4,alignItems:"center",padding:"3px 0",borderBottom:`1px solid ${C.line2}`}}>
           <input style={{...inp,flex:1}} value={r.label} placeholder="label" onChange={e=>updRange(ed.id,i,{label:e.target.value})}/>
           <input type="date" style={{...inp,width:128}} value={r.from} onChange={e=>updRange(ed.id,i,{from:e.target.value})}/>
@@ -1371,7 +1371,7 @@ function layerCoverage(layers,startY,endY){
 }
 
 /* by-row year strip — structural spine + month selector. Click a row to load its windows. */
-const CAL_CELL=15,CAL_CG=2,CAL_WG=7,CAL_LBL=74,CAL_RG=3;
+const CAL_CELL=18,CAL_CG=2,CAL_WG=8,CAL_LBL=86,CAL_RG=3;
 const calMl=ci=>(ci%7===0&&ci>0)?CAL_WG:(ci===0?0:CAL_CG);
 const calMaxCols=42;
 /* one shared per-day visual, used by the by-row strip and the mobile month grid */
@@ -1406,7 +1406,7 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandl
       cursor:v.closed?"not-allowed":(tool==="eraser"?"cell":"pointer"),touchAction:tool&&tool!=="off"?"none":"auto",
       outline:v.inSel?`2px solid ${C.ink}`:(v.inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:v.closed&&!v.conf&&!v.neg?0.82:1,
       display:num?"flex":"block",alignItems:"center",justifyContent:"center"}}>
-    {num&&<span style={{fontSize:11,fontWeight:v.conf?800:500,color:v.conf?"var(--on-shift)":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
+    {num&&<span style={{fontSize:13,fontWeight:v.conf?800:500,color:v.conf?"var(--on-shift)":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
     {v.closed&&!v.conf&&!v.neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
     {v.inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
     {v.lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:v.lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
@@ -1427,8 +1427,8 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
   return <div style={{display:"flex",alignItems:"center",marginBottom:CAL_RG,borderRadius:5,
     background:sel?C.sel:"transparent",boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
     <div onClick={selectable?()=>onSelect(y,m):undefined} style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8,cursor:selectable?"pointer":"default"}}>
-      <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{MON[m].toUpperCase()}{sel&&" ◂"}</div>
-      <div style={{fontSize:7,color:pm&&pm.n?C.ink:C.mute}}>{pm&&pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
+      <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{MON[m].toUpperCase()}{sel&&" ◂"}</div>
+      <div style={{fontSize:8.5,color:pm&&pm.n?C.ink:C.mute}}>{pm&&pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
       {/* two-layer pressure: confirmed (dark) + window (mid) vs ceiling */}
       <div title={`${ld.conf} confirmed + ${ld.win} window of ~${ceiling}/mo`} style={{display:"inline-flex",alignItems:"center",gap:3,marginTop:1}}>
         <div style={{width:barW,height:4,background:C.line2,borderRadius:2,overflow:"hidden",display:"flex",position:"relative"}}>
@@ -1436,7 +1436,7 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
           <div style={{width:winW,height:"100%",background:C.bar}}/>
           <div style={{position:"absolute",left:Math.min(barW-1,barW*ceiling/Math.max(ceiling,load)),top:-1,bottom:-1,width:1,background:C.gray}}/>
         </div>
-        <span style={{fontSize:6,fontWeight:700,color:hot?C.pressHot:C.mute}}>{load||""}{hot?"⚠":""}</span>
+        <span style={{fontSize:7,fontWeight:700,color:hot?C.pressHot:C.mute}}>{load||""}{hot?"⚠":""}</span>
       </div>
     </div>
     <div style={{display:"flex"}}>
@@ -1452,17 +1452,17 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
 /* calendar filters — toggle which presence layers paint the days, right on the workspace */
 function LayerFilters({layers,setLayers,goto}){
   return <div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",padding:"6px 10px",borderBottom:`1px solid ${C.line2}`}}>
-    <span style={{fontSize:8,fontWeight:800,color:C.mute,textTransform:"uppercase",letterSpacing:"0.05em",flexShrink:0}}>show</span>
+    <span style={{fontSize:9.5,fontWeight:800,color:C.mute,textTransform:"uppercase",letterSpacing:"0.05em",flexShrink:0}}>show</span>
     {layers.map(l=>{const on=l.visible!==false;
       return <button key={l.id} onClick={()=>setLayers(ls=>ls.map(x=>x.id===l.id?{...x,visible:!on}:x))}
         style={{flexShrink:0,display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:13,cursor:"pointer",
           border:`1px solid ${on?l.color:C.line}`,background:on?C.panel2:"transparent",opacity:on?1:0.55}}>
         <span style={{width:10,height:10,borderRadius:3,background:l.color}}/>
-        <span style={{fontSize:9,fontWeight:700,color:on?C.ink:C.mute,whiteSpace:"nowrap"}}>{l.name}</span>
-        {!on&&<span style={{fontSize:8,color:C.mute}}>off</span>}
+        <span style={{fontSize:11,fontWeight:700,color:on?C.ink:C.mute,whiteSpace:"nowrap"}}>{l.name}</span>
+        {!on&&<span style={{fontSize:9.5,color:C.mute}}>off</span>}
       </button>;})}
     <button onClick={()=>goto&&goto("setup")} title="edit calendars in Setup"
-      style={{flexShrink:0,fontFamily:MONO,fontSize:9,fontWeight:700,padding:"3px 9px",borderRadius:13,cursor:"pointer",
+      style={{flexShrink:0,fontFamily:MONO,fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:13,cursor:"pointer",
         border:`1px dashed ${C.line}`,background:"transparent",color:C.gray}}>✎ edit</button>
   </div>;
 }
@@ -1538,21 +1538,21 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const TOOLS=[["edit","✎ draw · move"],["eraser","⌫ erase"]];   // tap selects · drag moves · handles resize · drag empty draws
   const toolPalette=<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
     <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
-      {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSel(null);}} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
+      {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSel(null);}} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
         padding:"4px 9px",border:"none",cursor:"pointer",background:tool===k?C.ink:"transparent",color:tool===k?C.bg:C.gray}}>{l}</button>)}
     </div>
     {tool==="edit"&&<div style={{display:"inline-flex",alignItems:"center",gap:5}}>
-      <span style={{fontSize:8,color:C.mute}}>new:</span>
+      <span style={{fontSize:9.5,color:C.mute}}>new:</span>
       <select value={drawSiteId} onChange={e=>setDrawSiteId(e.target.value)} style={{...inp,width:120,padding:"3px 6px"}}>
         {sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
       <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
-        {["day","night"].map(t=><button key={t} onClick={()=>setDrawType(t)} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,padding:"3px 7px",border:"none",cursor:"pointer",background:drawType===t?C.ink:"transparent",color:drawType===t?C.bg:C.gray}}>{t}</button>)}
+        {["day","night"].map(t=><button key={t} onClick={()=>setDrawType(t)} style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"3px 7px",border:"none",cursor:"pointer",background:drawType===t?C.ink:"transparent",color:drawType===t?C.bg:C.gray}}>{t}</button>)}
       </div>
     </div>}
   </div>;
   const editBars=<>
     {sr&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
-      <span style={{fontSize:9,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {sr.state}</span></span>
+      <span style={{fontSize:11,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {sr.state}</span></span>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,-1)}}))}>◀</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,1)}}))}>▶</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();if(ds2.length>1)ds2.pop();return {...x,footprint:{kind:"pinned",dates:ds2}};})}>− day</Btn>
@@ -1564,7 +1564,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       <Btn small onClick={()=>setSel(null)}>done</Btn>
     </div>}
     {stp&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
-      <span style={{fontSize:9,fontWeight:800}}>{stp.name} <span style={{color:C.mute,fontWeight:600}}>{LOC_NAME[stp.loc]} · {stp.workFactor} · {md(stp.from)}–{md(stp.to)}</span></span>
+      <span style={{fontSize:11,fontWeight:800}}>{stp.name} <span style={{color:C.mute,fontWeight:600}}>{LOC_NAME[stp.loc]} · {stp.workFactor} · {md(stp.from)}–{md(stp.to)}</span></span>
       <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),-1)),to:ds(ad(pd(x.to),-1))}))}>◀</Btn>
       <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),1)),to:ds(ad(pd(x.to),1))}))}>▶</Btn>
       <Btn small kind="prim" onClick={()=>goto&&goto("setup")}>Edit…</Btn>
@@ -1581,7 +1581,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     const tapSelect=str=>{const r=editableAt(str);if(r){setSel({kind:"req",id:r.id});return;}const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);};
     const monthStep=d=>{let nm=fM+d,ny=focusY;if(nm<0){nm=11;ny--;}else if(nm>11){nm=0;ny++;}setFocusY(ny);onSelect(ny,nm);};
     const dow=<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
-      {"MTWTFSS".split("").map((c,i)=><div key={i} style={{textAlign:"center",fontSize:8,fontWeight:700,color:C.mute}}>{c}</div>)}</div>;
+      {"MTWTFSS".split("").map((c,i)=><div key={i} style={{textAlign:"center",fontSize:9.5,fontWeight:700,color:C.mute}}>{c}</div>)}</div>;
     const grid=big=><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
       {fg.cells.map((d,i)=>{const str=d&&ds(d);
         return <DayCell key={i} d={d} ctx={fctx} box={{width:"100%",aspectRatio:"1"}} num
@@ -1593,23 +1593,23 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
         {/* month picker — vertical narrow scroll */}
         <div style={{flexShrink:0,width:54,borderRight:`1px solid ${C.line2}`,maxHeight:380,overflowY:"auto"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3,padding:"5px 0",position:"sticky",top:0,background:C.panel,borderBottom:`1px solid ${C.line2}`,zIndex:1}}>
-            <button onClick={()=>setFocusY(y=>y-1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>‹</button>
-            <span style={{fontSize:9,fontWeight:800}}>{focusY}</span>
-            <button onClick={()=>setFocusY(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>›</button>
+            <button onClick={()=>setFocusY(y=>y-1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:13}}>‹</button>
+            <span style={{fontSize:11,fontWeight:800}}>{focusY}</span>
+            <button onClick={()=>setFocusY(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:13}}>›</button>
           </div>
           {MON.map((mn,m)=>{const l=footprint.loadYM[`${focusY}-${m}`]||{conf:0,win:0},load=l.conf+l.win,t=pressureTint(load,ceiling),on=m===fM,hot=load>ceiling;
             return <button key={m} onClick={()=>onSelect(focusY,m)} style={{width:"100%",fontFamily:MONO,cursor:"pointer",border:"none",
               borderBottom:`1px solid ${C.line2}`,padding:"7px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:1,
               background:on?C.ink:(t||C.panel),color:on?C.bg:C.ink}}>
-              <span style={{fontSize:9.5,fontWeight:800}}>{mn}</span>
-              <span style={{fontSize:6.5,fontWeight:700,color:on?C.bg:(hot?C.pressHot:C.mute)}}>{load?`${load}/${ceiling}`:"·"}</span>
+              <span style={{fontSize:11.5,fontWeight:800}}>{mn}</span>
+              <span style={{fontSize:8,fontWeight:700,color:on?C.bg:(hot?C.pressHot:C.mute)}}>{load?`${load}/${ceiling}`:"·"}</span>
             </button>;})}
         </div>
         {/* focus month — inline. View: tap to inspect. Edit: month locked for drags; candidates + trips stay below */}
         <div style={{flex:1,minWidth:0,padding:"9px 11px"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7,flexWrap:"wrap"}}>
-            <span style={{fontSize:13,fontWeight:800}}>{MONL[fM]} {focusY}</span>
-            <span style={{fontSize:8.5,color:fld.conf+fld.win>ceiling?C.pressHot:C.mute}}>{fld.conf}+{fld.win}/{ceiling}/mo</span>
+            <span style={{fontSize:15.5,fontWeight:800}}>{MONL[fM]} {focusY}</span>
+            <span style={{fontSize:10,color:fld.conf+fld.win>ceiling?C.pressHot:C.mute}}>{fld.conf}+{fld.win}/{ceiling}/mo</span>
             <span style={{marginLeft:"auto"}}>{editing
               ? <Btn small onClick={()=>{setEditing(false);setDraw(null);}}>done</Btn>
               : <Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit</Btn>}</span>
@@ -1628,7 +1628,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
       {toolPalette}
       <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginLeft:"auto"}}>
-        {[["cal","year"],["school","school yr"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
+        {[["cal","year"],["school","school yr"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
           padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
       </div>
     </div>
@@ -1637,24 +1637,24 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     <div onScroll={onScroll} style={{maxHeight:320,overflow:"auto",padding:"8px 12px"}}>
       <div style={{minWidth:width}}>
         <div style={{textAlign:"center",marginBottom:6}}><button onClick={()=>setRange(r=>({...r,s:r.s-1}))}
-          style={{fontFamily:MONO,fontSize:8,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>◤ earlier</button></div>
+          style={{fontFamily:MONO,fontSize:9.5,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>◤ earlier</button></div>
         <div style={{display:"flex",position:"sticky",top:0,background:C.panel,zIndex:2,paddingBottom:3}}>
           <div style={{width:CAL_LBL,flexShrink:0}}/>
-          {Array.from({length:calMaxCols},(_,ci)=><div key={ci} style={{width:CAL_CELL,marginLeft:calMl(ci),textAlign:"center",fontSize:6.5,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
+          {Array.from({length:calMaxCols},(_,ci)=><div key={ci} style={{width:CAL_CELL,marginLeft:calMl(ci),textAlign:"center",fontSize:8,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
         </div>
         {items.map((it,i)=> it.h!=null
-          ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:11,fontWeight:900,color:C.ink}}>{it.h}</div>
+          ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:13,fontWeight:900,color:C.ink}}>{it.h}</div>
           : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
               selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}
               tool={tool} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selTripDates={stpDates} onCellDown={cellDown}
               selStart={srStart} selEnd={srEnd} onHandle={(e,which)=>sr&&handleResize(e,which,sr)}/>)}
         <div style={{textAlign:"center",marginTop:4}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
-          style={{fontFamily:MONO,fontSize:8,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>later ◢</button></div>
+          style={{fontFamily:MONO,fontSize:9.5,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>later ◢</button></div>
       </div>
     </div>
   </div>;
 }
-const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",fontSize:8,color:C.mute,margin:"6px 2px 0"}}>
+const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",fontSize:9.5,color:C.mute,margin:"6px 2px 0"}}>
   <LegDot bg={SHIFT_COL.day}>day confirmed</LegDot>
   <LegDot bg={SHIFT_COL.night}>night confirmed</LegDot>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:OVERRIDE_COL.day,border:`1.5px dashed ${SHIFT_COL.day}`}}/>in negotiation</span>
@@ -1675,10 +1675,10 @@ const LegDot=({bg,ring,dotted,children})=> <span style={{display:"inline-flex",a
 function Drawer({title,sub,n,children,open,setOpen}){
   return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
     <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"baseline",gap:8,padding:"8px 11px",cursor:"pointer"}}>
-      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>{title}</span>
-      {n!=null&&<span style={{fontSize:9,fontWeight:700,color:C.mute}}>{n}</span>}
-      <span style={{fontSize:8.5,color:C.mute}}>{sub}</span>
-      <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{open?"▾":"▸"}</span>
+      <span style={{fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>{title}</span>
+      {n!=null&&<span style={{fontSize:11,fontWeight:700,color:C.mute}}>{n}</span>}
+      <span style={{fontSize:10,color:C.mute}}>{sub}</span>
+      <span style={{marginLeft:"auto",fontSize:11,color:C.mute}}>{open?"▾":"▸"}</span>
     </div>
     {open&&<div style={{padding:"0 11px 11px"}}>{children}</div>}
   </div>;
@@ -1705,14 +1705,14 @@ function TripsDrawer({state,setState}){
         <input type="date" style={{...inp,width:128}} value={t.from} onChange={e=>upd(t.id,{from:e.target.value})}/>
         <input type="date" style={{...inp,width:128}} value={t.to} onChange={e=>upd(t.id,{to:e.target.value})}/>
         <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
-          {WF.map(([k,l])=><button key={k} onClick={()=>upd(t.id,{workFactor:k})} title={WFNOTE[k]} style={{fontFamily:MONO,fontSize:8,fontWeight:700,
+          {WF.map(([k,l])=><button key={k} onClick={()=>upd(t.id,{workFactor:k})} title={WFNOTE[k]} style={{fontFamily:MONO,fontSize:9.5,fontWeight:700,
             padding:"3px 7px",border:"none",cursor:"pointer",background:t.workFactor===k?C.ink:"transparent",color:t.workFactor===k?C.bg:C.gray}}>{l}</button>)}
         </div>
       </div>
-      <div style={{fontSize:7.5,color:C.mute,marginTop:4}}>{WFNOTE[t.workFactor]}</div>
+      <div style={{fontSize:9,color:C.mute,marginTop:4}}>{WFNOTE[t.workFactor]}</div>
     </div>)}
     <Btn small onClick={add}>+ add trip</Btn>
-    <span style={{fontSize:8,color:C.mute,marginLeft:8}}>trips render on the calendar; closed trips strike out their days</span>
+    <span style={{fontSize:9.5,color:C.mute,marginLeft:8}}>trips render on the calendar; closed trips strike out their days</span>
   </Drawer>;
 }
 function SitesWorksheet({state,setState}){
@@ -1743,9 +1743,9 @@ function TripsPalette({state,setState,sel,setSel,goto}){
   const WFC={colocate:C.juniper,commute:C.ocean,closed:C.pressHot};
   return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"9px 11px"}}>
     <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:open?7:0}}>
-      <span onClick={()=>setOpen(o=>!o)} style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray,cursor:"pointer"}}>{open?"▾":"▸"} Trips</span>
-      <span style={{fontSize:8,color:C.mute}}>drag a card onto the calendar · </span>
-      <span onClick={()=>goto&&goto("setup")} style={{fontSize:8,color:C.blue,cursor:"pointer",borderBottom:`1px solid ${C.line}`}}>edit in Setup →</span>
+      <span onClick={()=>setOpen(o=>!o)} style={{fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray,cursor:"pointer"}}>{open?"▾":"▸"} Trips</span>
+      <span style={{fontSize:9.5,color:C.mute}}>drag a card onto the calendar · </span>
+      <span onClick={()=>goto&&goto("setup")} style={{fontSize:9.5,color:C.blue,cursor:"pointer",borderBottom:`1px solid ${C.line}`}}>edit in Setup →</span>
     </div>
     {open&&<div style={{display:"flex",gap:7,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
       {trips.map(t=>{const on=sel&&sel.kind==="trip"&&sel.id===t.id;
@@ -1754,16 +1754,16 @@ function TripsPalette({state,setState,sel,setSel,goto}){
           border:`1px solid ${on?C.ink:C.line}`,outline:on?`1px solid ${C.ink}`:"none",background:placed(t)?C.panel2:C.panel,opacity:placed(t)?1:0.92,minWidth:104}}>
         <div style={{display:"flex",alignItems:"center",gap:5}}>
           <span style={{width:8,height:8,borderRadius:"50%",background:WFC[t.workFactor]}}/>
-          <span style={{fontSize:10,fontWeight:800}}>{t.name}</span>
+          <span style={{fontSize:12,fontWeight:800}}>{t.name}</span>
         </div>
-        <div style={{fontSize:7.5,color:C.mute}}>{LOC_NAME[t.loc]} · {t.workFactor} · {dur(t)}d</div>
-        <div style={{fontSize:7,color:placed(t)?C.gray:C.est,fontWeight:700}}>{placed(t)?`${md(t.from)}–${md(t.to)}`:"⤓ unplaced — drag in"}</div>
+        <div style={{fontSize:9,color:C.mute}}>{LOC_NAME[t.loc]} · {t.workFactor} · {dur(t)}d</div>
+        <div style={{fontSize:8.5,color:placed(t)?C.gray:C.est,fontWeight:700}}>{placed(t)?`${md(t.from)}–${md(t.to)}`:"⤓ unplaced — drag in"}</div>
       </div>;})}
-      <button onClick={addTrip} style={{fontFamily:MONO,fontSize:9,fontWeight:700,padding:"6px 10px",borderRadius:7,cursor:"pointer",flexShrink:0,
+      <button onClick={addTrip} style={{fontFamily:MONO,fontSize:11,fontWeight:700,padding:"6px 10px",borderRadius:7,cursor:"pointer",flexShrink:0,
         border:`1px dashed ${C.line}`,background:"transparent",color:C.gray}}>+ trip</button>
     </div>}
     {ghost&&<div style={{position:"fixed",left:ghost.x+12,top:ghost.y+12,zIndex:400,pointerEvents:"none",
-      background:C.ink,color:C.bg,fontSize:9,fontWeight:700,padding:"4px 8px",borderRadius:5,boxShadow:`0 6px 18px var(--shadow)`}}>
+      background:C.ink,color:C.bg,fontSize:11,fontWeight:700,padding:"4px 8px",borderRadius:5,boxShadow:`0 6px 18px var(--shadow)`}}>
       {ghost.name}{ghost.date?` → ${md(ghost.date)}`:" · drop on a day"}</div>}
   </div>;
 }
@@ -1828,8 +1828,8 @@ function App(){
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
       borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
       <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-        <span style={{fontSize:13,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM</span>
-        <span style={{fontSize:8.5,color:C.mute}}>surface, don’t choose</span>
+        <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM</span>
+        <span style={{fontSize:10,color:C.mute}}>surface, don’t choose</span>
       </div>
       <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
         <Btn small onClick={cycleTheme} title={`theme: ${theme}`}>{themeIcon}</Btn>
@@ -1842,19 +1842,19 @@ function App(){
       </div>
     </div>
     {toast&&<div style={{position:"fixed",bottom:isMobile?68:18,left:"50%",transform:"translateX(-50%)",zIndex:300,
-      background:C.ink,color:C.bg,fontSize:10,fontWeight:600,padding:"8px 14px",borderRadius:6,
+      background:C.ink,color:C.bg,fontSize:12,fontWeight:600,padding:"8px 14px",borderRadius:6,
       boxShadow:"0 8px 24px rgba(0,0,0,.25)",maxWidth:"90vw",textAlign:"center"}}>{toast}</div>}
     {/* desktop: top tabs — each a view into the same model (calendar and windows are separate) */}
     {!isMobile&&<div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
       {VIEWS.map(([id,ic,label])=><button key={id} onClick={()=>pick(id)}
-        style={{fontFamily:MONO,fontSize:11,fontWeight:800,padding:"9px 15px",border:"none",cursor:"pointer",
+        style={{fontFamily:MONO,fontSize:13,fontWeight:800,padding:"9px 15px",border:"none",cursor:"pointer",
           background:"transparent",color:view===id?C.ink:C.mute,letterSpacing:"-0.01em",
           borderBottom:view===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
-      <span style={{marginLeft:"auto",alignSelf:"center",fontSize:8,color:C.mute,padding:"0 14px"}}>today {ds(TODAY)}</span>
+      <span style={{marginLeft:"auto",alignSelf:"center",fontSize:9.5,color:C.mute,padding:"0 14px"}}>today {ds(TODAY)}</span>
     </div>}
     {/* in-app back crumb — there's no browser back, so deep links always offer a way home */}
     {back&&back!==view&&<div style={{flexShrink:0,borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"5px 12px"}}>
-      <button onClick={()=>{setView(back);setBack(null);}} style={{fontFamily:MONO,fontSize:10,fontWeight:700,border:"none",background:"none",
+      <button onClick={()=>{setView(back);setBack(null);}} style={{fontFamily:MONO,fontSize:12,fontWeight:700,border:"none",background:"none",
         cursor:"pointer",color:C.blue,display:"inline-flex",alignItems:"center",gap:4}}>‹ back to {labelOf(back)}</button>
     </div>}
     {/* surface — one active view */}
@@ -1866,8 +1866,8 @@ function App(){
         return <button key={id} onClick={()=>pick(id)} style={{flex:1,fontFamily:MONO,border:"none",cursor:"pointer",background:"transparent",
           padding:"7px 2px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,
           color:on?C.ink:C.mute,borderTop:on?`2px solid ${C.ink}`:"2px solid transparent",marginTop:-1}}>
-          <span style={{fontSize:14,lineHeight:1}}>{ic}</span>
-          <span style={{fontSize:8,fontWeight:800,letterSpacing:"-0.01em"}}>{label}</span>
+          <span style={{fontSize:17,lineHeight:1}}>{ic}</span>
+          <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"-0.01em"}}>{label}</span>
         </button>;
       })}
     </div>}
@@ -1881,16 +1881,16 @@ class Boundary extends React.Component{
   render(){
     if(!this.state.err)return this.props.children;
     return <div style={{fontFamily:MONO,maxWidth:440,margin:"12vh auto",padding:"0 20px",color:C.ink,textAlign:"center"}}>
-      <div style={{fontSize:14,fontWeight:800,marginBottom:8}}>Something went sideways.</div>
-      <div style={{fontSize:11,color:C.gray,lineHeight:1.6,marginBottom:16}}>
+      <div style={{fontSize:17,fontWeight:800,marginBottom:8}}>Something went sideways.</div>
+      <div style={{fontSize:13,color:C.gray,lineHeight:1.6,marginBottom:16}}>
         The data couldn’t be rendered — usually a malformed share link or import.
         Your local copy is untouched until you reset.
       </div>
       <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
         <button onClick={()=>{try{history.replaceState(null,"",location.pathname);}catch(_){}location.reload();}}
-          style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.line}`,background:C.panel,color:C.ink}}>Drop link &amp; reload</button>
+          style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.line}`,background:C.panel,color:C.ink}}>Drop link &amp; reload</button>
         <button onClick={()=>{try{localStorage.removeItem("perDiemState");history.replaceState(null,"",location.pathname);}catch(_){}location.reload();}}
-          style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.ink}`,background:C.ink,color:C.bg}}>Reset to sample</button>
+          style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.ink}`,background:C.ink,color:C.bg}}>Reset to sample</button>
       </div>
     </div>;
   }
