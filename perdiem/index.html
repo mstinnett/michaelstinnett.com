@@ -327,8 +327,25 @@ const REQ_STATES=["candidate","pending","override","confirmed","rejected","expir
 const OCCUPY=["candidate","pending","override","confirmed"];
 const reqRate=(r,s)=>Number.isFinite(r.rateOverride)?r.rateOverride:siteRate(s,r.shiftType);
 const reqDates=r=>r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates;
+const reqMinDate=r=>reqDates(r).reduce((m,d)=>d<m?d:m,reqDates(r)[0]||"");
 const reqMaxDate=r=>reqDates(r).reduce((m,d)=>d>m?d:m,reqDates(r)[0]||"");
 const isPastReq=r=>r.state==="confirmed"&&reqMaxDate(r)<ds(TODAY);
+const EDITABLE=["candidate","pending","override"];          // can be drawn/nudged/erased on the calendar
+
+/* calendar-drawing helpers (the main verb) */
+function weekdaysBetween(a,b){
+  let lo=a<b?a:b,hi=a<b?b:a,out=[],d=pd(lo),t=pd(hi);
+  while(d<=t){if(d.getDay()!==0&&d.getDay()!==6)out.push(ds(d));d=ad(d,1);}
+  return out;
+}
+const shiftDates=(dates,delta)=>dates.map(x=>ds(ad(pd(x),delta))).sort();
+function makeWindow(site,type,dates){                       // a drawn window → a candidate request
+  if(!dates.length)return null;
+  const first=dates[0];
+  return {id:"r"+Date.now()+Math.floor(Math.random()*1e3),siteId:site.id,shiftType:type,
+    opens:ds(ad(pd(first),-(site.cadence.opensDaysBefore||60))),dueBy:ds(ad(pd(first),-(site.cadence.dueByDaysBefore||21))),
+    state:"candidate",footprint:{kind:"pinned",dates:dates.slice().sort()}};
+}
 
 /* typicalShiftPay — estimate; carries assumption (§4.4) */
 function typicalShiftPay(sites){
@@ -772,7 +789,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
       {/* ── PRESENCE LAYERS (primary) + CALENDAR (middle) ── */}
       <LayersPanel state={state} setState={setState}/>
       <div style={{height:10}}/>
-      <Calendar footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling}/>
+      <Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling}/>
       <FootLegend/>
 
       {/* ── MONTH WINDOW LIST (bottom) ── */}
@@ -1322,20 +1339,28 @@ function layerCoverage(layers,startY,endY){
 const CAL_CELL=15,CAL_CG=2,CAL_WG=7,CAL_LBL=74,CAL_RG=3;
 const calMl=ci=>(ci%7===0&&ci>0)?CAL_WG:(ci===0?0:CAL_CG);
 const calMaxCols=42;
-/* one month as a weekday-aligned by-row strip */
-function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling}){
+/* one month as a weekday-aligned by-row strip — cells are the drawing surface */
+function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,onCellDown}){
   const {byDay,famBy,lockBy,perYM,loadYM}=footprint;
   const g=monthGrid(y,m),isNow=y===YEAR&&m===TODAY.getMonth();
   const pm=perYM[`${y}-${m}`],ld=loadYM[`${y}-${m}`]||{conf:0,win:0},load=ld.conf+ld.win;
   const tint=pressureTint(load,ceiling),hot=load>ceiling;
-  return <div onClick={selectable?()=>onSelect(y,m):undefined} style={{display:"flex",alignItems:"center",marginBottom:CAL_RG,
-    cursor:selectable?"pointer":"default",borderRadius:5,background:sel?C.sel:"transparent",padding:"1px 0",
-    boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
-    <div style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
+  const barW=44,confW=Math.min(barW,ld.conf/Math.max(1,ceil2(ceiling))*barW),winW=Math.min(barW-confW,ld.win/Math.max(1,ceil2(ceiling))*barW);
+  function ceil2(c){return Math.max(c,load);}                 // bar scales to whichever is larger
+  return <div style={{display:"flex",alignItems:"center",marginBottom:CAL_RG,borderRadius:5,
+    background:sel?C.sel:"transparent",boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
+    <div onClick={selectable?()=>onSelect(y,m):undefined} style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8,cursor:selectable?"pointer":"default"}}>
       <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{MON[m].toUpperCase()}{sel&&" ◂"}</div>
       <div style={{fontSize:7,color:pm&&pm.n?C.ink:C.mute}}>{pm&&pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
-      <div title={`${ld.conf} confirmed + ${ld.win} window of ~${ceiling}/mo`} style={{fontSize:6.5,fontWeight:700,color:hot?C.pressHot:(load>0?C.est:C.mute)}}>
-        {load>0?`${ld.conf}${ld.win?`+${ld.win}`:""}/${ceiling}${hot?" ⚠":""}`:""}</div>
+      {/* two-layer pressure: confirmed (dark) + window (mid) vs ceiling */}
+      <div title={`${ld.conf} confirmed + ${ld.win} window of ~${ceiling}/mo`} style={{display:"inline-flex",alignItems:"center",gap:3,marginTop:1}}>
+        <div style={{width:barW,height:4,background:C.line2,borderRadius:2,overflow:"hidden",display:"flex",position:"relative"}}>
+          <div style={{width:confW,height:"100%",background:hot?C.pressHot:C.ink}}/>
+          <div style={{width:winW,height:"100%",background:C.bar}}/>
+          <div style={{position:"absolute",left:Math.min(barW-1,barW*ceiling/Math.max(ceiling,load)),top:-1,bottom:-1,width:1,background:C.gray}}/>
+        </div>
+        <span style={{fontSize:6,fontWeight:700,color:hot?C.pressHot:C.mute}}>{load||""}{hot?"⚠":""}</span>
+      </div>
     </div>
     <div style={{display:"flex"}}>
       {Array.from({length:calMaxCols},(_,ci)=>{
@@ -1352,12 +1377,18 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling}){
         else if(pend){border=`1.5px solid ${C.blue}`;}
         else if(cand){border=`1.5px solid ${C.faint}`;}
         else if(smear){inner="dotted";}
+        const drawing=drawSet&&drawSet.has(str), inSel=selReqDates&&selReqDates.has(str);
+        if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
         const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
-        return <div key={ci} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}${lt}`}
-          style={{width:CAL_CELL,height:CAL_CELL,marginLeft:calMl(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box"}}>
+        return <div key={ci} data-date={str}
+          onPointerDown={tool&&tool!=="off"?e=>onCellDown(e,str,y,m):undefined}
+          title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}${lt}`}
+          style={{width:CAL_CELL,height:CAL_CELL,marginLeft:calMl(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box",
+            cursor:tool==="pencil"?"crosshair":(tool==="eraser"?"cell":"pointer"),touchAction:tool&&tool!=="off"?"none":"auto",
+            outline:inSel?`2px solid ${C.ink}`:"none",outlineOffset:-1}}>
           {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
           {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
-          {lays.length>0&&<div style={{position:"absolute",left:1,right:1,bottom:1,display:"flex",gap:1,justifyContent:"center"}}>
+          {lays.length>0&&<div style={{position:"absolute",left:1,right:1,bottom:1,display:"flex",gap:1,justifyContent:"center",pointerEvents:"none"}}>
             {lays.slice(0,4).map((x,i)=><span key={i} style={{width:3,height:3,borderRadius:"50%",background:x.color,opacity:x.inferred?0.45:1}}/>)}
           </div>}
         </div>;
@@ -1365,33 +1396,81 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling}){
     </div>
   </div>;
 }
-/* the calendar engine: dual-mode (annual / school-year), scrolls indefinitely, future years inferred */
-function Calendar({footprint,layers,selected,onSelect,ceiling}){
-  const [mode,setMode]=useState("cal");                       // "cal" | "school"
+/* the calendar engine + workbench: dual-mode, infinite scroll, future inference, draw/erase/edit */
+function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling}){
+  const sites=state.sites;
+  const [mode,setMode]=useState("cal");
   const [range,setRange]=useState({s:YEAR-1,e:YEAR+2});
-  const scRef=useRef();
+  const [tool,setTool]=useState("select");                    // select | pencil | eraser
+  const [drawType,setDrawType]=useState("day");
+  const [drawSiteId,setDrawSiteId]=useState(sites[0]&&sites[0].id);
+  const [draw,setDraw]=useState(null);                        // {startStr,endStr,y,m}
+  const [selReq,setSelReq]=useState(null);
   const cov=useMemo(()=>layerCoverage(layers,range.s,range.e+1),[layers,range.s,range.e]);
-  const onScroll=e=>{const el=e.target;if(el.scrollHeight-el.scrollTop-el.clientHeight<120)setRange(r=>({...r,e:r.e+1}));};
-  // build ordered render items
+  const onScroll=e=>{const el=e.target;if(el.scrollHeight-el.scrollTop-el.clientHeight<140)setRange(r=>({...r,e:r.e+1}));};
+  const addReq=r=>setState(s=>({...s,requests:[...s.requests,r]}));
+  const setReq=(id,fn)=>setState(s=>({...s,requests:s.requests.map(x=>x.id===id?fn(x):x)}));
+  const delReq=id=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==id)}));
+  const editableAt=str=>state.requests.find(r=>EDITABLE.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));
+  const eraseDay=str=>{const r=editableAt(str);if(!r)return;const left=r.footprint.dates.filter(x=>x!==str);
+    if(left.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:left}}));else delReq(r.id);};
+  function cellDown(e,str,y,m){
+    if(tool==="eraser"){eraseDay(str);return;}
+    if(tool==="select"){const r=editableAt(str);setSelReq(r?r.id:null);return;}
+    // pencil: drag to draw a contiguous window within this month
+    e.preventDefault();setDraw({startStr:str,endStr:str,y,m});
+    const move=ev=>{const t=ev.touches?ev.touches[0]:ev;const el=document.elementFromPoint(t.clientX,t.clientY);
+      const c=el&&el.closest&&el.closest("[data-date]");
+      if(c&&c.dataset.date){const dd=c.dataset.date;const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}};
+    const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);
+      setDraw(d=>{if(d){const dates=weekdaysBetween(d.startStr,d.endStr);const site=sites.find(s=>s.id===drawSiteId)||sites[0];
+        if(dates.length&&site){const r=makeWindow(site,drawType,dates);addReq(r);setSelReq(r.id);}}return null;});};
+    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
+  }
+  const drawSet=draw?new Set(weekdaysBetween(draw.startStr,draw.endStr)):null;
+  const sr=selReq?state.requests.find(r=>r.id===selReq):null;
+  const srDates=sr?new Set(sr.footprint.dates):null;
   const items=[];
-  if(mode==="cal"){for(let y=range.s;y<=range.e;y++){items.push({h:`${y}`});for(let m=0;m<12;m++)items.push({y,m});}}
+  if(mode==="cal"){for(let y=range.s;y<=range.e;y++){items.push({h:`${y}`});for(let mm=0;mm<12;mm++)items.push({y,m:mm});}}
   else{for(let y=range.s;y<=range.e;y++){items.push({h:`${y}–${String((y+1)%100).padStart(2,"0")} school year`});
-    for(const m of [7,8,9,10,11])items.push({y,m});for(const m of [0,1,2,3,4,5,6])items.push({y:y+1,m});}}
+    for(const mm of [7,8,9,10,11])items.push({y,m:mm});for(const mm of [0,1,2,3,4,5,6])items.push({y:y+1,m:mm});}}
   const width=CAL_LBL+calMaxCols*(CAL_CELL+CAL_CG)+(calMaxCols/7)*CAL_WG;
+  const TOOLS=[["select","⌖ select"],["pencil","✎ draw"],["eraser","⌫ erase"]];
   return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
-    <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:`1px solid ${C.line2}`}}>
-      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.gray}}>Calendar</span>
+    <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
       <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
+        {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSelReq(null);}} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
+          padding:"4px 9px",border:"none",cursor:"pointer",background:tool===k?C.ink:"transparent",color:tool===k?C.bg:C.gray}}>{l}</button>)}
+      </div>
+      {tool==="pencil"&&<div style={{display:"inline-flex",alignItems:"center",gap:5}}>
+        <select value={drawSiteId} onChange={e=>setDrawSiteId(e.target.value)} style={{...inp,width:120,padding:"3px 6px"}}>
+          {sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
+        <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
+          {["day","night"].map(t=><button key={t} onClick={()=>setDrawType(t)} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,padding:"3px 7px",border:"none",cursor:"pointer",background:drawType===t?C.ink:"transparent",color:drawType===t?C.bg:C.gray}}>{t}</button>)}
+        </div>
+      </div>}
+      <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginLeft:"auto"}}>
         {[["cal","year"],["school","school yr"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
           padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
       </div>
-      <span style={{marginLeft:"auto",fontSize:8,color:C.mute}}>tap a {YEAR} month to load its windows</span>
     </div>
-    <div ref={scRef} onScroll={onScroll} style={{maxHeight:300,overflow:"auto",padding:"8px 12px"}}>
+    {/* selected-window edit bar (nudge / extend / contract — handles, on the run) */}
+    {sr&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+      <span style={{fontSize:9,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {sr.state}</span></span>
+      <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,-1)}}))}>◀ nudge</Btn>
+      <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,1)}}))}>nudge ▶</Btn>
+      <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();if(ds2.length>1)ds2.pop();return {...x,footprint:{kind:"pinned",dates:ds2}};})}>− contract</Btn>
+      <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();let n=ad(pd(ds2[ds2.length-1]),1);while(n.getDay()===0||n.getDay()===6)n=ad(n,1);ds2.push(ds(n));return {...x,footprint:{kind:"pinned",dates:ds2}};})}>extend +</Btn>
+      <Btn small onClick={()=>setReq(sr.id,x=>({...x,shiftType:x.shiftType==="day"?"night":"day"}))}>{sr.shiftType==="day"?"→night":"→day"}</Btn>
+      <Btn small onClick={()=>setReq(sr.id,x=>{const i=sites.findIndex(s=>s.id===x.siteId);return {...x,siteId:sites[(i+1)%sites.length].id};})}>site ⇄</Btn>
+      {sr.state==="candidate"&&<Btn small kind="prim" onClick={()=>setReq(sr.id,x=>({...x,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,(sites.find(s=>s.id===x.siteId)||{cadence:{}}).cadence.expectedResponseDays||10))}))}>submit</Btn>}
+      <Btn small kind="danger" onClick={()=>{delReq(sr.id);setSelReq(null);}}>delete</Btn>
+      <Btn small onClick={()=>setSelReq(null)}>done</Btn>
+    </div>}
+    <div onScroll={onScroll} style={{maxHeight:320,overflow:"auto",padding:"8px 12px"}}>
       <div style={{minWidth:width}}>
         <div style={{textAlign:"center",marginBottom:6}}><button onClick={()=>setRange(r=>({...r,s:r.s-1}))}
           style={{fontFamily:MONO,fontSize:8,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>◤ earlier</button></div>
-        {/* shared DOW header */}
         <div style={{display:"flex",position:"sticky",top:0,background:C.panel,zIndex:2,paddingBottom:3}}>
           <div style={{width:CAL_LBL,flexShrink:0}}/>
           {Array.from({length:calMaxCols},(_,ci)=><div key={ci} style={{width:CAL_CELL,marginLeft:calMl(ci),textAlign:"center",fontSize:6.5,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
@@ -1399,7 +1478,8 @@ function Calendar({footprint,layers,selected,onSelect,ceiling}){
         {items.map((it,i)=> it.h!=null
           ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:11,fontWeight:900,color:C.ink}}>{it.h}</div>
           : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
-              selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}/>)}
+              selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}
+              tool={tool} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} onCellDown={cellDown}/>)}
         <div style={{textAlign:"center",marginTop:4}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
           style={{fontFamily:MONO,fontSize:8,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>later ◢</button></div>
       </div>
