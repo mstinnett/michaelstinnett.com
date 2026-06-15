@@ -1680,13 +1680,23 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       <Btn small kind="prim" onClick={()=>goto&&goto("pending")}>manage in Requests →</Btn>
       <Btn small onClick={()=>setSel(null)}>done</Btn>
     </div>}
-    {stp&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
-      <span style={{fontSize:11,fontWeight:800}}>{stp.name} <span style={{color:C.mute,fontWeight:600}}>{LOC_NAME[stp.loc]} · {stp.workFactor} · {md(stp.from)}–{md(stp.to)}</span></span>
-      <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),-1)),to:ds(ad(pd(x.to),-1))}))}>◀</Btn>
-      <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),1)),to:ds(ad(pd(x.to),1))}))}>▶</Btn>
-      <Btn small kind="prim" onClick={()=>goto&&goto("setup")}>Edit…</Btn>
-      <Btn small kind="danger" onClick={()=>{setTrip(stp.id,x=>({...x,placed:false}));setSel(null);}}>unplace</Btn>
-      <Btn small onClick={()=>setSel(null)}>done</Btn>
+    {stp&&<div style={{padding:"8px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2}}>
+      <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
+        <span style={{fontSize:12.5,fontWeight:800,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stp.name}</span>
+        <Tag bg={C.line2} col={C.ocean}>{LOC_NAME[stp.loc]}</Tag>
+        <Tag bg={C.line2}>{stp.workFactor}</Tag>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+        <div style={{display:"inline-flex",alignItems:"center",gap:4}}>
+          <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),-1)),to:ds(ad(pd(x.to),-1))}))}>◀</Btn>
+          <span style={{fontSize:10.5,fontWeight:700,color:C.gray,minWidth:92,textAlign:"center"}}>{md(stp.from)}–{md(stp.to)}</span>
+          <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),1)),to:ds(ad(pd(x.to),1))}))}>▶</Btn>
+        </div>
+        <span style={{flex:1}}/>
+        <Btn small kind="prim" onClick={()=>goto&&goto("setup")}>Edit…</Btn>
+        <Btn small kind="danger" onClick={()=>{setTrip(stp.id,x=>({...x,placed:false}));setSel(null);}}>unplace</Btn>
+        <Btn small onClick={()=>setSel(null)}>done</Btn>
+      </div>
     </div>}
   </>;
 
