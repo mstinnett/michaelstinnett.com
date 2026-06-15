@@ -136,8 +136,9 @@ function seedState(){
       {month:9,shifts:6},{month:10,shifts:6},{month:11,shifts:2},{month:12,shifts:4},
     ],
   };
-  // seeded requests: confirmed YTD (feeds booked / floor), plus a live submitted + a draft
+  // seeded requests spanning the whole lifecycle (Past → Confirmed → Pending → Candidate)
   const requests=[
+    // worked YTD (feeds booked / floor) → the Past section
     cReq("c1","boston","day",  ["2026-01-13","2026-01-20","2026-01-27"]),
     cReq("c2","abq",   "night",["2026-02-10","2026-02-11"]),
     cReq("c3","boston","day",  ["2026-03-04","2026-03-18"]),
@@ -145,13 +146,25 @@ function seedState(){
     cReq("c5","boston","night",["2026-04-08","2026-04-22"]),
     cReq("c6","gallup","day",  ["2026-05-12","2026-05-13"]),
     cReq("c7","boston","day",  ["2026-05-20"]),
-    // a live submitted request for July (shows the deadline clock + dependency)
+    // upcoming confirmed → the Confirmed section + the calendar
+    {id:"cf1",siteId:"boston",shiftType:"day",opens:"2026-04-15",dueBy:"2026-05-20",
+     state:"confirmed",submittedOn:"2026-05-01",resolvedOn:"2026-05-10",expectedResponseBy:"2026-05-15",
+     footprint:{kind:"pinned",dates:["2026-06-29","2026-06-30"]}},
+    // submitted, awaiting the site's response → Pending (also the chain upstream for santa_fe)
     {id:"s1",siteId:"abq",shiftType:"day",opens:"2026-04-13",dueBy:"2026-05-08",
-     state:"submitted",submittedOn:"2026-05-02",expectedResponseBy:"2026-05-09",
+     state:"pending",submittedOn:"2026-05-02",expectedResponseBy:"2026-06-20",
      footprint:{kind:"pinned",dates:["2026-07-07","2026-07-08","2026-07-09"]}},
-    {id:"s2",siteId:"santa_fe",shiftType:"day",opens:"2026-04-08",dueBy:"2026-06-20",
-     state:"draft",
+    // in negotiation — site countered with different dates + a rate; shows on the calendar
+    {id:"ov1",siteId:"santa_fe",shiftType:"day",opens:"2026-04-20",dueBy:"2026-06-10",
+     state:"override",submittedOn:"2026-05-15",expectedResponseBy:"2026-06-18",rateOverride:1850,
+     footprint:{kind:"pinned",dates:["2026-07-21","2026-07-22","2026-07-28"]}},
+    // selected to apply for → the Candidate section (smeared, with the dependency chain on ABQ)
+    {id:"s2",siteId:"santa_fe",shiftType:"day",opens:"2026-04-08",dueBy:"2026-06-25",
+     state:"candidate",
      footprint:{kind:"smeared",candidates:["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"],take:2}},
+    {id:"s3",siteId:"gallup",shiftType:"day",opens:"2026-05-01",dueBy:"2026-07-01",
+     state:"candidate",
+     footprint:{kind:"pinned",dates:["2026-08-04","2026-08-05"]}},
   ];
   return {sites,familySpans,locks,kidCalendars,pace,requests};
 }
@@ -208,16 +221,18 @@ function sanitizeState(obj){
     const locks=(Array.isArray(obj.locks)?obj.locks:seed.locks).filter(l=>l&&DATE_RE.test(l.date||"")).map(l=>{
       const o={date:l.date,kind:l.kind==="hard"?"hard":"soft",label:String(l.label||"lock")};
       if(Number.isFinite(+l.recoveryBufferHrs))o.recoveryBufferHrs=+l.recoveryBufferHrs;return o;});
-    const STATES=["draft","submitted","confirmed","denied","expired"];
+    const MIGRATE={draft:"candidate",submitted:"pending",denied:"rejected"};   // old schema → new
     const requests=(Array.isArray(obj.requests)?obj.requests:[]).map(r=>{
       if(!r||!r.id||!ids.has(r.siteId))return null;
       const ft=r.footprint||{};let footprint=null;
       if(ft.kind==="pinned"&&isDateArr(ft.dates))footprint={kind:"pinned",dates:ft.dates};
       else if(ft.kind==="smeared"&&isDateArr(ft.candidates))footprint={kind:"smeared",candidates:ft.candidates,take:Math.max(1,Math.min(ft.candidates.length,numOr(ft.take,1)))};
       else return null;
+      const st=MIGRATE[r.state]||r.state;
       const o={id:String(r.id),siteId:r.siteId,shiftType:r.shiftType==="night"?"night":"day",
-        state:STATES.includes(r.state)?r.state:"draft",footprint,
+        state:REQ_STATES.includes(st)?st:"candidate",footprint,
         opens:DATE_RE.test(r.opens||"")?r.opens:ds(TODAY),dueBy:DATE_RE.test(r.dueBy||"")?r.dueBy:ds(TODAY)};
+      if(Number.isFinite(+r.rateOverride))o.rateOverride=+r.rateOverride;
       ["expectedResponseBy","submittedOn","resolvedOn"].forEach(k=>{if(DATE_RE.test(r[k]||""))o[k]=r[k];});
       return o;
     }).filter(Boolean);
@@ -245,6 +260,16 @@ function shareLink(state){
 const siteRate=(s,t)=>t==="day"?s.dayRate:s.nightRate;
 const siteHours=(s,t)=>t==="day"?s.dayHours:s.nightHours;
 const shiftCount=r=>r.footprint.kind==="pinned"?r.footprint.dates.length:r.footprint.take;
+
+/* lifecycle: candidate → pending → (override) → confirmed; rejected/expired persist.
+   reqRate honors a negotiated rateOverride. OCCUPY = shows on calendar + presses the
+   month; TENTATIVE = occupies but not yet booked money. */
+const REQ_STATES=["candidate","pending","override","confirmed","rejected","expired"];
+const OCCUPY=["candidate","pending","override","confirmed"];
+const reqRate=(r,s)=>Number.isFinite(r.rateOverride)?r.rateOverride:siteRate(s,r.shiftType);
+const reqDates=r=>r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates;
+const reqMaxDate=r=>reqDates(r).reduce((m,d)=>d>m?d:m,reqDates(r)[0]||"");
+const isPastReq=r=>r.state==="confirmed"&&reqMaxDate(r)<ds(TODAY);
 
 /* typicalShiftPay — estimate; carries assumption (§4.4) */
 function typicalShiftPay(sites){
@@ -316,7 +341,7 @@ function kidDaysOut(dateStrs,kidCalendars){
 function loadByMonth(state){
   const by={};for(let m=0;m<12;m++)by[m]=0;
   for(const r of state.requests){
-    if(r.state!=="confirmed"&&r.state!=="submitted"&&r.state!=="draft")continue;
+    if(!OCCUPY.includes(r.state))continue;            // confirmed + override + pending + candidate press the month
     if(r.footprint.kind==="pinned"){
       for(const d of r.footprint.dates){const dt=pd(d);if(dt.getFullYear()===YEAR)by[dt.getMonth()]++;}
     }else{
@@ -373,7 +398,7 @@ function coolingAggregate(state,tsp){
     const s=siteById[r.siteId];if(!s)continue;
     if(r.state==="confirmed"&&r.footprint.kind==="pinned"){
       const inYr=r.footprint.dates.filter(d=>pd(d)<=TODAY&&pd(d).getFullYear()===YEAR);
-      bookedToDate$+=inYr.length*siteRate(s,r.shiftType);
+      bookedToDate$+=inYr.length*reqRate(r,s);
     }
   }
   const flatRunRate$=fracYearElapsed>0?bookedToDate$/fracYearElapsed:0;
@@ -396,11 +421,11 @@ function weekExposure(weekDates,requests,siteById,tsp){
     const fp=r.footprint;
     const datesIn=(fp.kind==="pinned"?fp.dates:fp.candidates).filter(d=>wf.has(d));
     if(!datesIn.length)continue;
-    if(!siteById[r.siteId])continue;
-    const rate=siteRate(siteById[r.siteId],r.shiftType);
+    const s=siteById[r.siteId];if(!s)continue;
+    const rate=reqRate(r,s);
     if(r.state==="confirmed"&&fp.kind==="pinned"){floor$+=datesIn.length*rate;}
-    else if(r.state==="submitted"||r.state==="draft"){
-      pending.push(r);
+    else if(r.state==="candidate"||r.state==="pending"||r.state==="override"){
+      pending.push(r);                               // not-yet-confirmed → the ceiling hedge
       if(fp.kind==="pinned")ceil$+=datesIn.length*rate;
       else ceil$+=Math.min(fp.take,datesIn.length)*tsp.value; // smeared → typicalShiftPay (estimate)
     }
@@ -420,9 +445,14 @@ function weekExposure(weekDates,requests,siteById,tsp){
 
 /* §5 request lifecycle clocks */
 function requestPressure(r){
-  if(r.state!=="draft"&&r.state!=="submitted")return 0;
-  if(r.state==="submitted")return 0;             // → 0 once acted
+  if(r.state!=="candidate")return 0;             // apply-by urgency; → 0 once submitted
   return clamp01(days(pd(r.opens),TODAY)/Math.max(1,days(pd(r.opens),pd(r.dueBy))));
+}
+/* response wait: how far a submitted request is toward its expected-response date */
+function responseWait(r){
+  if((r.state!=="pending"&&r.state!=="override")||!r.submittedOn||!r.expectedResponseBy)return null;
+  const o=pd(r.submittedOn),d=pd(r.expectedResponseBy);
+  return {frac:clamp01(days(o,TODAY)/Math.max(1,days(o,d))),overdue:TODAY>d};
 }
 function closingTerm(opens,dueBy){
   const o=pd(opens),d=pd(dueBy);
@@ -455,7 +485,7 @@ function buildWindows(state,monthIdx,types,tsp){
   // committed shifts toward this month (pinned dates landing in month)
   let committed=0;
   for(const r of requests){
-    if(r.state==="confirmed"||r.state==="submitted"||r.state==="draft"){
+    if(OCCUPY.includes(r.state)){
       const dts=(r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates);
       const n=r.footprint.kind==="pinned"?dts.filter(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR).length
               :(dts.some(d=>pd(d).getMonth()===monthIdx)?r.footprint.take:0);
@@ -659,7 +689,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
   const setType=(id,t)=>setTypes(p=>({...p,[id]:t}));
   const setPace=p=>setState(s=>({...s,pace:{...s.pace,...p}}));
   function createRequest(w,type,foot){
-    const r={id:"r"+Date.now(),siteId:w.site.id,shiftType:type,opens:w.opens,dueBy:w.dueBy,state:"draft",footprint:foot};
+    const r={id:"r"+Date.now(),siteId:w.site.id,shiftType:type,opens:w.opens,dueBy:w.dueBy,state:"candidate",footprint:foot};
     setState(s=>({...s,requests:[...s.requests,r]}));
     setCreating(null);
   }
@@ -667,8 +697,9 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
   // running month $ from confirmed + the quota readout (the one signal allowed to cross from footprint, §7)
   const monthBooked$=state.requests.reduce((a,r)=>{
     if(r.state!=="confirmed"||r.footprint.kind!=="pinned")return a;
+    const s=siteById[r.siteId];if(!s)return a;
     const n=r.footprint.dates.filter(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR).length;
-    return a+n*siteRate(siteById[r.siteId],r.shiftType);
+    return a+n*reqRate(r,s);
   },0);
 
   return <div style={{height:"100%",overflow:"auto"}}>
@@ -887,103 +918,176 @@ function Overlay({children,onClose}){
    Board drawer (§6.1). Annual $ is extrapolated; the comfort ceiling rides the
    curve; infeasibility still renders as the cooling aggregate failing to cool. */
 
-/* ════════ GANTT SIDECAR (§6.3) — the "when" ════════ */
-function Gantt({state,setState,tsp}){
+/* ════════ PENDING — the lifecycle list (§5) ════════
+   One scrolling column: Candidates (apply, with deadline chain) → Confirmed →
+   Pending (awaiting + in-negotiation overrides) → Past (worked, scrolling down). */
+const md=d=>`${MON[pd(d).getMonth()]} ${pd(d).getDate()}`;
+const ST_COL={candidate:C.gray,pending:C.blue,override:"#B5573A",confirmed:C.green,rejected:C.red,expired:C.mute};
+const ST_LABEL={candidate:"candidate",pending:"pending",override:"in negotiation",confirmed:"confirmed",rejected:"rejected",expired:"expired"};
+function Pending({state,setState,tsp}){
   const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
-  const live=state.requests.filter(r=>["draft","submitted","confirmed","denied","expired"].includes(r.state));
-  function transition(r,to){
-    setState(s=>({...s,requests:s.requests.map(x=>{
-      if(x.id!==r.id)return x;
-      if(to==="submitted")return {...x,state:"submitted",submittedOn:ds(TODAY),
-        expectedResponseBy:ds(ad(TODAY,siteById[x.siteId].cadence.expectedResponseDays))};
-      if(to==="confirmed"){
-        const dates=x.footprint.kind==="smeared"?x.footprint.candidates.slice(0,x.footprint.take):x.footprint.dates;
-        return {...x,state:"confirmed",resolvedOn:ds(TODAY),footprint:{kind:"pinned",dates}}; // hardens smeared→pinned
-      }
-      if(to==="denied")return {...x,state:"denied",resolvedOn:ds(TODAY)};
-      return x;
-    })}));
+  const setReq=(id,fn)=>setState(s=>({...s,requests:s.requests.map(x=>x.id===id?fn(x):x)}));
+  const discard=id=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==id)}));
+  const cadDays=r=>(siteById[r.siteId]&&siteById[r.siteId].cadence.expectedResponseDays)||10;
+  const pinFrom=r=>r.footprint.kind==="smeared"?r.footprint.candidates.slice(0,r.footprint.take):r.footprint.dates.slice();
+  const submit=r=>setReq(r.id,x=>({...x,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,cadDays(x)))}));
+  const accept=r=>setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY),footprint:{kind:"pinned",dates:pinFrom(x)}}));
+  const reject=r=>setReq(r.id,x=>({...x,state:"rejected",resolvedOn:ds(TODAY)}));
+  const toOverride=r=>setReq(r.id,x=>({...x,state:"override",footprint:{kind:"pinned",dates:pinFrom(x)},rateOverride:Number.isFinite(x.rateOverride)?x.rateOverride:siteRate(siteById[x.siteId],x.shiftType)}));
+  const confirmOverride=r=>setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY)}));
+  const payOf=r=>{const s=siteById[r.siteId];return shiftCount(r)*(s?reqRate(r,s):0);};
+
+  function chainFor(r){
+    const site=siteById[r.siteId];if(!site||!site.dependsOn)return null;
+    const up=siteById[site.dependsOn];
+    const upstream=state.requests.find(u=>u.siteId===site.dependsOn&&(u.state==="pending"||u.state==="override"||u.state==="confirmed"));
+    if(!upstream)return {up,missing:true};
+    const slack=days(pd(upstream.expectedResponseBy||upstream.dueBy),pd(r.dueBy));
+    return {up,upstream,slack};
   }
-  const discard=r=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==r.id)}));
 
-  // dependency edges (§6.3) — single dependsOn chain only
-  const chains=state.sites.filter(s=>s.dependsOn).map(s=>{
-    const upstream=live.find(r=>r.siteId===s.dependsOn&&(r.state==="submitted"||r.state==="confirmed"));
-    const downstream=live.find(r=>r.siteId===s.id);
-    if(!upstream||!downstream)return null;
-    const slack=days(pd(upstream.expectedResponseBy||upstream.dueBy),pd(downstream.dueBy));
-    return {from:siteById[s.dependsOn],to:s,upstream,downstream,slack};
-  }).filter(Boolean);
+  const reqs=state.requests;
+  const candidates=reqs.filter(r=>r.state==="candidate").sort((a,b)=>pd(a.dueBy)-pd(b.dueBy));
+  const confirmedUp=reqs.filter(r=>r.state==="confirmed"&&!isPastReq(r)).sort((a,b)=>reqMaxDate(a).localeCompare(reqMaxDate(b)));
+  const inflight=reqs.filter(r=>r.state==="pending"||r.state==="override").sort((a,b)=>pd(a.expectedResponseBy||a.dueBy)-pd(b.expectedResponseBy||b.dueBy));
+  const resolved=reqs.filter(r=>r.state==="rejected"||r.state==="expired");
+  const past=reqs.filter(isPastReq).sort((a,b)=>reqMaxDate(b).localeCompare(reqMaxDate(a)));
 
-  const stCol={draft:C.gray,submitted:C.blue,confirmed:C.green,denied:C.red,expired:C.mute};
+  const Head=({title,n,sub})=> <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"0 2px 8px"}}>
+    <span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.01em"}}>{title}</span>
+    <span style={{fontSize:9,fontWeight:700,color:C.mute}}>{n}</span>
+    <span style={{fontSize:9,color:C.gray}}>{sub}</span>
+  </div>;
+  const Empty=({t})=> <div style={{fontSize:9,color:C.mute,fontStyle:"italic",padding:"4px 2px 0"}}>{t}</div>;
+  const RowCard=({children,dim,accent})=> <div style={{padding:"9px 11px",border:`1px solid ${accent||C.line}`,borderRadius:7,
+    background:"#fff",marginBottom:6,opacity:dim?0.5:1}}>{children}</div>;
+  const Ident=({r})=>{const site=siteById[r.siteId];return <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+    <span style={{fontSize:11,fontWeight:800}}>{site?site.name:"(removed site)"}</span>
+    <Tag bg="#F4F2F0" col={ST_COL[r.state]}>{ST_LABEL[r.state]}</Tag>
+    <Tag>{r.shiftType}</Tag>
+    {Number.isFinite(r.rateOverride)&&<Tag bg="#FBEFE6" col="#B5573A">rate {fmt$(r.rateOverride)}</Tag>}
+    <span style={{marginLeft:"auto",fontSize:9,fontWeight:700,color:C.ink}}>{fmt$(payOf(r))}</span>
+  </div>;};
+  const Dates=({r})=> <div style={{fontSize:8.5,color:C.gray,marginTop:4}}>
+    {r.footprint.kind==="smeared"?`${md(r.footprint.candidates[0])}–${md(r.footprint.candidates.at(-1))} · take ${r.footprint.take} of ${r.footprint.candidates.length}`
+      :r.footprint.dates.map(md).join(" · ")}</div>;
+
   return <div style={{height:"100%",overflow:"auto"}}>
-    <div style={{maxWidth:760,margin:"0 auto",padding:"16px 16px 60px"}}>
-      <div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Gantt <span style={{fontSize:10,fontWeight:600,color:C.mute}}>· sidecar</span></div>
-      <div style={{fontSize:9.5,color:C.gray,marginBottom:14}}>the “when” — deadline clocks + the one dependency edge. Not a decision surface.</div>
+    <div style={{maxWidth:720,margin:"0 auto",padding:"14px 16px 80px"}}>
+      <div style={{fontSize:15,fontWeight:800,letterSpacing:"-0.02em"}}>Pending</div>
+      <div style={{fontSize:9.5,color:C.gray,marginBottom:16}}>the request lifecycle, newest intent on top, history scrolling down.</div>
 
-      {chains.length>0&&<div style={{marginBottom:16}}>
-        <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>Dependency</div>
-        {chains.map((c,i)=><div key={i} style={{padding:"11px 13px",border:`1px solid ${c.slack<0?"#E8B4A8":C.line}`,
-          borderRadius:7,background:c.slack<0?"#FCEFEA":"#fff",marginBottom:8}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,fontWeight:700}}>
-            <span>{c.from.name}</span>
-            <span style={{color:C.mute}}>assigns →</span>
-            <span>{c.to.name}</span>
-            <span style={{marginLeft:"auto"}}>{c.slack<0
-              ? <Tag bg="#FCE8E6" col={C.red}>slack {c.slack}d — B due before A responds</Tag>
-              : <Tag bg="#E6F2EC" col={C.green}>{c.slack}d slack</Tag>}</span>
-          </div>
-          <div style={{fontSize:8.5,color:C.gray,marginTop:5}}>
-            A responds by {c.upstream.expectedResponseBy||c.upstream.dueBy} · B due {c.downstream.dueBy}
-            {c.slack<0&&" — flagged, never auto-resolved"}
-          </div>
-        </div>)}
-      </div>}
-
-      <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>Requests · two clocks, one object</div>
-      {live.length===0&&<div style={{fontSize:10,color:C.mute,padding:"20px 0",textAlign:"center"}}>No requests yet — create one on the Board.</div>}
-      {live.sort((a,b)=>pd(a.dueBy)-pd(b.dueBy)).map(r=>{
-        const site=siteById[r.siteId];
-        const press=requestPressure(r);
-        const dim=r.state==="denied"||r.state==="expired";
-        const n=shiftCount(r);
-        return <div key={r.id} style={{padding:"10px 12px",border:`1px solid ${C.line}`,borderRadius:7,background:"#fff",
-          marginBottom:7,opacity:dim?0.55:1}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-            <span style={{fontSize:11,fontWeight:800}}>{site.name}</span>
-            <Tag bg="#F4F2F0" col={stCol[r.state]}>{r.state}</Tag>
-            <Tag>{r.shiftType}</Tag>
-            <Tag>{r.footprint.kind==="smeared"?`smeared · take ${r.footprint.take}/${r.footprint.candidates.length}`:`pinned · ${n}`}</Tag>
-            <span style={{marginLeft:"auto",fontSize:8.5,color:C.mute}}>
-              {r.footprint.kind==="pinned"?r.footprint.dates.map(d=>`${MON[pd(d).getMonth()]} ${pd(d).getDate()}`).join(", ")
-                :`${MON[pd(r.footprint.candidates[0]).getMonth()]} ${pd(r.footprint.candidates[0]).getDate()}–${pd(r.footprint.candidates.at(-1)).getDate()}`}
-            </span>
-          </div>
-          {/* deadline clock */}
-          {(r.state==="draft"||r.state==="submitted")&&<div style={{marginTop:7}}>
+      {/* ── CANDIDATES ── */}
+      <Head title="Candidates" n={candidates.length} sub="selected to apply for · deadline chain"/>
+      {candidates.length===0&&<Empty t="None staged — create one on the Board."/>}
+      {candidates.map(r=>{
+        const press=requestPressure(r),notOpen=TODAY<pd(r.opens),chain=chainFor(r);
+        return <RowCard key={r.id}>
+          <Ident r={r}/><Dates r={r}/>
+          <div style={{marginTop:7}}>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:C.mute,marginBottom:2}}>
-              <span>opens {r.opens}</span>
-              <span>{r.state==="submitted"?`pressure → 0 · response by ${r.expectedResponseBy}`:`due ${r.dueBy}`}</span>
+              <span>{notOpen?`opens ${r.opens}`:`window open`}</span>
+              <span style={{color:press>0.7?C.red:C.gray}}>apply by {r.dueBy}</span>
             </div>
             <div style={{height:5,background:C.line2,borderRadius:3,overflow:"hidden"}}>
-              <div style={{width:(r.state==="submitted"?100:press*100)+"%",height:"100%",
-                background:r.state==="submitted"?C.blue:(press>0.7?C.red:C.ink)}}/>
+              <div style={{width:(press*100)+"%",height:"100%",background:press>0.7?C.red:C.ink}}/>
+            </div>
+          </div>
+          {chain&&<div style={{marginTop:6,fontSize:8.5,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <span style={{color:C.gray}}>⛓ waits on <b>{chain.up?chain.up.name:"?"}</b></span>
+            {chain.missing? <Tag bg={C.line2} col={C.mute}>no live upstream request</Tag>
+              : chain.slack<0? <Tag bg="#FCE8E6" col={C.red}>slack {chain.slack}d — due before they respond</Tag>
+              : <Tag bg="#E6F2EC" col={C.green}>{chain.slack}d slack</Tag>}
+          </div>}
+          <div style={{display:"flex",gap:6,marginTop:8}}>
+            <Btn small kind="prim" onClick={()=>submit(r)}>submit</Btn>
+            <Btn small kind="danger" onClick={()=>discard(r.id)}>discard</Btn>
+          </div>
+        </RowCard>;
+      })}
+
+      {/* ── CONFIRMED (upcoming) ── */}
+      <div style={{marginTop:18}}><Head title="Confirmed" n={confirmedUp.length} sub="upcoming · on the calendar"/></div>
+      {confirmedUp.length===0&&<Empty t="No upcoming confirmed shifts."/>}
+      {confirmedUp.map(r=><RowCard key={r.id} accent="#BFE3D3">
+        <Ident r={r}/><Dates r={r}/>
+        <div style={{fontSize:8,color:C.green,fontWeight:700,marginTop:6}}>→ hardened placement (home base, §7)</div>
+      </RowCard>)}
+
+      {/* ── PENDING (awaiting + in negotiation) ── */}
+      <div style={{marginTop:18}}><Head title="Pending" n={inflight.length} sub="awaiting the site · accept / reject / override"/></div>
+      {inflight.length===0&&<Empty t="Nothing out for response."/>}
+      {inflight.map(r=>{
+        const wait=responseWait(r),neg=r.state==="override";
+        return <RowCard key={r.id} accent={neg?"#E8C9AE":undefined}>
+          <Ident r={r}/><Dates r={r}/>
+          {wait&&<div style={{marginTop:7}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:C.mute,marginBottom:2}}>
+              <span>submitted {r.submittedOn}</span>
+              <span style={{color:wait.overdue?C.red:C.gray}}>{wait.overdue?"overdue":"response by"} {r.expectedResponseBy}</span>
+            </div>
+            <div style={{height:5,background:C.line2,borderRadius:3,overflow:"hidden"}}>
+              <div style={{width:(wait.frac*100)+"%",height:"100%",background:wait.overdue?C.red:C.blue}}/>
             </div>
           </div>}
-          <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
-            {r.state==="draft"&&<><Btn small kind="prim" onClick={()=>transition(r,"submitted")}>submit</Btn>
-              <Btn small kind="danger" onClick={()=>discard(r)}>discard</Btn></>}
-            {r.state==="submitted"&&<><Btn small kind="good" onClick={()=>transition(r,"confirmed")}>confirm</Btn>
-              <Btn small kind="danger" onClick={()=>transition(r,"denied")}>deny</Btn></>}
-            {dim&&<span style={{fontSize:8.5,color:C.mute,fontStyle:"italic"}}>faded to legibility floor — persists, never deleted (Inv 8)</span>}
-            {r.state==="confirmed"&&<span style={{fontSize:8.5,color:C.green,fontWeight:700}}>→ hardened to a planner placement (home base, §7)</span>}
-          </div>
-        </div>;
+          {!neg
+            ? <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                <Btn small kind="good" onClick={()=>accept(r)}>accept</Btn>
+                <Btn small kind="danger" onClick={()=>reject(r)}>reject</Btn>
+                <Btn small onClick={()=>toOverride(r)}>override</Btn>
+              </div>
+            : <OverrideEditor r={r} site={siteById[r.siteId]}
+                onRm={d=>setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:x.footprint.dates.filter(y=>y!==d)}}))}
+                onAdd={d=>setReq(r.id,x=>x.footprint.dates.includes(d)?x:({...x,footprint:{kind:"pinned",dates:[...x.footprint.dates,d].sort()}}))}
+                onRate={v=>setReq(r.id,x=>({...x,rateOverride:v}))}
+                onConfirm={()=>confirmOverride(r)} onReject={()=>reject(r)}/>}
+        </RowCard>;
       })}
-      <p style={{fontSize:9,color:C.mute,textAlign:"center",marginTop:18,lineHeight:1.6}}>
-        The footprint owns trips, days-out, pace & confirmed placements.<br/>
+      {resolved.length>0&&<div style={{marginTop:8}}>
+        <div style={{fontSize:8.5,fontWeight:700,color:C.mute,textTransform:"uppercase",letterSpacing:"0.04em",margin:"0 2px 6px"}}>resolved · persists (Inv 8)</div>
+        {resolved.map(r=><RowCard key={r.id} dim>
+          <Ident r={r}/><Dates r={r}/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
+            <span style={{fontSize:8,color:C.mute,fontStyle:"italic"}}>faded to legibility floor</span>
+            <Btn small onClick={()=>discard(r.id)}>dismiss</Btn>
+          </div>
+        </RowCard>)}
+      </div>}
+
+      {/* ── PAST (worked) ── */}
+      <div style={{marginTop:18}}><Head title="Past" n={past.length} sub="worked · scrolling down"/></div>
+      {past.length===0&&<Empty t="No past shifts yet."/>}
+      {past.map(r=><RowCard key={r.id} dim>
+        <Ident r={r}/><Dates r={r}/>
+      </RowCard>)}
+
+      <p style={{fontSize:9,color:C.mute,textAlign:"center",marginTop:22,lineHeight:1.6}}>
+        Confirmed and in-negotiation shifts land on the calendar and press the month.<br/>
         Only the pace/exposure readout crosses back to the Board (the seam, §7).
       </p>
+    </div>
+  </div>;
+}
+/* inline negotiation editor — edits commit live (shows on the calendar / pressure) */
+function OverrideEditor({r,site,onRm,onAdd,onRate,onConfirm,onReject}){
+  const [add,setAdd]=useState("");
+  return <div style={{marginTop:8,padding:"9px 10px",border:`1px dashed #E0A92E`,borderRadius:6,background:"#FFFCF4"}}>
+    <div style={{fontSize:8,fontWeight:800,color:"#B5573A",letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated terms · can fall outside the original window</div>
+    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
+      {r.footprint.dates.map(d=><span key={d} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9,fontWeight:700,
+        padding:"2px 4px 2px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:"#fff"}}>
+        {md(d)}<button onClick={()=>onRm(d)} style={{border:"none",background:"none",cursor:"pointer",color:C.red,fontFamily:MONO,fontSize:10}}>×</button></span>)}
+    </div>
+    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+      <input type="date" value={add} onChange={e=>setAdd(e.target.value)} style={{...inp,width:140}}/>
+      <Btn small onClick={()=>{if(DATE_RE.test(add)){onAdd(add);setAdd("");}}}>+ add date</Btn>
+      <span style={{marginLeft:"auto",fontSize:8.5,color:C.gray}}>rate</span>
+      <input type="number" value={r.rateOverride} onChange={e=>onRate(+e.target.value||0)} style={{...inp,width:80}}/>
+      <span style={{fontSize:8.5,color:C.mute}}>={fmt$((r.footprint.dates.length)*(Number(r.rateOverride)||0))}</span>
+    </div>
+    <div style={{display:"flex",gap:6}}>
+      <Btn small kind="good" disabled={!r.footprint.dates.length} onClick={onConfirm}>confirm</Btn>
+      <Btn small kind="danger" onClick={onReject}>reject</Btn>
     </div>
   </div>;
 }
@@ -1136,6 +1240,7 @@ function ScheduleEditor({state,setState,onClose}){
 
 /* ════════ YEAR VIEW — the footprint / home base (§7): confirmed placements + pending ════════ */
 const SHIFT_COL={day:"#C8973A",night:"#6D5BA8"};
+const OVERRIDE_COL={day:"#E7CF9E",night:"#B6ABD6"};   // tentative (in-negotiation) shifts
 const LOC_TINT={boston:"#EAF1FB",santa_fe:"#FBF1E6",abq:"#F8EEE3",montana:"#E9F4EE",portland:"#F2EAFB"};
 function monthGrid(y,m){
   const f=(new Date(y,m,1).getDay()+6)%7,n=dim(y,m),wk=Math.ceil((f+n)/7);
@@ -1151,7 +1256,7 @@ function useFootprint(state){
       const fp=r.footprint;
       if(fp.kind==="pinned"){
         for(const d of fp.dates){(byDay[d]=byDay[d]||[]).push({state:r.state,type:r.shiftType,site:s});}
-      }else if(r.state==="draft"||r.state==="submitted"){
+      }else if(r.state==="candidate"||r.state==="pending"){
         for(const d of fp.candidates){(byDay[d]=byDay[d]||[]).push({state:"smeared",type:r.shiftType,site:s});}
       }
     }
@@ -1168,7 +1273,7 @@ function useFootprint(state){
       for(const r of state.requests){if(r.state==="confirmed"&&r.footprint.kind==="pinned"){
         const s=siteById[r.siteId];if(!s)continue;
         const inM=r.footprint.dates.filter(d=>pd(d).getMonth()===m&&pd(d).getFullYear()===YEAR);
-        n+=inM.length;$+=inM.length*siteRate(s,r.shiftType);}}
+        n+=inM.length;$+=inM.length*reqRate(r,s);}}
       perMonth[m]={n,$};}
     return {byDay,famBy,lockBy,outBy,perMonth,loadM:loadByMonth(state)};
   },[state]);
@@ -1207,15 +1312,19 @@ function YearStrip({footprint,selected,onSelect,showOut,ceiling}){
               const str=ds(d),we=d.getDay()===0||d.getDay()===6;
               const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],out=outBy[str];
               const conf=marks.find(x=>x.state==="confirmed");
-              const pend=marks.find(x=>x.state==="submitted"||x.state==="draft");
+              const neg=marks.find(x=>x.state==="override");
+              const pend=marks.find(x=>x.state==="pending");
+              const cand=marks.find(x=>x.state==="candidate");
               const smear=marks.find(x=>x.state==="smeared");
               let bg=fam?LOC_TINT[fam]:(tint||(we?"#FBFAF9":"#fff"));
               if(showOut&&out&&!fam&&!tint)bg="#F4F1EB";
               let border=`1px solid ${C.line2}`,inner=null;
               if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
+              else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
               else if(pend){border=`1.5px solid ${C.blue}`;}
+              else if(cand){border=`1.5px solid ${C.faint}`;}
               else if(smear){inner="dotted";}
-              return <div key={ci} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${pend?` · pending ${pend.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}`}
+              return <div key={ci} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}`}
                 style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box"}}>
                 {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
                 {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",
@@ -1231,8 +1340,9 @@ function YearStrip({footprint,selected,onSelect,showOut,ceiling}){
 const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",fontSize:8,color:C.mute,margin:"6px 2px 0"}}>
   <LegDot bg={SHIFT_COL.day}>day confirmed</LegDot>
   <LegDot bg={SHIFT_COL.night}>night confirmed</LegDot>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:OVERRIDE_COL.day,border:`1.5px dashed ${SHIFT_COL.day}`}}/>in negotiation</span>
   <LegDot ring={C.blue}>pending</LegDot>
-  <LegDot dotted>smeared</LegDot>
+  <LegDot dotted>candidate</LegDot>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:LOC_TINT.santa_fe,border:`1px solid ${C.line}`}}/>family</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
   <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:3}}>month pressure
@@ -1277,7 +1387,7 @@ function App(){
     else prompt("Copy this share link:",url);
   };
 
-  const tabs=[["board","Board"],["gantt","Gantt"]];
+  const tabs=[["board","Board"],["pending","Pending"]];
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
     {/* header */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
@@ -1311,7 +1421,7 @@ function App(){
     {/* surface */}
     <div style={{flex:1,minHeight:0}}>
       {surface==="board"&&<Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp}/>}
-      {surface==="gantt"&&<Gantt state={state} setState={setState} tsp={tsp}/>}
+      {surface==="pending"&&<Pending state={state} setState={setState} tsp={tsp}/>}
     </div>
     {modal==="sites"&&<SiteWizard state={state} setState={setState} onClose={()=>setModal(null)}/>}
     {modal==="schedule"&&<ScheduleEditor state={state} setState={setState} onClose={()=>setModal(null)}/>}
