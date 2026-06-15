@@ -758,7 +758,8 @@ function PaceCurve({pace,setPace,tsp}){
   </div>;
 }
 
-function Board({state,setState,monthIdx,setMonthIdx,tsp}){
+function Board({state,setState,monthIdx,setMonthIdx,tsp,view}){
+  view=view||"all";
   const [types,setTypes]=useState({});
   const [open,setOpen]=useState(null);
   const [creating,setCreating]=useState(null);
@@ -776,116 +777,107 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
     setState(s=>({...s,requests:[...s.requests,r]}));
     setCreating(null);
   }
+  const sp=<div style={{height:10}}/>;
+  const paceInner=<><PaceCurve pace={state.pace} setPace={setPace} tsp={tsp}/><div style={{marginTop:12}}><StatsReadout cool={cool}/></div></>;
+  const paceDrawerEl=<div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel2,marginBottom:12,overflow:"hidden"}}>
+    <div onClick={()=>setDrawer(d=>!d)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",cursor:"pointer"}}>
+      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Pace</span>
+      <span style={{fontSize:9,color:C.mute}}>on pace <b style={{color:C.ink}}>{fmtK(cool.onCurveProjection$)}</b> · worked {fmtK(cool.bookedToDate$)} · requested {fmtK(cool.requested$)}</span>
+      <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{drawer?"▾ hide":"▸ show"}</span>
+    </div>
+    {drawer&&<div style={{padding:"0 12px 12px"}}>{paceInner}</div>}
+  </div>;
+  const calEl=<><Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling}/><FootLegend/></>;
+  const layersEl=<LayersPanel state={state} setState={setState}/>;
+  const tripsEl=<TripsDrawer state={state} setState={setState}/>;
+  const sitesEl=<SitesWorksheet state={state} setState={setState}/>;
+  const winEl=<>
+    <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 2px 8px",flexWrap:"wrap"}}>
+      <span style={{fontSize:13,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} windows</span>
+      <span style={{fontSize:9,color:C.gray}}>the “where” · glow by fit, never ranked</span>
+      <span style={{marginLeft:"auto",fontSize:8,color:C.est,fontStyle:"italic"}}>~amber = estimate</span>
+    </div>
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:8.5,color:C.mute,margin:"0 2px 10px"}}>
+      <span>glow = brightness:</span>
+      {BUCKETS.map(b=><span key={b} style={{display:"inline-flex",alignItems:"center",gap:4}}>
+        <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{b}</span>)}
+    </div>
+    {weeks.map((wk,wi)=>{
+      const wkWins=windows.filter(w=>w.wi===wi);
+      const exp=weekExposure(wk.dates,state.requests,siteById,tsp);
+      const inMonth=wk.dates.filter(d=>d.getMonth()===monthIdx);
+      const label=`${MON[inMonth[0].getMonth()]} ${inMonth[0].getDate()}–${inMonth[inMonth.length-1].getDate()}`;
+      return <div key={wi} style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 2px 6px"}}>
+          <span style={{fontSize:10,fontWeight:800,color:C.gray,letterSpacing:"0.02em"}}>{label}</span>
+          <div style={{flex:1,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
+            <div style={{flex:1,height:6,background:C.line2,borderRadius:3,position:"relative",overflow:"hidden"}}>
+              <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,var(--faint),var(--faint) 4px,transparent 4px,transparent 7px)"}}/>
+              <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.floor$/8000*100)+"%",background:C.ink}}/>
+            </div>
+            <span style={{fontSize:8,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
+          </div>
+          {exp.collision&&<Tag bg={C.softWarn} col={C.red}>double-book</Tag>}
+          {exp.hole&&<Tag bg={C.softWarn} col={C.est}>thin</Tag>}
+        </div>
+        {wkWins.map(w=>{
+          const gs=glowStyle(w.bucket);
+          const isOpen=open===w.id;
+          return <div key={w.id} style={{...gs,borderRadius:7,marginBottom:6,transition:"box-shadow .2s"}}>
+            <div style={{display:"flex",alignItems:"stretch"}}>
+              <div style={{flex:"1 1 200px",minWidth:0,padding:"9px 11px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
+                  <Tag>{REACH_LABEL[w.site.reach]}</Tag>
+                  {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
+                  {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
+                  {w.closed&&<Tag bg={C.line2} col={C.mute}>window closed</Tag>}
+                  {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
+                </div>
+                <div style={{fontSize:9.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.note||w.site.note}</div>
+                <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+                  {w.perKid.map(k=><span key={k.childId} title={`${k.name}: ${k.count} of ${k.of} weekdays out of school`}
+                    style={{fontSize:8,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
+                </div>
+              </div>
+              <div style={{display:"flex",borderLeft:`1px solid ${C.line2}`}}>
+                <Fact label="$/hr ER"><Num e={w.money.erPerHr} money/></Fact>
+                <Fact label="$/hr away"><Num e={w.money.awayPerHr} money/></Fact>
+                <Fact label="days-out">{w.dout}</Fact>
+                <Fact label="close"><span style={{color:w.closing>0.7?C.est:C.gray}}>{Math.round(w.closing*100)}%</span></Fact>
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 11px",borderTop:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
+              <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
+                {["day","night"].map(t=><button key={t} onClick={()=>setType(w.id,t)}
+                  style={{fontFamily:MONO,fontSize:9,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
+                    background:w.type===t?C.ink:"transparent",color:w.type===t?C.bg:C.gray}}>{t}</button>)}
+              </div>
+              {w.existing? <Tag bg={C.softInfo} col={C.blue}>request exists · {w.existing.state}</Tag>
+                : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>+ request</Btn>}
+              <span style={{marginLeft:"auto",fontSize:8,color:C.mute}}>{w.site.submissionType==="by_window"?"by window":"by shift"}</span>
+              <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why bright"}</Btn>
+            </div>
+            {isOpen&&<WhyBright w={w}/>}
+          </div>;
+        })}
+      </div>;
+    })}
+    <p style={{fontSize:9,color:C.mute,textAlign:"center",marginTop:18,lineHeight:1.6}}>
+      Brightness is attention; order is structural; the choice is read from the raw facts.<br/>
+      No window is hidden, reordered by desirability, or recommended.
+    </p>
+  </>;
+
+  let body;
+  if(view==="calendar")body=<>{calEl}{sp}{tripsEl}</>;
+  else if(view==="windows")body=winEl;
+  else if(view==="pace")body=<><div style={{fontSize:13,fontWeight:800,marginBottom:10}}>Pace</div>{paceInner}</>;
+  else if(view==="setup")body=<>{layersEl}{sp}{tripsEl}{sp}{sitesEl}</>;
+  else body=<>{paceDrawerEl}{layersEl}{sp}{calEl}{sp}{tripsEl}{winEl}<div style={{marginTop:16}}>{sitesEl}</div></>;
 
   return <div style={{height:"100%",overflow:"auto"}}>
-    <div style={{maxWidth:980,margin:"0 auto",padding:"12px 16px 60px"}}>
-
-      {/* ── PACE DRAWER (top) — the graph + the broken-out stats ── */}
-      <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel2,marginBottom:12,overflow:"hidden"}}>
-        <div onClick={()=>setDrawer(d=>!d)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",cursor:"pointer"}}>
-          <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Pace</span>
-          <span style={{fontSize:9,color:C.mute}}>on pace <b style={{color:C.ink}}>{fmtK(cool.onCurveProjection$)}</b> · worked {fmtK(cool.bookedToDate$)} · requested {fmtK(cool.requested$)}</span>
-          <span style={{marginLeft:"auto",fontSize:9,color:C.mute}}>{drawer?"▾ hide":"▸ show"}</span>
-        </div>
-        {drawer&&<div style={{padding:"0 12px 12px"}}>
-          <PaceCurve pace={state.pace} setPace={setPace} tsp={tsp}/>
-          <div style={{marginTop:12}}><StatsReadout cool={cool}/></div>
-        </div>}
-      </div>
-
-      {/* ── PRESENCE LAYERS (primary) + CALENDAR (middle) ── */}
-      <LayersPanel state={state} setState={setState}/>
-      <div style={{height:10}}/>
-      <Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling}/>
-      <FootLegend/>
-      <div style={{height:10}}/>
-      <TripsDrawer state={state} setState={setState}/>
-
-      {/* ── MONTH WINDOW LIST (bottom) ── */}
-      <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"22px 2px 8px",flexWrap:"wrap"}}>
-        <span style={{fontSize:13,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} windows</span>
-        <span style={{fontSize:9,color:C.gray}}>the “where” · glow by fit, never ranked</span>
-        <span style={{marginLeft:"auto",fontSize:8,color:C.est,fontStyle:"italic"}}>~amber = estimate</span>
-      </div>
-      <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:8.5,color:C.mute,margin:"0 2px 10px"}}>
-        <span>glow = brightness:</span>
-        {BUCKETS.map(b=><span key={b} style={{display:"inline-flex",alignItems:"center",gap:4}}>
-          <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{b}</span>)}
-      </div>
-
-      {/* windows, grouped by week — chronological/structural order only (Inv 3) */}
-      {weeks.map((wk,wi)=>{
-        const wkWins=windows.filter(w=>w.wi===wi);
-        const exp=weekExposure(wk.dates,state.requests,siteById,tsp);
-        const inMonth=wk.dates.filter(d=>d.getMonth()===monthIdx);
-        const label=`${MON[inMonth[0].getMonth()]} ${inMonth[0].getDate()}–${inMonth[inMonth.length-1].getDate()}`;
-        return <div key={wi} style={{marginBottom:14}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 2px 6px"}}>
-            <span style={{fontSize:10,fontWeight:800,color:C.gray,letterSpacing:"0.02em"}}>{label}</span>
-            {/* exposure band: floor → ceiling (her hedge, §4.6) */}
-            <div style={{flex:1,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
-              <div style={{flex:1,height:6,background:C.line2,borderRadius:3,position:"relative",overflow:"hidden"}}>
-                <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,var(--faint),var(--faint) 4px,transparent 4px,transparent 7px)"}}/>
-                <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.floor$/8000*100)+"%",background:C.ink}}/>
-              </div>
-              <span style={{fontSize:8,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
-            </div>
-            {exp.collision&&<Tag bg={C.softWarn} col={C.red}>double-book</Tag>}
-            {exp.hole&&<Tag bg={C.softWarn} col={C.est}>thin</Tag>}
-          </div>
-
-          {wkWins.map(w=>{
-            const gs=glowStyle(w.bucket);
-            const isOpen=open===w.id;
-            return <div key={w.id} style={{...gs,borderRadius:7,marginBottom:6,transition:"box-shadow .2s"}}>
-              <div style={{display:"flex",alignItems:"stretch"}}>
-                {/* identity + note (choosing) */}
-                <div style={{flex:"1 1 200px",minWidth:0,padding:"9px 11px"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                    <span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
-                    <Tag>{REACH_LABEL[w.site.reach]}</Tag>
-                    {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
-                    {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
-                    {w.closed&&<Tag bg={C.line2} col={C.mute}>window closed</Tag>}
-                    {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
-                  </div>
-                  <div style={{fontSize:9.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.note||w.site.note}</div>
-                  <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
-                    {w.perKid.map(k=><span key={k.childId} title={`${k.name}: ${k.count} of ${k.of} weekdays out of school`}
-                      style={{fontSize:8,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
-                  </div>
-                </div>
-                {/* raw fact columns — individually visible (Inv 2) */}
-                <div style={{display:"flex",borderLeft:`1px solid ${C.line2}`}}>
-                  <Fact label="$/hr ER"><Num e={w.money.erPerHr} money/></Fact>
-                  <Fact label="$/hr away"><Num e={w.money.awayPerHr} money/></Fact>
-                  <Fact label="days-out">{w.dout}</Fact>
-                  <Fact label="close"><span style={{color:w.closing>0.7?C.est:C.gray}}>{Math.round(w.closing*100)}%</span></Fact>
-                </div>
-              </div>
-              {/* actions */}
-              <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 11px",borderTop:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
-                <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
-                  {["day","night"].map(t=><button key={t} onClick={()=>setType(w.id,t)}
-                    style={{fontFamily:MONO,fontSize:9,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
-                      background:w.type===t?C.ink:"transparent",color:w.type===t?C.bg:C.gray}}>{t}</button>)}
-                </div>
-                {w.existing? <Tag bg={C.softInfo} col={C.blue}>request exists · {w.existing.state}</Tag>
-                  : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>+ request</Btn>}
-                <span style={{marginLeft:"auto",fontSize:8,color:C.mute}}>{w.site.submissionType==="by_window"?"by window":"by shift"}</span>
-                <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why bright"}</Btn>
-              </div>
-              {isOpen&&<WhyBright w={w}/>}
-            </div>;
-          })}
-        </div>;
-      })}
-      <p style={{fontSize:9,color:C.mute,textAlign:"center",marginTop:18,lineHeight:1.6}}>
-        Brightness is attention; order is structural; the choice is read from the raw facts.<br/>
-        No window is hidden, reordered by desirability, or recommended.
-      </p>
-      <div style={{marginTop:16}}><SitesWorksheet state={state} setState={setState}/></div>
-    </div>
+    <div style={{maxWidth:980,margin:"0 auto",padding:"12px 16px 60px"}}>{body}</div>
     {creating&&<CreateModal w={creating.w} state={state} tsp={tsp} onClose={()=>setCreating(null)} onCreate={createRequest}/>}
   </div>;
 }
@@ -1576,10 +1568,13 @@ function App(){
   });
   const [surface,setSurface]=useState("board");
   const [monthIdx,setMonthIdx]=useState(7); // August — requests are open now
-  const [modal,setModal]=useState(null);    // "sites" | "schedule"
+  const [mtab,setMtab]=useState("calendar"); // mobile bottom tab
+  const [isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width: 760px)").matches);
   const [toast,setToast]=useState(null);
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}}); // system|light|dark
   const fileRef=useRef();
+  useEffect(()=>{const mq=window.matchMedia&&window.matchMedia("(max-width: 760px)");if(!mq)return;
+    const h=()=>setIsMobile(mq.matches);if(mq.addEventListener){mq.addEventListener("change",h);return ()=>mq.removeEventListener("change",h);}},[]);
   useEffect(()=>{try{localStorage.setItem("perDiemState",JSON.stringify(state));}catch(e){}},[state]);
   useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),4000);return ()=>clearTimeout(t);},[toast]);
   // theme: follow device when "system", else explicit; reflected on <html data-theme>
@@ -1630,22 +1625,39 @@ function App(){
         <input ref={fileRef} type="file" accept=".json" onChange={importJSON} style={{display:"none"}}/>
       </div>
     </div>
-    {toast&&<div style={{position:"fixed",bottom:18,left:"50%",transform:"translateX(-50%)",zIndex:300,
+    {toast&&<div style={{position:"fixed",bottom:isMobile?68:18,left:"50%",transform:"translateX(-50%)",zIndex:300,
       background:C.ink,color:C.bg,fontSize:10,fontWeight:600,padding:"8px 14px",borderRadius:6,
       boxShadow:"0 8px 24px rgba(0,0,0,.25)",maxWidth:"90vw",textAlign:"center"}}>{toast}</div>}
-    {/* tabs */}
-    <div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
+    {/* desktop: top tabs (Board = the whole workbench, Pending = the lifecycle) */}
+    {!isMobile&&<div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
       {tabs.map(([id,label])=><button key={id} onClick={()=>setSurface(id)}
         style={{fontFamily:MONO,fontSize:11,fontWeight:800,padding:"9px 16px",border:"none",cursor:"pointer",
           background:"transparent",color:surface===id?C.ink:C.mute,letterSpacing:"-0.01em",
           borderBottom:surface===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
       <span style={{marginLeft:"auto",alignSelf:"center",fontSize:8,color:C.mute,padding:"0 14px"}}>today {ds(TODAY)}</span>
-    </div>
-    {/* surface */}
+    </div>}
+    {/* surface — same model either way; desktop scrolls it all, mobile shows one tab at a time */}
     <div style={{flex:1,minHeight:0}}>
-      {surface==="board"&&<Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp}/>}
-      {surface==="pending"&&<Pending state={state} setState={setState} tsp={tsp}/>}
+      {isMobile
+        ? (mtab==="pending"
+            ? <Pending state={state} setState={setState} tsp={tsp}/>
+            : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={mtab}/>)
+        : (surface==="pending"
+            ? <Pending state={state} setState={setState} tsp={tsp}/>
+            : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view="all"/>)}
     </div>
+    {/* mobile: bottom tab bar — views into the same model */}
+    {isMobile&&<div style={{display:"flex",borderTop:`1px solid ${C.line}`,background:C.panel,flexShrink:0,paddingBottom:"env(safe-area-inset-bottom)"}}>
+      {[["calendar","▦","Calendar"],["windows","▤","Windows"],["pending","◷","Pending"],["pace","∿","Pace"],["setup","⚙","Setup"]].map(([id,ic,label])=>{
+        const on=mtab===id;
+        return <button key={id} onClick={()=>setMtab(id)} style={{flex:1,fontFamily:MONO,border:"none",cursor:"pointer",background:"transparent",
+          padding:"7px 2px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,
+          color:on?C.ink:C.mute,borderTop:on?`2px solid ${C.ink}`:"2px solid transparent",marginTop:-1}}>
+          <span style={{fontSize:14,lineHeight:1}}>{ic}</span>
+          <span style={{fontSize:8,fontWeight:800,letterSpacing:"-0.01em"}}>{label}</span>
+        </button>;
+      })}
+    </div>}
   </div>;
 }
 /* ════════ ERROR BOUNDARY — last-resort guard against a white screen ════════ */
