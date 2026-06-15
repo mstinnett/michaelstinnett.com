@@ -1852,26 +1852,32 @@ function TripsPalette({state,setState,sel,setSel,goto}){
   const place=(id,fromDate)=>setTrips(ts=>ts.map(t=>t.id===id?{...t,from:fromDate,to:ds(ad(pd(fromDate),dur(t)-1)),placed:true}:t));
   const addTrip=()=>{const id="t"+Date.now();setTrips(ts=>[...ts,{id,name:"New trip",from:`${YEAR}-07-06`,to:`${YEAR}-07-10`,loc:Object.keys(LOC_NAME)[0],workFactor:"closed",placed:false}]);setSel&&setSel({kind:"trip",id});};
   const start=(e,t)=>{
-    e.preventDefault();let moved=false;
-    const move=ev=>{const p=ev.touches?ev.touches[0]:ev;moved=true;const d=nearestDate(p.clientX,p.clientY);
+    if(e.pointerType!=="touch")e.preventDefault();          // mouse: avoid text-select; touch: let the palette pan-x scroll
+    let moved=false; const sx=e.clientX, sy=e.clientY;
+    const move=ev=>{const p=ev.touches?ev.touches[0]:ev;
+      if(!moved){const dx=p.clientX-sx,dy=p.clientY-sy;
+        if(Math.abs(dx)+Math.abs(dy)<6)return;              // ignore taps / micro-jitter
+        if(ev.pointerType==="touch"&&Math.abs(dx)>Math.abs(dy))return;  // horizontal swipe → scroll the palette, don't drag
+        moved=true;}
+      const d=nearestDate(p.clientX,p.clientY);
       setGhost({name:t.name,x:p.clientX,y:p.clientY,date:d});};
-    const up=ev=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);
-      const p=ev.touches?ev.touches[0]:ev;const d=nearestDate(p.clientX,p.clientY);
+    const cleanup=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",cancel);};
+    const up=ev=>{cleanup();const p=ev.touches?ev.touches[0]:ev;const d=nearestDate(p.clientX,p.clientY);
       if(moved&&d)place(t.id,d); setSel&&setSel({kind:"trip",id:t.id}); setGhost(null);};
-    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
-    setGhost({name:t.name,x:e.clientX,y:e.clientY,date:null});
+    const cancel=()=>{cleanup();setGhost(null);};            // browser claimed the gesture (e.g. horizontal scroll)
+    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);window.addEventListener("pointercancel",cancel);
   };
   const WFC={colocate:C.juniper,commute:C.ocean,closed:C.pressHot};
   return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"9px 11px"}}>
     <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:open?7:0}}>
       <span onClick={()=>setOpen(o=>!o)} style={{fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray,cursor:"pointer"}}>{open?"▾":"▸"} Trips</span>
-      <span style={{fontSize:9.5,color:C.mute}}>drag a card onto the calendar · </span>
+      <span style={{fontSize:9.5,color:C.mute}}>swipe to browse · drag a card down onto the calendar · </span>
       <span onClick={()=>goto&&goto("setup")} style={{fontSize:9.5,color:C.blue,cursor:"pointer",borderBottom:`1px solid ${C.line}`}}>edit in Setup →</span>
     </div>
     {open&&<div style={{display:"flex",gap:7,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
       {trips.map(t=>{const on=sel&&sel.kind==="trip"&&sel.id===t.id;
       return <div key={t.id} onPointerDown={e=>start(e,t)} title={`drag onto a day — ${t.workFactor}`}
-        style={{display:"inline-flex",flexDirection:"column",gap:2,padding:"6px 9px",borderRadius:7,cursor:"grab",touchAction:"none",flexShrink:0,
+        style={{display:"inline-flex",flexDirection:"column",gap:2,padding:"6px 9px",borderRadius:7,cursor:"grab",touchAction:"pan-x",flexShrink:0,
           border:`1px solid ${on?C.ink:C.line}`,outline:on?`1px solid ${C.ink}`:"none",background:placed(t)?C.panel2:C.panel,opacity:placed(t)?1:0.92,minWidth:104}}>
         <div style={{display:"flex",alignItems:"center",gap:5}}>
           <span style={{width:8,height:8,borderRadius:"50%",background:WFC[t.workFactor]}}/>
