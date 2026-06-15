@@ -1576,9 +1576,9 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       <Btn small onClick={()=>{setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();let n=ad(pd(ds2[ds2.length-1]),1);while(n.getDay()===0||n.getDay()===6)n=ad(n,1);ds2.push(ds(n));return {...x,footprint:{kind:"pinned",dates:ds2}};});setReqs(rs=>mergeCandidates(rs));}}>+ day</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,shiftType:x.shiftType==="day"?"night":"day"}))}>{sr.shiftType==="day"?"→night":"→day"}</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>{const i=sites.findIndex(s=>s.id===x.siteId);return {...x,siteId:sites[(i+1)%sites.length].id};})}>site ⇄</Btn>
-      {sr.state==="candidate"&&<Btn small kind="prim" onClick={()=>setReq(sr.id,x=>({...x,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,(sites.find(s=>s.id===x.siteId)||{cadence:{}}).cadence.expectedResponseDays||10))}))}>submit</Btn>}
+      {/* no submit here — the calendar is a drafting space; candidates are applied from the Pending list */}
       <Btn small kind="danger" onClick={()=>{delReq(sr.id);setSel(null);}}>delete</Btn>
-      <Btn small onClick={()=>setSel(null)}>done</Btn>
+      <Btn small kind="prim" onClick={()=>setSel(null)}>done</Btn>
     </div>}
     {stp&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
       <span style={{fontSize:11,fontWeight:800}}>{stp.name} <span style={{color:C.mute,fontWeight:600}}>{LOC_NAME[stp.loc]} · {stp.workFactor} · {md(stp.from)}–{md(stp.to)}</span></span>
