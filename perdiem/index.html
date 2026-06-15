@@ -159,9 +159,20 @@ function seedState(){
     {date:"2026-08-15",kind:"hard",label:"anniversary"},
     {date:"2026-08-08",kind:"soft",recoveryBufferHrs:24,label:"recital"},
   ];
-  const kidCalendars=[
-    {childId:"juniper",schoolDaysOutWeight:1,closedRanges:[{from:"2026-06-18",to:"2026-08-31"},{from:"2026-11-26",to:"2026-11-28"},{from:"2026-12-22",to:"2027-01-02"}]},
-    {childId:"ocean",  schoolDaysOutWeight:1,closedRanges:[{from:"2026-06-18",to:"2026-08-31"},{from:"2026-11-26",to:"2026-11-28"},{from:"2026-12-22",to:"2027-01-02"}]},
+  // presence layers — primary, categorized, editable, JSON-importable (an LLM can draft these)
+  const layers=[
+    {id:"jun",name:"Juniper School",kind:"school",childId:"juniper",color:"var(--juniper)",visible:true,daysOutWeight:1,
+     ranges:[{from:"2026-02-16",to:"2026-02-20",label:"Feb break"},{from:"2026-04-20",to:"2026-04-24",label:"Spring break"},
+       {from:"2026-06-18",to:"2026-08-31",label:"Summer"},{from:"2026-11-25",to:"2026-11-27",label:"Thanksgiving"},{from:"2026-12-21",to:"2027-01-02",label:"Winter"}]},
+    {id:"oce",name:"Ocean School",kind:"school",childId:"ocean",color:"var(--ocean)",visible:true,daysOutWeight:1,
+     ranges:[{from:"2026-02-16",to:"2026-02-20",label:"Feb break"},{from:"2026-04-13",to:"2026-04-17",label:"Spring break"},
+       {from:"2026-06-12",to:"2026-08-25",label:"Summer"},{from:"2026-11-25",to:"2026-11-27",label:"Thanksgiving"},{from:"2026-12-21",to:"2027-01-02",label:"Winter"}]},
+    {id:"hol",name:"Holidays",kind:"holiday",color:"var(--ink)",visible:true,
+     ranges:[{from:"2026-01-01",to:"2026-01-01",label:"New Year"},{from:"2026-05-25",to:"2026-05-25",label:"Memorial"},
+       {from:"2026-07-04",to:"2026-07-04",label:"July 4"},{from:"2026-09-07",to:"2026-09-07",label:"Labor"},
+       {from:"2026-11-26",to:"2026-11-26",label:"Thanksgiving"},{from:"2026-12-25",to:"2026-12-25",label:"Christmas"}]},
+    {id:"evt",name:"Events",kind:"event",color:"var(--est)",visible:true,
+     ranges:[{from:"2026-08-08",to:"2026-08-08",label:"Recital"},{from:"2026-10-10",to:"2026-10-11",label:"Soccer tourney"}]},
   ];
   const pace={
     pressureCeiling:7,   // soft comfortable max shifts / month
@@ -202,7 +213,7 @@ function seedState(){
      state:"candidate",
      footprint:{kind:"pinned",dates:["2026-08-04","2026-08-05"]}},
   ];
-  return {sites,familySpans,locks,kidCalendars,pace,requests};
+  return {sites,familySpans,locks,layers,pace,requests};
 }
 function cReq(id,siteId,shiftType,dates){
   return {id,siteId,shiftType,opens:ds(ad(pd(dates[0]),-70)),dueBy:ds(ad(pd(dates[0]),-25)),
@@ -248,11 +259,23 @@ function sanitizeState(obj){
     const ids=new Set(sites.map(s=>s.id));
     sites.forEach(s=>{if(s.dependsOn&&!ids.has(s.dependsOn))delete s.dependsOn;});
     const pace=sanitizePace(obj.pace,seed.pace);
-    const kidCalendars=(Array.isArray(obj.kidCalendars)&&obj.kidCalendars.length?obj.kidCalendars:seed.kidCalendars).map(kc=>({
-      childId:String((kc&&kc.childId)||"kid"),
-      schoolDaysOutWeight:numOr(kc&&kc.schoolDaysOutWeight,1),
-      closedRanges:(Array.isArray(kc&&kc.closedRanges)?kc.closedRanges:[]).filter(r=>r&&DATE_RE.test(r.from||"")).map(r=>({from:r.from,to:DATE_RE.test(r.to||"")?r.to:r.from,label:String(r.label||"Closed")})),
-    }));
+    const cleanRanges=a=>(Array.isArray(a)?a:[]).filter(r=>r&&DATE_RE.test(r.from||"")).map(r=>({from:r.from,to:DATE_RE.test(r.to||"")?r.to:r.from,label:String(r.label||"")}));
+    const LK=["school","holiday","event","custom"];
+    let layers;
+    if(Array.isArray(obj.layers)&&obj.layers.length){
+      layers=obj.layers.filter(l=>l&&l.id).map(l=>{
+        const o={id:String(l.id),name:String(l.name||"Layer"),kind:LK.includes(l.kind)?l.kind:"custom",
+          color:typeof l.color==="string"?l.color:"var(--gray)",visible:l.visible!==false,ranges:cleanRanges(l.ranges)};
+        if(o.kind==="school"){o.childId=String(l.childId||o.id);o.daysOutWeight=numOr(l.daysOutWeight,1);}
+        return o;});
+    }else if(Array.isArray(obj.kidCalendars)){          // migrate the old kid-calendar schema → school layers
+      layers=obj.kidCalendars.filter(kc=>kc&&kc.childId).map(kc=>({
+        id:String(kc.childId),name:kc.childId[0].toUpperCase()+kc.childId.slice(1)+" School",kind:"school",
+        childId:String(kc.childId),color:kc.childId==="ocean"?"var(--ocean)":"var(--juniper)",visible:true,
+        daysOutWeight:numOr(kc.schoolDaysOutWeight,1),ranges:cleanRanges(kc.closedRanges)}));
+      const seedExtra=seed.layers.filter(l=>l.kind!=="school");
+      layers=layers.concat(seedExtra);
+    }else layers=seed.layers;
     const familySpans=(Array.isArray(obj.familySpans)?obj.familySpans:seed.familySpans).filter(s=>s&&DATE_RE.test(s.from||"")&&DATE_RE.test(s.to||"")&&s.loc);
     const locks=(Array.isArray(obj.locks)?obj.locks:seed.locks).filter(l=>l&&DATE_RE.test(l.date||"")).map(l=>{
       const o={date:l.date,kind:l.kind==="hard"?"hard":"soft",label:String(l.label||"lock")};
@@ -272,7 +295,7 @@ function sanitizeState(obj){
       ["expectedResponseBy","submittedOn","resolvedOn"].forEach(k=>{if(DATE_RE.test(r[k]||""))o[k]=r[k];});
       return o;
     }).filter(Boolean);
-    return {sites,familySpans,locks,kidCalendars,pace,requests};
+    return {sites,familySpans,locks,layers,pace,requests};
   }catch(e){console.warn("sanitizeState failed",e);return null;}
 }
 /* read a share-link payload from the URL hash (#s=…), LZ-decompress + validate */
@@ -342,46 +365,43 @@ function windowMoney(site,type,weekDates,familySpans){
   return {shiftPay,clinicalHours,erPerHr,awayPerHr,awayHours,travel};
 }
 
-/* weighted days-out for a week (§ kid presence; Inv 9 — presence only) */
-function weekDaysOut(weekDates,kidCalendars){
-  let out=0;
+const schoolLayers=layers=>layers.filter(l=>l.kind==="school");
+const layerCovers=(l,d)=>(l.ranges||[]).some(r=>d>=pd(r.from)&&d<=pd(r.to));
+
+/* weighted days-out for a week (school-layer presence; Inv 9 — presence only) */
+function weekDaysOut(weekDates,layers){
+  const sch=schoolLayers(layers);let out=0;
   for(const d of weekDates){
-    const dow=d.getDay();
-    let w=0;
+    const dow=d.getDay();let w=0;
     if(dow===0||dow===6)w=1;                     // weekend → kids home
-    for(const kc of kidCalendars){
-      for(const r of kc.closedRanges){
-        if(d>=pd(r.from)&&d<=pd(r.to)){w=Math.max(w,kc.schoolDaysOutWeight);break;}
-      }
-    }
+    for(const l of sch)if(layerCovers(l,d)){w=Math.max(w,l.daysOutWeight||1);break;}
     out+=w;
   }
   return out;                                     // 0..7
 }
 
-/* per-kid days-out: candidate shift dates that land on a kid's out-of-school day
+/* per-kid days-out: candidate shift dates landing on a kid's out-of-school day
    (weekend or break). The family-time cost of a window, recorded per child. */
-function kidDaysOut(dateStrs,kidCalendars){
-  return kidCalendars.map(kc=>{
+function kidDaysOut(dateStrs,layers){
+  return schoolLayers(layers).map(l=>{
     let count=0;
-    for(const s of dateStrs){
-      const d=pd(s),we=d.getDay()===0||d.getDay()===6;
-      const closed=(kc.closedRanges||[]).some(r=>d>=pd(r.from)&&d<=pd(r.to));
-      if(we||closed)count++;
-    }
-    return {childId:kc.childId,name:kc.childId[0].toUpperCase()+kc.childId.slice(1),count,of:dateStrs.length};
+    for(const s of dateStrs){const d=pd(s),we=d.getDay()===0||d.getDay()===6;
+      if(we||layerCovers(l,d))count++;}
+    const nm=l.childId?l.childId[0].toUpperCase()+l.childId.slice(1):l.name;
+    return {childId:l.childId||l.id,name:nm,count,of:dateStrs.length};
   });
 }
 
-/* month load (shift-days committed/pending) and its pressure vs the comfortable ceiling */
-function loadByMonth(state){
-  const by={};for(let m=0;m<12;m++)by[m]=0;
+/* shift-days committed/pending per year-month ("Y-M"), split confirmed vs window (§ two-layer pressure) */
+function loadByYM(state){
+  const by={};const add=(k,n,conf)=>{by[k]=by[k]||{conf:0,win:0};by[k][conf?"conf":"win"]+=n;};
   for(const r of state.requests){
-    if(!OCCUPY.includes(r.state))continue;            // confirmed + override + pending + candidate press the month
+    if(!OCCUPY.includes(r.state))continue;
+    const conf=r.state==="confirmed"||r.state==="override";   // locked/near-locked load vs speculative window load
     if(r.footprint.kind==="pinned"){
-      for(const d of r.footprint.dates){const dt=pd(d);if(dt.getFullYear()===YEAR)by[dt.getMonth()]++;}
+      for(const d of r.footprint.dates){const dt=pd(d);add(`${dt.getFullYear()}-${dt.getMonth()}`,1,conf);}
     }else{
-      const m=pd(r.footprint.candidates[0]).getMonth();by[m]+=r.footprint.take;
+      const dt=pd(r.footprint.candidates[0]);add(`${dt.getFullYear()}-${dt.getMonth()}`,r.footprint.take,conf);
     }
   }
   return by;
@@ -521,7 +541,7 @@ function getWeeks(y,m){
    Derived per (site × week). Brightness drives GLOW ONLY:
    never order, never visibility, never action (Inv 1, 2a). */
 function buildWindows(state,monthIdx,types,tsp){
-  const {sites,familySpans,kidCalendars,locks,pace,requests}=state;
+  const {sites,familySpans,layers,locks,pace,requests}=state;
   const siteById=Object.fromEntries(sites.map(s=>[s.id,s]));
   const weeks=getWeeks(YEAR,monthIdx);
   const qInfo=monthQuota(pace,monthIdx,tsp);
@@ -542,7 +562,7 @@ function buildWindows(state,monthIdx,types,tsp){
       const type=types[`${site.id}-${wi}`]||"day";
       const money=windowMoney(site,type,wk.dates,familySpans);
       const co=coLocation(site,wk.dates,familySpans);
-      const dout=weekDaysOut(wk.dates,kidCalendars);
+      const dout=weekDaysOut(wk.dates,layers);
       const opens=ds(ad(wk.start,-site.cadence.opensDaysBefore));
       const dueBy=ds(ad(wk.start,-site.cadence.dueByDaysBefore));
       const closing=closingTerm(opens,dueBy);
@@ -550,7 +570,7 @@ function buildWindows(state,monthIdx,types,tsp){
       const notOpen=TODAY<pd(opens);
       const lockHit=wk.dates.filter(d=>locks.some(l=>l.date===ds(d)));
       const weekdayStrs=wk.dates.filter(d=>d.getDay()!==0&&d.getDay()!==6).map(ds);
-      const perKid=kidDaysOut(weekdayStrs,kidCalendars);
+      const perKid=kidDaysOut(weekdayStrs,layers);
       raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,weekdayStrs,perKid,
         closing,closed,notOpen,lockHit,
         existing:requests.find(r=>r.siteId===site.id&&r.footprint&&
@@ -719,7 +739,6 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
   const [open,setOpen]=useState(null);
   const [creating,setCreating]=useState(null);
   const [drawer,setDrawer]=useState(true);
-  const [showOut,setShowOut]=useState(false);
   const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
   const footprint=useFootprint(state);
   const {weeks,windows,qInfo,committed,remaining}=useMemo(
@@ -750,14 +769,10 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp}){
         </div>}
       </div>
 
-      {/* ── YEAR (middle) — the footprint + month selector ── */}
-      <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6,flexWrap:"wrap"}}>
-        <span style={{fontSize:12,fontWeight:800,letterSpacing:"-0.01em"}}>Year {YEAR}</span>
-        <span style={{fontSize:9,color:C.gray}}>footprint · tap a month to load its windows below</span>
-        <label style={{marginLeft:"auto",fontSize:9,color:C.gray,display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer"}}>
-          <input type="checkbox" checked={showOut} onChange={e=>setShowOut(e.target.checked)}/>school-out</label>
-      </div>
-      <YearStrip footprint={footprint} selected={monthIdx} onSelect={setMonthIdx} showOut={showOut} ceiling={state.pace.pressureCeiling}/>
+      {/* ── PRESENCE LAYERS (primary) + CALENDAR (middle) ── */}
+      <LayersPanel state={state} setState={setState}/>
+      <div style={{height:10}}/>
+      <Calendar footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling}/>
       <FootLegend/>
 
       {/* ── MONTH WINDOW LIST (bottom) ── */}
@@ -868,7 +883,7 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
   const money=windowMoney(w.site,type,w.week.dates,state.familySpans);
   const count=byWindow?Math.min(take,picked.length):picked.length;
   const effDates=byWindow?picked.slice(0,Math.min(take,picked.length)):picked;
-  const perKid=kidDaysOut(effDates,state.kidCalendars);
+  const perKid=kidDaysOut(effDates,state.layers);
   const totalPay=money.shiftPay*count;
   return <Overlay onClose={onClose}>
     <div style={{fontSize:13,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
@@ -1176,77 +1191,79 @@ function SiteWizard({state,setState,onClose}){
   </Overlay>;
 }
 
-/* ════════ SCHEDULE IMPORT — kid calendars: closed ranges drive days-out + presence (Inv 9) ════════ */
-function ScheduleEditor({state,setState,onClose}){
-  const [cals,setCals]=useState(()=>JSON.parse(JSON.stringify(state.kidCalendars)));
-  const [act,setAct]=useState(cals[0]?.childId||null);
-  const [year,setYear]=useState(YEAR);
-  const fileRef=useRef();
-  const cal=cals.find(c=>c.childId===act);
-  const setRanges=fn=>setCals(p=>p.map(c=>c.childId===act?{...c,closedRanges:fn(c.closedRanges||[])}:c));
-  const cap=s=>s? s[0].toUpperCase()+s.slice(1):s;
-  const importJSON=e=>{
-    const f=e.target.files?.[0];if(!f)return;
-    const rd=new FileReader();
-    rd.onload=ev=>{
-      try{
-        const arr=JSON.parse(ev.target.result);
-        if(!Array.isArray(arr)){alert("Expected a JSON array of ranges.");return;}
-        // accept planner {s,e,l} or per-diem {from,to,label}
-        const norm=arr.map(r=>({from:r.from||r.s,to:r.to||r.e||r.from||r.s,label:r.label||r.l||"Closed"})).filter(r=>r.from);
-        if(!norm.length){alert('No valid entries (need "from"/"s" start dates).');return;}
-        setRanges(rs=>{
-          const byFrom=new Map(rs.map((r,i)=>[r.from,i]));
-          const merged=[...rs];let added=0,upd=0;
-          for(const r of norm){if(byFrom.has(r.from)){merged[byFrom.get(r.from)]=r;upd++;}else{merged.push(r);added++;}}
-          return merged.sort((a,b)=>a.from.localeCompare(b.from));
-        });
-        alert(`Imported ${norm.length} ranges for ${cap(act)}.`);
-      }catch(err){alert("Invalid JSON file.");}
-    };
-    rd.readAsText(f);e.target.value="";
-  };
-  const add=()=>setRanges(rs=>[...rs,{from:`${year}-01-01`,to:`${year}-01-01`,label:"Closed"}].sort((a,b)=>a.from.localeCompare(b.from)));
-  const updR=(i,patch)=>setRanges(rs=>rs.map((r,j)=>j===i?{...r,...patch}:r));
-  const rmR=i=>setRanges(rs=>rs.filter((_,j)=>j!==i));
-  const save=()=>{setState(st=>({...st,kidCalendars:cals}));onClose();};
-  const ranges=(cal?.closedRanges||[]).map((r,i)=>({r,i})).filter(({r})=>r.from.slice(0,4)===String(year));
-  return <Overlay onClose={onClose}>
-    <div style={{maxHeight:"82vh",display:"flex",flexDirection:"column",minWidth:0}}>
-      <div style={{fontSize:13,fontWeight:800,marginBottom:2}}>Schedule import</div>
-      <div style={{fontSize:9,color:C.gray,marginBottom:10}}>Non-school ranges per child. Drives days-out + presence only — never capacity (Inv 9). Weekends are automatic.</div>
-      <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
-        {cals.map(c=><button key={c.childId} onClick={()=>setAct(c.childId)} style={{fontFamily:MONO,fontSize:9,fontWeight:700,
-          padding:"4px 9px",borderRadius:4,cursor:"pointer",border:`1px solid ${act===c.childId?C.ink:C.line}`,
-          background:act===c.childId?C.ink:C.panel,color:act===c.childId?C.bg:C.gray}}>{cap(c.childId)}</button>)}
-        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:4}}>
-          <Btn small onClick={()=>setYear(y=>y-1)}>◀</Btn>
-          <span style={{fontSize:11,fontWeight:800,minWidth:38,textAlign:"center"}}>{year}</span>
-          <Btn small onClick={()=>setYear(y=>y+1)}>▶</Btn>
+/* ════════ PRESENCE LAYERS — primary, categorized, editable, JSON-importable (near the calendar) ════════ */
+function LayersPanel({state,setState}){
+  const [editing,setEditing]=useState(null);
+  const [adding,setAdding]=useState("");
+  const fileRef=useRef(),target=useRef(null);
+  const layers=state.layers;
+  const setLayers=fn=>setState(s=>({...s,layers:fn(s.layers)}));
+  const setLayer=(id,patch)=>setLayers(ls=>ls.map(l=>l.id===id?{...l,...patch}:l));
+  const toggle=id=>setLayers(ls=>ls.map(l=>l.id===id?{...l,visible:l.visible===false}:l));
+  const addLayer=()=>{const id="L"+Date.now();setLayers(ls=>[...ls,{id,name:(adding.trim()||"New layer"),kind:"custom",color:"#888880",visible:true,ranges:[]}]);setAdding("");setEditing(id);};
+  const del=id=>{setLayers(ls=>ls.filter(l=>l.id!==id));setEditing(null);};
+  const setRanges=(id,fn)=>setLayers(ls=>ls.map(l=>l.id===id?{...l,ranges:fn(l.ranges||[])}:l));
+  const addRange=id=>setRanges(id,rs=>[...rs,{from:`${YEAR}-01-01`,to:`${YEAR}-01-01`,label:""}].sort((a,b)=>a.from.localeCompare(b.from)));
+  const updRange=(id,i,patch)=>setRanges(id,rs=>rs.map((r,j)=>j===i?{...r,...patch}:r));
+  const rmRange=(id,i)=>setRanges(id,rs=>rs.filter((_,j)=>j!==i));
+  const expL=l=>{const blob=new Blob([JSON.stringify(l.ranges||[],null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=l.name.replace(/\s+/g,"_")+".json";a.click();};
+  const impL=e=>{const f=e.target.files?.[0],id=target.current;if(!f||!id)return;const rd=new FileReader();
+    rd.onload=ev=>{try{const j=JSON.parse(ev.target.result);const arr=Array.isArray(j)?j:(j.ranges||[]);
+      const norm=arr.map(r=>({from:r.from||r.s,to:r.to||r.e||r.from||r.s,label:String(r.label||r.l||"")})).filter(r=>DATE_RE.test(r.from||""));
+      if(!norm.length){alert("No valid ranges (need from / s).");return;}
+      setRanges(id,rs=>{const by=new Map(rs.map((r,i)=>[r.from,i]));const m=[...rs];for(const r of norm){if(by.has(r.from))m[by.get(r.from)]=r;else m.push(r);}return m.sort((a,b)=>a.from.localeCompare(b.from));});
+      alert(`Imported ${norm.length} ranges into the layer.`);}catch(err){alert("Invalid JSON.");}};
+    rd.readAsText(f);e.target.value="";};
+  const ed=layers.find(l=>l.id===editing);
+  const KIND={school:"school",holiday:"holiday",event:"event",custom:"custom"};
+  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"9px 11px"}}>
+    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:7}}>
+      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Presence layers</span>
+      <span style={{fontSize:8,color:C.mute}}>tap to show/hide · ✎ to edit ranges & import JSON</span>
+    </div>
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+      {layers.map(l=>{const on=l.visible!==false;return <span key={l.id}
+        style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 7px",borderRadius:14,cursor:"pointer",
+          border:`1px solid ${on?C.line:C.line2}`,background:on?C.panel2:"transparent",opacity:on?1:0.55}}>
+        <span onClick={()=>toggle(l.id)} style={{display:"inline-flex",alignItems:"center",gap:5}}>
+          <span style={{width:9,height:9,borderRadius:"50%",background:l.color,border:on?"none":`1px solid ${C.faint}`}}/>
+          <span style={{fontSize:9.5,fontWeight:700,color:on?C.ink:C.mute}}>{l.name}</span>
+          <span style={{fontSize:7.5,color:C.mute}}>{(l.ranges||[]).length}</span>
+        </span>
+        <span onClick={()=>setEditing(editing===l.id?null:l.id)} title="edit" style={{fontSize:9,color:editing===l.id?C.ink:C.mute,cursor:"pointer"}}>✎</span>
+      </span>;})}
+      <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
+        <input value={adding} onChange={e=>setAdding(e.target.value)} placeholder="+ layer" onKeyDown={e=>{if(e.key==="Enter")addLayer();}}
+          style={{...inp,width:84,padding:"3px 7px",borderRadius:14}}/>
+        <Btn small onClick={addLayer}>add</Btn>
+      </span>
+    </div>
+    {ed&&<div style={{marginTop:9,paddingTop:9,borderTop:`1px solid ${C.line2}`}}>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+        <input value={ed.name} onChange={e=>setLayer(ed.id,{name:e.target.value})} style={{...inp,width:150}}/>
+        <select value={ed.kind} onChange={e=>setLayer(ed.id,{kind:e.target.value})} style={{...inp,width:96}}>
+          {Object.keys(KIND).map(k=><option key={k} value={k}>{k}</option>)}</select>
+        {ed.kind!=="school"&&<input type="color" value={/^#/.test(ed.color)?ed.color:"#888880"} onChange={e=>setLayer(ed.id,{color:e.target.value})} style={{width:28,height:24,padding:0,border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,cursor:"pointer"}}/>}
+        {ed.kind==="school"&&<span style={{fontSize:8,color:C.mute}}>drives days-out (Inv 9)</span>}
+        <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+          <Btn small onClick={()=>{target.current=ed.id;fileRef.current.click();}}>↥ import</Btn>
+          <Btn small onClick={()=>expL(ed)}>↧ export</Btn>
+          <Btn small kind="danger" onClick={()=>del(ed.id)}>delete</Btn>
         </div>
       </div>
-      <div style={{marginBottom:8}}>
-        <Btn small kind="prim" onClick={()=>fileRef.current.click()}>↥ import JSON</Btn>
-        <input ref={fileRef} type="file" accept=".json" onChange={importJSON} style={{display:"none"}}/>
-        <span style={{fontSize:8,color:C.mute,marginLeft:8}}>accepts {`{from,to,label}`} or planner {`{s,e,l}`}</span>
-      </div>
-      <div style={{flex:1,overflow:"auto",borderTop:`1px solid ${C.line2}`}}>
-        {ranges.length===0&&<div style={{fontSize:9,color:C.mute,fontStyle:"italic",padding:14,textAlign:"center"}}>No ranges for {year}. Import a JSON file or add one below.</div>}
-        {ranges.map(({r,i})=><div key={i} style={{display:"flex",gap:4,alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${C.line2}`}}>
-          <input style={{...inp,flex:2}} value={r.label} onChange={e=>updR(i,{label:e.target.value})}/>
-          <input type="date" style={{...inp,width:130}} value={r.from} onChange={e=>updR(i,{from:e.target.value})}/>
-          <input type="date" style={{...inp,width:130}} value={r.to} onChange={e=>updR(i,{to:e.target.value})}/>
-          <Btn small kind="danger" onClick={()=>rmR(i)}>×</Btn>
+      <div style={{maxHeight:160,overflow:"auto"}}>
+        {(ed.ranges||[]).length===0&&<div style={{fontSize:9,color:C.mute,fontStyle:"italic",padding:"4px 0"}}>No ranges. Add one or import JSON ({`[{from,to,label}]`} or {`{s,e,l}`}).</div>}
+        {(ed.ranges||[]).map((r,i)=><div key={i} style={{display:"flex",gap:4,alignItems:"center",padding:"3px 0",borderBottom:`1px solid ${C.line2}`}}>
+          <input style={{...inp,flex:1}} value={r.label} placeholder="label" onChange={e=>updRange(ed.id,i,{label:e.target.value})}/>
+          <input type="date" style={{...inp,width:128}} value={r.from} onChange={e=>updRange(ed.id,i,{from:e.target.value})}/>
+          <input type="date" style={{...inp,width:128}} value={r.to} onChange={e=>updRange(ed.id,i,{to:e.target.value})}/>
+          <Btn small kind="danger" onClick={()=>rmRange(ed.id,i)}>×</Btn>
         </div>)}
       </div>
-      <div style={{display:"flex",gap:8,marginTop:10}}>
-        <Btn onClick={add}>+ add range</Btn>
-        <div style={{flex:1}}/>
-        <Btn onClick={onClose}>cancel</Btn>
-        <Btn kind="prim" onClick={save}>save</Btn>
-      </div>
-    </div>
-  </Overlay>;
+      <div style={{marginTop:7}}><Btn small onClick={()=>addRange(ed.id)}>+ add range</Btn></div>
+      <input ref={fileRef} type="file" accept=".json" onChange={impL} style={{display:"none"}}/>
+    </div>}
+  </div>;
 }
 
 /* ════════ YEAR VIEW — the footprint / home base (§7): confirmed placements + pending ════════ */
@@ -1261,90 +1278,131 @@ function monthGrid(y,m){
 function useFootprint(state){
   return useMemo(()=>{
     const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
-    const byDay={},famBy={},lockBy={},outBy={},perMonth={};
+    const byDay={},famBy={},lockBy={},perYM={};       // all keyed by full date / "Y-M" (multi-year)
     for(const r of state.requests){
       const s=siteById[r.siteId];if(!s)continue;
       const fp=r.footprint;
       if(fp.kind==="pinned"){
-        for(const d of fp.dates){(byDay[d]=byDay[d]||[]).push({state:r.state,type:r.shiftType,site:s});}
+        for(const d of fp.dates){(byDay[d]=byDay[d]||[]).push({state:r.state,type:r.shiftType,site:s});
+          if(r.state==="confirmed"){const dt=pd(d),k=`${dt.getFullYear()}-${dt.getMonth()}`;(perYM[k]=perYM[k]||{n:0,$:0});perYM[k].n++;perYM[k].$+=reqRate(r,s);}}
       }else if(r.state==="candidate"||r.state==="pending"){
         for(const d of fp.candidates){(byDay[d]=byDay[d]||[]).push({state:"smeared",type:r.shiftType,site:s});}
       }
     }
-    for(const sp of state.familySpans){
-      let d=pd(sp.from);const t=pd(sp.to);
-      while(d<=t){if(d.getFullYear()===YEAR)famBy[ds(d)]=sp.loc;d=ad(d,1);}
-    }
+    for(const sp of state.familySpans){let d=pd(sp.from);const t=pd(sp.to);while(d<=t){famBy[ds(d)]=sp.loc;d=ad(d,1);}}
     for(const l of state.locks)lockBy[l.date]=l;
-    for(const kc of state.kidCalendars)for(const rg of (kc.closedRanges||[])){
-      let d=pd(rg.from);const t=pd(rg.to);
-      while(d<=t){if(d.getFullYear()===YEAR)outBy[ds(d)]=true;d=ad(d,1);}
-    }
-    for(let m=0;m<12;m++){let n=0,$=0;
-      for(const r of state.requests){if(r.state==="confirmed"&&r.footprint.kind==="pinned"){
-        const s=siteById[r.siteId];if(!s)continue;
-        const inM=r.footprint.dates.filter(d=>pd(d).getMonth()===m&&pd(d).getFullYear()===YEAR);
-        n+=inM.length;$+=inM.length*reqRate(r,s);}}
-      perMonth[m]={n,$};}
-    return {byDay,famBy,lockBy,outBy,perMonth,loadM:loadByMonth(state)};
+    return {byDay,famBy,lockBy,perYM,loadYM:loadByYM(state)};
   },[state]);
+}
+/* layer-day coverage across a rendered year range, with future-year inference (shifted) */
+function layerCoverage(layers,startY,endY){
+  // for each layer+year, the ranges to use: real if present, else shift from the latest prior year that has any
+  const byDayLayers={};                                // dateStr → [{id,name,color,kind,inferred}]
+  for(const l of layers){
+    if(l.visible===false)continue;
+    const yearsWith=new Set((l.ranges||[]).map(r=>+r.from.slice(0,4)));
+    for(let y=startY;y<=endY;y++){
+      let src=y,inferred=false;
+      if(!yearsWith.has(y)){
+        const prior=[...yearsWith].filter(yy=>yy<y).sort((a,b)=>b-a)[0];
+        if(prior==null)continue; src=prior;inferred=true;
+      }
+      const shift=y-src;
+      for(const r of (l.ranges||[])){
+        if(+r.from.slice(0,4)!==src)continue;
+        let d=ad(pd(r.from),0);const t=pd(r.to);d.setFullYear(d.getFullYear()+shift);t.setFullYear(t.getFullYear()+shift);
+        while(d<=t){const k=ds(d);(byDayLayers[k]=byDayLayers[k]||[]).push({id:l.id,name:l.name,color:l.color,kind:l.kind,inferred});d=ad(d,1);}
+      }
+    }
+  }
+  return byDayLayers;
 }
 
 /* by-row year strip — structural spine + month selector. Click a row to load its windows. */
-function YearStrip({footprint,selected,onSelect,showOut,ceiling}){
-  const {byDay,famBy,lockBy,outBy,perMonth,loadM}=footprint;
-  const CELL=15,CG=2,WG=7,LBL=72,RG=3;
-  const grids=MON.map((_,m)=>monthGrid(YEAR,m));
-  const maxCols=Math.max(...grids.map(g=>g.totalCols));
-  const ml=ci=>(ci%7===0&&ci>0)?WG:(ci===0?0:CG);
-  return <div style={{overflowX:"auto",border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"10px 12px"}}>
-    <div style={{minWidth:LBL+maxCols*(CELL+CG)+(maxCols/7)*WG}}>
-      <div style={{display:"flex",marginBottom:4}}>
-        <div style={{width:LBL,flexShrink:0}}/>
-        {Array.from({length:maxCols},(_,ci)=>
-          <div key={ci} style={{width:CELL,marginLeft:ml(ci),textAlign:"center",fontSize:6.5,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
-      </div>
-      {MON.map((mn,m)=>{
-        const g=grids[m],pm=perMonth[m],isNow=m===TODAY.getMonth(),sel=m===selected;
-        const load=loadM?loadM[m]:0,tint=pressureTint(load,ceiling),hot=load>ceiling;
-        return <div key={m} onClick={()=>onSelect(m)} style={{display:"flex",alignItems:"center",marginBottom:m<11?RG:0,
-          cursor:"pointer",borderRadius:5,background:sel?C.sel:"transparent",padding:"1px 0",
-          boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
-          <div style={{width:LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
-            <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{mn.toUpperCase()}{sel&&" ◂"}</div>
-            <div style={{fontSize:7,color:pm.n?C.ink:C.mute}}>{pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
-            <div title={`${load} of ~${ceiling} comfortable shifts`} style={{fontSize:6.5,fontWeight:700,color:hot?C.pressHot:(load>0?C.est:C.mute)}}>
-              {load>0?`${load}/${ceiling}${hot?" ⚠":""}`:""}</div>
-          </div>
-          <div style={{display:"flex"}}>
-            {Array.from({length:maxCols},(_,ci)=>{
-              const d=ci<g.cells.length?g.cells[ci]:null;
-              if(!d)return <div key={ci} style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0}}/>;
-              const str=ds(d),we=d.getDay()===0||d.getDay()===6;
-              const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],out=outBy[str];
-              const conf=marks.find(x=>x.state==="confirmed");
-              const neg=marks.find(x=>x.state==="override");
-              const pend=marks.find(x=>x.state==="pending");
-              const cand=marks.find(x=>x.state==="candidate");
-              const smear=marks.find(x=>x.state==="smeared");
-              let bg=fam?LOC_TINT[fam]:(tint||(we?C.weekend:C.panel));
-              if(showOut&&out&&!fam&&!tint)bg=C.tintOut;
-              let border=`1px solid ${C.line2}`,inner=null;
-              if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
-              else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
-              else if(pend){border=`1.5px solid ${C.blue}`;}
-              else if(cand){border=`1.5px solid ${C.faint}`;}
-              else if(smear){inner="dotted";}
-              return <div key={ci} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}`}
-                style={{width:CELL,height:CELL,marginLeft:ml(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box"}}>
-                {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
-                {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",
-                  background:lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
-              </div>;
-            })}
-          </div>
+const CAL_CELL=15,CAL_CG=2,CAL_WG=7,CAL_LBL=74,CAL_RG=3;
+const calMl=ci=>(ci%7===0&&ci>0)?CAL_WG:(ci===0?0:CAL_CG);
+const calMaxCols=42;
+/* one month as a weekday-aligned by-row strip */
+function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling}){
+  const {byDay,famBy,lockBy,perYM,loadYM}=footprint;
+  const g=monthGrid(y,m),isNow=y===YEAR&&m===TODAY.getMonth();
+  const pm=perYM[`${y}-${m}`],ld=loadYM[`${y}-${m}`]||{conf:0,win:0},load=ld.conf+ld.win;
+  const tint=pressureTint(load,ceiling),hot=load>ceiling;
+  return <div onClick={selectable?()=>onSelect(y,m):undefined} style={{display:"flex",alignItems:"center",marginBottom:CAL_RG,
+    cursor:selectable?"pointer":"default",borderRadius:5,background:sel?C.sel:"transparent",padding:"1px 0",
+    boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
+    <div style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
+      <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{MON[m].toUpperCase()}{sel&&" ◂"}</div>
+      <div style={{fontSize:7,color:pm&&pm.n?C.ink:C.mute}}>{pm&&pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
+      <div title={`${ld.conf} confirmed + ${ld.win} window of ~${ceiling}/mo`} style={{fontSize:6.5,fontWeight:700,color:hot?C.pressHot:(load>0?C.est:C.mute)}}>
+        {load>0?`${ld.conf}${ld.win?`+${ld.win}`:""}/${ceiling}${hot?" ⚠":""}`:""}</div>
+    </div>
+    <div style={{display:"flex"}}>
+      {Array.from({length:calMaxCols},(_,ci)=>{
+        const d=ci<g.cells.length?g.cells[ci]:null;
+        if(!d)return <div key={ci} style={{width:CAL_CELL,height:CAL_CELL,marginLeft:calMl(ci),flexShrink:0}}/>;
+        const str=ds(d),we=d.getDay()===0||d.getDay()===6;
+        const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],lays=layerCov[str]||[];
+        const conf=marks.find(x=>x.state==="confirmed"),neg=marks.find(x=>x.state==="override");
+        const pend=marks.find(x=>x.state==="pending"),cand=marks.find(x=>x.state==="candidate"),smear=marks.find(x=>x.state==="smeared");
+        let bg=fam?LOC_TINT[fam]:(tint||(we?C.weekend:C.panel));
+        let border=`1px solid ${C.line2}`,inner=null;
+        if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
+        else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
+        else if(pend){border=`1.5px solid ${C.blue}`;}
+        else if(cand){border=`1.5px solid ${C.faint}`;}
+        else if(smear){inner="dotted";}
+        const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
+        return <div key={ci} title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · family @ ${LOC_NAME[fam]}`:""}${lk?` · lock: ${lk.label}`:""}${lt}`}
+          style={{width:CAL_CELL,height:CAL_CELL,marginLeft:calMl(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box"}}>
+          {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
+          {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
+          {lays.length>0&&<div style={{position:"absolute",left:1,right:1,bottom:1,display:"flex",gap:1,justifyContent:"center"}}>
+            {lays.slice(0,4).map((x,i)=><span key={i} style={{width:3,height:3,borderRadius:"50%",background:x.color,opacity:x.inferred?0.45:1}}/>)}
+          </div>}
         </div>;
       })}
+    </div>
+  </div>;
+}
+/* the calendar engine: dual-mode (annual / school-year), scrolls indefinitely, future years inferred */
+function Calendar({footprint,layers,selected,onSelect,ceiling}){
+  const [mode,setMode]=useState("cal");                       // "cal" | "school"
+  const [range,setRange]=useState({s:YEAR-1,e:YEAR+2});
+  const scRef=useRef();
+  const cov=useMemo(()=>layerCoverage(layers,range.s,range.e+1),[layers,range.s,range.e]);
+  const onScroll=e=>{const el=e.target;if(el.scrollHeight-el.scrollTop-el.clientHeight<120)setRange(r=>({...r,e:r.e+1}));};
+  // build ordered render items
+  const items=[];
+  if(mode==="cal"){for(let y=range.s;y<=range.e;y++){items.push({h:`${y}`});for(let m=0;m<12;m++)items.push({y,m});}}
+  else{for(let y=range.s;y<=range.e;y++){items.push({h:`${y}–${String((y+1)%100).padStart(2,"0")} school year`});
+    for(const m of [7,8,9,10,11])items.push({y,m});for(const m of [0,1,2,3,4,5,6])items.push({y:y+1,m});}}
+  const width=CAL_LBL+calMaxCols*(CAL_CELL+CAL_CG)+(calMaxCols/7)*CAL_WG;
+  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:`1px solid ${C.line2}`}}>
+      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.gray}}>Calendar</span>
+      <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
+        {[["cal","year"],["school","school yr"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
+          padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
+      </div>
+      <span style={{marginLeft:"auto",fontSize:8,color:C.mute}}>tap a {YEAR} month to load its windows</span>
+    </div>
+    <div ref={scRef} onScroll={onScroll} style={{maxHeight:300,overflow:"auto",padding:"8px 12px"}}>
+      <div style={{minWidth:width}}>
+        <div style={{textAlign:"center",marginBottom:6}}><button onClick={()=>setRange(r=>({...r,s:r.s-1}))}
+          style={{fontFamily:MONO,fontSize:8,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>◤ earlier</button></div>
+        {/* shared DOW header */}
+        <div style={{display:"flex",position:"sticky",top:0,background:C.panel,zIndex:2,paddingBottom:3}}>
+          <div style={{width:CAL_LBL,flexShrink:0}}/>
+          {Array.from({length:calMaxCols},(_,ci)=><div key={ci} style={{width:CAL_CELL,marginLeft:calMl(ci),textAlign:"center",fontSize:6.5,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
+        </div>
+        {items.map((it,i)=> it.h!=null
+          ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:11,fontWeight:900,color:C.ink}}>{it.h}</div>
+          : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
+              selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}/>)}
+        <div style={{textAlign:"center",marginTop:4}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
+          style={{fontFamily:MONO,fontSize:8,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>later ◢</button></div>
+      </div>
     </div>
   </div>;
 }
@@ -1356,6 +1414,7 @@ const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignIt
   <LegDot dotted>candidate</LegDot>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:LOC_TINT.santa_fe,border:`1px solid ${C.line}`}}/>family</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
+  <span style={{display:"inline-flex",alignItems:"center",gap:3}}><span style={{width:3,height:3,borderRadius:"50%",background:C.juniper}}/><span style={{width:3,height:3,borderRadius:"50%",background:C.ocean}}/>layer day (~ inferred)</span>
   <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:3}}>month pressure
     {PRESS_RAMP.map(c=><span key={c} style={{width:11,height:11,borderRadius:2,background:c,border:`1px solid ${C.line}`}}/>)}
     <span style={{color:C.pressHot}}>over ceiling</span></span>
@@ -1421,7 +1480,6 @@ function App(){
       <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
         <Btn small onClick={cycleTheme} title={`theme: ${theme}`}>{themeIcon}</Btn>
         <Btn small onClick={()=>setModal("sites")}>sites</Btn>
-        <Btn small onClick={()=>setModal("schedule")}>schedule</Btn>
         <span style={{width:1,height:16,background:C.line}}/>
         <Btn small kind="prim" onClick={share}>share link</Btn>
         <Btn small onClick={exportJSON}>export</Btn>
@@ -1447,7 +1505,6 @@ function App(){
       {surface==="pending"&&<Pending state={state} setState={setState} tsp={tsp}/>}
     </div>
     {modal==="sites"&&<SiteWizard state={state} setState={setState} onClose={()=>setModal(null)}/>}
-    {modal==="schedule"&&<ScheduleEditor state={state} setState={setState} onClose={()=>setModal(null)}/>}
   </div>;
 }
 /* ════════ ERROR BOUNDARY — last-resort guard against a white screen ════════ */
