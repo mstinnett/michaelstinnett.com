@@ -9,6 +9,7 @@
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script">
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js" as="script">
 <style>
   *{margin:0;padding:0;box-sizing:border-box;}
   html,body,#root{height:100%;}
@@ -29,6 +30,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
 <script type="text/babel">
 const {useState,useMemo,useCallback,useRef,useEffect}=React;
 
@@ -157,6 +159,85 @@ function cReq(id,siteId,shiftType,dates){
   return {id,siteId,shiftType,opens:ds(ad(pd(dates[0]),-70)),dueBy:ds(ad(pd(dates[0]),-25)),
     state:"confirmed",submittedOn:ds(ad(pd(dates[0]),-40)),resolvedOn:ds(ad(pd(dates[0]),-30)),
     expectedResponseBy:ds(ad(pd(dates[0]),-26)),footprint:{kind:"pinned",dates}};
+}
+
+/* ════════ STATE SANITY (keep the page from crashing on bad input) ════════
+   Every load path — localStorage, file import, or a share-link in the URL —
+   passes through sanitizeState. Unknown/garbage fields fall back to seed
+   defaults; malformed requests are dropped; old schemas migrate forward. */
+const DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
+const isDateArr=a=>Array.isArray(a)&&a.length>0&&a.every(d=>typeof d==="string"&&DATE_RE.test(d));
+const numOr=(v,d)=>Number.isFinite(+v)?+v:d;
+function sanitizePace(p,def){
+  if(!p||typeof p!=="object")return def;
+  const src=Array.isArray(p.curve)?p.curve:[];
+  const curve=Array.from({length:12},(_,m)=>{
+    const sh=+((src[m]||{}).shifts);
+    return {month:m+1,shifts:Number.isFinite(sh)?Math.max(0,Math.min(30,Math.round(sh))):def.curve[m].shifts};
+  });
+  const pc=+p.pressureCeiling;
+  return {pressureCeiling:Number.isFinite(pc)&&pc>=1?Math.min(30,Math.round(pc)):def.pressureCeiling,curve};
+}
+function sanitizeState(obj){
+  try{
+    if(!obj||typeof obj!=="object")return null;
+    const seed=seedState(),reach=["local","nm","rural_nm"];
+    let sites=(Array.isArray(obj.sites)?obj.sites:[]).map(s=>{
+      if(!s||typeof s!=="object"||!s.id)return null;
+      const c=s.cadence||{};
+      const out={id:String(s.id),name:String(s.name||"Unnamed"),note:String(s.note||""),
+        reach:reach.includes(s.reach)?s.reach:"local",
+        homeBaseLoc:LOC_NAME[s.homeBaseLoc]?s.homeBaseLoc:"boston",
+        dayRate:numOr(s.dayRate,1800),nightRate:numOr(s.nightRate,2200),
+        dayHours:numOr(s.dayHours,9),nightHours:numOr(s.nightHours,9),
+        submissionType:s.submissionType==="by_window"?"by_window":"by_shift",
+        cadence:{opensDaysBefore:numOr(c.opensDaysBefore,60),dueByDaysBefore:numOr(c.dueByDaysBefore,21),expectedResponseDays:numOr(c.expectedResponseDays,14)}};
+      if(s.dependsOn)out.dependsOn=String(s.dependsOn);
+      return out;
+    }).filter(Boolean);
+    if(!sites.length)sites=seed.sites;
+    const ids=new Set(sites.map(s=>s.id));
+    sites.forEach(s=>{if(s.dependsOn&&!ids.has(s.dependsOn))delete s.dependsOn;});
+    const pace=sanitizePace(obj.pace,seed.pace);
+    const kidCalendars=(Array.isArray(obj.kidCalendars)&&obj.kidCalendars.length?obj.kidCalendars:seed.kidCalendars).map(kc=>({
+      childId:String((kc&&kc.childId)||"kid"),
+      schoolDaysOutWeight:numOr(kc&&kc.schoolDaysOutWeight,1),
+      closedRanges:(Array.isArray(kc&&kc.closedRanges)?kc.closedRanges:[]).filter(r=>r&&DATE_RE.test(r.from||"")).map(r=>({from:r.from,to:DATE_RE.test(r.to||"")?r.to:r.from,label:String(r.label||"Closed")})),
+    }));
+    const familySpans=(Array.isArray(obj.familySpans)?obj.familySpans:seed.familySpans).filter(s=>s&&DATE_RE.test(s.from||"")&&DATE_RE.test(s.to||"")&&s.loc);
+    const locks=(Array.isArray(obj.locks)?obj.locks:seed.locks).filter(l=>l&&DATE_RE.test(l.date||"")).map(l=>{
+      const o={date:l.date,kind:l.kind==="hard"?"hard":"soft",label:String(l.label||"lock")};
+      if(Number.isFinite(+l.recoveryBufferHrs))o.recoveryBufferHrs=+l.recoveryBufferHrs;return o;});
+    const STATES=["draft","submitted","confirmed","denied","expired"];
+    const requests=(Array.isArray(obj.requests)?obj.requests:[]).map(r=>{
+      if(!r||!r.id||!ids.has(r.siteId))return null;
+      const ft=r.footprint||{};let footprint=null;
+      if(ft.kind==="pinned"&&isDateArr(ft.dates))footprint={kind:"pinned",dates:ft.dates};
+      else if(ft.kind==="smeared"&&isDateArr(ft.candidates))footprint={kind:"smeared",candidates:ft.candidates,take:Math.max(1,Math.min(ft.candidates.length,numOr(ft.take,1)))};
+      else return null;
+      const o={id:String(r.id),siteId:r.siteId,shiftType:r.shiftType==="night"?"night":"day",
+        state:STATES.includes(r.state)?r.state:"draft",footprint,
+        opens:DATE_RE.test(r.opens||"")?r.opens:ds(TODAY),dueBy:DATE_RE.test(r.dueBy||"")?r.dueBy:ds(TODAY)};
+      ["expectedResponseBy","submittedOn","resolvedOn"].forEach(k=>{if(DATE_RE.test(r[k]||""))o[k]=r[k];});
+      return o;
+    }).filter(Boolean);
+    return {sites,familySpans,locks,kidCalendars,pace,requests};
+  }catch(e){console.warn("sanitizeState failed",e);return null;}
+}
+/* read a share-link payload from the URL hash (#s=…), LZ-decompress + validate */
+function readHashState(){
+  try{
+    const m=(location.hash||"").match(/[#&]s=([^&]+)/);
+    if(!m||typeof LZString==="undefined")return null;
+    const json=LZString.decompressFromEncodedURIComponent(m[1]);
+    if(!json)return null;
+    return sanitizeState(JSON.parse(json));
+  }catch(e){console.warn("bad share link",e);return null;}
+}
+function shareLink(state){
+  if(typeof LZString==="undefined")return null;
+  try{return location.origin+location.pathname+"#s="+LZString.compressToEncodedURIComponent(JSON.stringify(state));}
+  catch(e){return null;}
 }
 
 /* ════════ DERIVED VALUES & FORMULAS (§4) — all readouts (Inv 5) ════════ */
@@ -1165,14 +1246,18 @@ const LegDot=({bg,ring,dotted,children})=> <span style={{display:"inline-flex",a
 /* ════════ APP SHELL ════════ */
 function App(){
   const [state,setState]=useState(()=>{
-    try{const s=localStorage.getItem("perDiemState");if(s)return JSON.parse(s);}catch(e){}
+    const fromUrl=readHashState();                       // a share-link wins on first load
+    if(fromUrl){try{history.replaceState(null,"",location.pathname+location.search);}catch(_){}return fromUrl;}
+    try{const s=localStorage.getItem("perDiemState");if(s){const v=sanitizeState(JSON.parse(s));if(v)return v;}}catch(e){}
     return seedState();
   });
   const [surface,setSurface]=useState("board");
   const [monthIdx,setMonthIdx]=useState(7); // August — requests are open now
   const [modal,setModal]=useState(null);    // "sites" | "schedule"
+  const [toast,setToast]=useState(null);
   const fileRef=useRef();
   useEffect(()=>{try{localStorage.setItem("perDiemState",JSON.stringify(state));}catch(e){}},[state]);
+  useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),4000);return ()=>clearTimeout(t);},[toast]);
   const tsp=useMemo(()=>typicalShiftPay(state.sites),[state.sites]);
 
   const exportJSON=()=>{
@@ -1180,8 +1265,17 @@ function App(){
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="per-diem.json";a.click();
   };
   const importJSON=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
-    rd.onload=ev=>{try{setState(JSON.parse(ev.target.result));}catch(err){alert("Invalid file");}};rd.readAsText(f);};
+    rd.onload=ev=>{try{const v=sanitizeState(JSON.parse(ev.target.result));if(v){setState(v);}else alert("Couldn’t read that file — wrong shape.");}catch(err){alert("Invalid file");}};rd.readAsText(f);};
   const reset=()=>{if(confirm("Reset to seed data? This discards your requests and dials."))setState(seedState());};
+  const share=()=>{
+    const url=shareLink(state);
+    if(!url){setToast("Couldn’t build a link (compressor unavailable).");return;}
+    const big=url.length>8000;
+    const msg=`Link copied · ${url.length.toLocaleString()} chars${big?" · ⚠ long, may not survive every browser/proxy":""}`;
+    if(navigator.clipboard&&navigator.clipboard.writeText)
+      navigator.clipboard.writeText(url).then(()=>setToast(msg)).catch(()=>{prompt("Copy this share link:",url);});
+    else prompt("Copy this share link:",url);
+  };
 
   const tabs=[["board","Board"],["gantt","Gantt"]];
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
@@ -1196,12 +1290,16 @@ function App(){
         <Btn small onClick={()=>setModal("sites")}>sites</Btn>
         <Btn small onClick={()=>setModal("schedule")}>schedule</Btn>
         <span style={{width:1,height:16,background:C.line}}/>
+        <Btn small kind="prim" onClick={share}>share link</Btn>
         <Btn small onClick={exportJSON}>export</Btn>
         <Btn small onClick={()=>fileRef.current.click()}>import</Btn>
         <Btn small onClick={reset}>reset</Btn>
         <input ref={fileRef} type="file" accept=".json" onChange={importJSON} style={{display:"none"}}/>
       </div>
     </div>
+    {toast&&<div style={{position:"fixed",bottom:18,left:"50%",transform:"translateX(-50%)",zIndex:300,
+      background:C.ink,color:"#fff",fontSize:10,fontWeight:600,padding:"8px 14px",borderRadius:6,
+      boxShadow:"0 8px 24px rgba(0,0,0,.25)",maxWidth:"90vw",textAlign:"center"}}>{toast}</div>}
     {/* tabs */}
     <div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:"#fff",flexShrink:0}}>
       {tabs.map(([id,label])=><button key={id} onClick={()=>setSurface(id)}
@@ -1219,7 +1317,29 @@ function App(){
     {modal==="schedule"&&<ScheduleEditor state={state} setState={setState} onClose={()=>setModal(null)}/>}
   </div>;
 }
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+/* ════════ ERROR BOUNDARY — last-resort guard against a white screen ════════ */
+class Boundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(err){return {err};}
+  componentDidCatch(e,info){console.error("Per Diem crashed:",e,info);}
+  render(){
+    if(!this.state.err)return this.props.children;
+    return <div style={{fontFamily:MONO,maxWidth:440,margin:"12vh auto",padding:"0 20px",color:C.ink,textAlign:"center"}}>
+      <div style={{fontSize:14,fontWeight:800,marginBottom:8}}>Something went sideways.</div>
+      <div style={{fontSize:11,color:C.gray,lineHeight:1.6,marginBottom:16}}>
+        The data couldn’t be rendered — usually a malformed share link or import.
+        Your local copy is untouched until you reset.
+      </div>
+      <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+        <button onClick={()=>{try{history.replaceState(null,"",location.pathname);}catch(_){}location.reload();}}
+          style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.line}`,background:"#fff",color:C.ink}}>Drop link &amp; reload</button>
+        <button onClick={()=>{try{localStorage.removeItem("perDiemState");history.replaceState(null,"",location.pathname);}catch(_){}location.reload();}}
+          style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.ink}`,background:C.ink,color:"#fff"}}>Reset to sample</button>
+      </div>
+    </div>;
+  }
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Boundary><App/></Boundary>);
 </script>
 </body>
 </html>
