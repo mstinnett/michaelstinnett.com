@@ -790,7 +790,7 @@ function PaceCurve({pace,setPace,tsp}){
   </div>;
 }
 
-function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto}){
+function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   view=view||"all";
   const [types,setTypes]=useState({});
   const [open,setOpen]=useState(null);
@@ -822,7 +822,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto}){
     </div>
     {drawer&&<div style={{padding:"0 12px 12px"}}>{paceInner}</div>}
   </div>;
-  const calEl=<><Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling} sel={sel} setSel={setSel} goto={goto}/><FootLegend/></>;
+  const calEl=<><Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling} sel={sel} setSel={setSel} goto={goto} mobile={mobile}/>{!mobile&&<FootLegend/>}</>;
   const layersEl=<LayersPanel state={state} setState={setState}/>;
   const tripsEl=<TripsDrawer state={state} setState={setState}/>;
   const sitesEl=<SitesWorksheet state={state} setState={setState}/>;
@@ -1374,12 +1374,49 @@ function layerCoverage(layers,startY,endY){
 const CAL_CELL=15,CAL_CG=2,CAL_WG=7,CAL_LBL=74,CAL_RG=3;
 const calMl=ci=>(ci%7===0&&ci>0)?CAL_WG:(ci===0?0:CAL_CG);
 const calMaxCols=42;
+/* one shared per-day visual, used by the by-row strip and the mobile month grid */
+function dayVisual(d,ctx){
+  const str=ds(d),we=d.getDay()===0||d.getDay()===6;
+  const marks=ctx.byDay[str]||[],fam=ctx.famBy[str],lk=ctx.lockBy[str],lays=ctx.layerCov[str]||[];
+  const closed=fam&&fam.wf==="closed";
+  const conf=marks.find(x=>x.state==="confirmed"),neg=marks.find(x=>x.state==="override"),pend=marks.find(x=>x.state==="pending"),cand=marks.find(x=>x.state==="candidate"),smear=marks.find(x=>x.state==="smeared");
+  let bg=fam?LOC_TINT[fam.loc]:(ctx.tint||(we?C.weekend:C.panel)),border=`1px solid ${C.line2}`,inner=null;
+  if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
+  else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
+  else if(pend){border=`1.5px solid ${C.blue}`;}
+  else if(cand){border=`1.5px solid ${C.faint}`;}
+  else if(smear){inner="dotted";}
+  const drawing=ctx.drawSet&&ctx.drawSet.has(str),inSel=ctx.selReqDates&&ctx.selReqDates.has(str),inTrip=ctx.selTripDates&&ctx.selTripDates.has(str);
+  if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
+  const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
+  const title=`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
+  return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,bg,border,inner,drawing,inSel,inTrip,title};
+}
+function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m}){
+  const base={...box,marginLeft:ml||0,flexShrink:0,borderRadius:2,position:"relative",boxSizing:"border-box"};
+  if(!d)return <div style={base}/>;
+  const v=dayVisual(d,ctx);
+  return <div data-date={v.str} onPointerDown={tool&&tool!=="off"?e=>onCellDown(e,v.str,y,m):undefined}
+    onClick={onTap?()=>onTap(v.str):undefined} title={v.title}
+    style={{...base,background:v.bg,border:v.border,
+      cursor:v.closed?"not-allowed":(tool==="pencil"?"crosshair":(tool==="eraser"?"cell":"pointer")),touchAction:tool&&tool!=="off"?"none":"auto",
+      outline:v.inSel?`2px solid ${C.ink}`:(v.inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:v.closed&&!v.conf&&!v.neg?0.82:1,
+      display:num?"flex":"block",alignItems:"center",justifyContent:"center"}}>
+    {num&&<span style={{fontSize:11,fontWeight:v.conf?800:500,color:v.conf?"#fff":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
+    {v.closed&&!v.conf&&!v.neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
+    {v.inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
+    {v.lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:v.lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
+    {v.lays.length>0&&<div style={{position:"absolute",left:1,right:1,bottom:1,display:"flex",gap:1,justifyContent:"center",pointerEvents:"none"}}>
+      {v.lays.slice(0,4).map((x,i)=><span key={i} style={{width:3,height:3,borderRadius:"50%",background:x.color,opacity:x.inferred?0.45:1}}/>)}</div>}
+  </div>;
+}
 /* one month as a weekday-aligned by-row strip — cells are the drawing surface */
 function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,selTripDates,onCellDown}){
   const {byDay,famBy,lockBy,perYM,loadYM}=footprint;
   const g=monthGrid(y,m),isNow=y===YEAR&&m===TODAY.getMonth();
   const pm=perYM[`${y}-${m}`],ld=loadYM[`${y}-${m}`]||{conf:0,win:0},load=ld.conf+ld.win;
   const tint=pressureTint(load,ceiling),hot=load>ceiling;
+  const ctx={byDay,famBy,lockBy,layerCov,tint,drawSet,selReqDates,selTripDates};
   const barW=44,confW=Math.min(barW,ld.conf/Math.max(1,ceil2(ceiling))*barW),winW=Math.min(barW-confW,ld.win/Math.max(1,ceil2(ceiling))*barW);
   function ceil2(c){return Math.max(c,load);}                 // bar scales to whichever is larger
   return <div style={{display:"flex",alignItems:"center",marginBottom:CAL_RG,borderRadius:5,
@@ -1400,41 +1437,13 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
     <div style={{display:"flex"}}>
       {Array.from({length:calMaxCols},(_,ci)=>{
         const d=ci<g.cells.length?g.cells[ci]:null;
-        if(!d)return <div key={ci} style={{width:CAL_CELL,height:CAL_CELL,marginLeft:calMl(ci),flexShrink:0}}/>;
-        const str=ds(d),we=d.getDay()===0||d.getDay()===6;
-        const marks=byDay[str]||[],fam=famBy[str],lk=lockBy[str],lays=layerCov[str]||[];
-        const closed=fam&&fam.wf==="closed";
-        const conf=marks.find(x=>x.state==="confirmed"),neg=marks.find(x=>x.state==="override");
-        const pend=marks.find(x=>x.state==="pending"),cand=marks.find(x=>x.state==="candidate"),smear=marks.find(x=>x.state==="smeared");
-        let bg=fam?LOC_TINT[fam.loc]:(tint||(we?C.weekend:C.panel));
-        let border=`1px solid ${C.line2}`,inner=null;
-        if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
-        else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
-        else if(pend){border=`1.5px solid ${C.blue}`;}
-        else if(cand){border=`1.5px solid ${C.faint}`;}
-        else if(smear){inner="dotted";}
-        const drawing=drawSet&&drawSet.has(str), inSel=selReqDates&&selReqDates.has(str), inTrip=selTripDates&&selTripDates.has(str);
-        if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
-        const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
-        return <div key={ci} data-date={str}
-          onPointerDown={tool&&tool!=="off"?e=>onCellDown(e,str,y,m):undefined}
-          title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`}
-          style={{width:CAL_CELL,height:CAL_CELL,marginLeft:calMl(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box",
-            cursor:closed?"not-allowed":(tool==="pencil"?"crosshair":(tool==="eraser"?"cell":"pointer")),touchAction:tool&&tool!=="off"?"none":"auto",
-            outline:inSel?`2px solid ${C.ink}`:(inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:closed&&!conf&&!neg?0.82:1}}>
-          {closed&&!conf&&!neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
-          {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
-          {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
-          {lays.length>0&&<div style={{position:"absolute",left:1,right:1,bottom:1,display:"flex",gap:1,justifyContent:"center",pointerEvents:"none"}}>
-            {lays.slice(0,4).map((x,i)=><span key={i} style={{width:3,height:3,borderRadius:"50%",background:x.color,opacity:x.inferred?0.45:1}}/>)}
-          </div>}
-        </div>;
+        return <DayCell key={ci} d={d} ctx={ctx} box={{width:CAL_CELL,height:CAL_CELL}} ml={calMl(ci)} tool={tool} onCellDown={onCellDown} y={y} m={m}/>;
       })}
     </div>
   </div>;
 }
 /* the calendar engine + workbench: dual-mode, infinite scroll, future inference, draw/erase/edit */
-function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto}){
+function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto,mobile}){
   const sites=state.sites;
   const [mode,setMode]=useState("cal");
   const [range,setRange]=useState({s:YEAR-1,e:YEAR+2});
@@ -1442,7 +1451,10 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const [drawType,setDrawType]=useState("day");
   const [drawSiteId,setDrawSiteId]=useState(sites[0]&&sites[0].id);
   const [draw,setDraw]=useState(null);                        // {startStr,endStr,y,m}
+  const [focusY,setFocusY]=useState(YEAR);                    // mobile focus year
+  const [editing,setEditing]=useState(false);                 // mobile edit mode (locks scroll, expands month)
   const cov=useMemo(()=>layerCoverage(layers,range.s,range.e+1),[layers,range.s,range.e]);
+  const focusCov=useMemo(()=>layerCoverage(layers,focusY-1,focusY+1),[layers,focusY]);
   const onScroll=e=>{const el=e.target;if(el.scrollHeight-el.scrollTop-el.clientHeight<140)setRange(r=>({...r,e:r.e+1}));};
   const setReqs=fn=>setState(s=>({...s,requests:fn(s.requests)}));
   const addReq=r=>setReqs(rs=>mergeCandidates([...rs,r]));
@@ -1495,25 +1507,20 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     for(const mm of [7,8,9,10,11])items.push({y,m:mm});for(const mm of [0,1,2,3,4,5,6])items.push({y:y+1,m:mm});}}
   const width=CAL_LBL+calMaxCols*(CAL_CELL+CAL_CG)+(calMaxCols/7)*CAL_WG;
   const TOOLS=[["select","⌖ select"],["pencil","✎ draw"],["eraser","⌫ erase"]];
-  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
-    <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
-      <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
-        {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSel(null);}} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
-          padding:"4px 9px",border:"none",cursor:"pointer",background:tool===k?C.ink:"transparent",color:tool===k?C.bg:C.gray}}>{l}</button>)}
-      </div>
-      {tool==="pencil"&&<div style={{display:"inline-flex",alignItems:"center",gap:5}}>
-        <select value={drawSiteId} onChange={e=>setDrawSiteId(e.target.value)} style={{...inp,width:120,padding:"3px 6px"}}>
-          {sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
-        <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
-          {["day","night"].map(t=><button key={t} onClick={()=>setDrawType(t)} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,padding:"3px 7px",border:"none",cursor:"pointer",background:drawType===t?C.ink:"transparent",color:drawType===t?C.bg:C.gray}}>{t}</button>)}
-        </div>
-      </div>}
-      <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginLeft:"auto"}}>
-        {[["cal","year"],["school","school yr"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
-          padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
-      </div>
+  const toolPalette=<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+    <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
+      {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSel(null);}} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
+        padding:"4px 9px",border:"none",cursor:"pointer",background:tool===k?C.ink:"transparent",color:tool===k?C.bg:C.gray}}>{l}</button>)}
     </div>
-    {/* selected-window edit bar — drag to move on the calendar; fine controls here */}
+    {tool==="pencil"&&<div style={{display:"inline-flex",alignItems:"center",gap:5}}>
+      <select value={drawSiteId} onChange={e=>setDrawSiteId(e.target.value)} style={{...inp,width:120,padding:"3px 6px"}}>
+        {sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
+      <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
+        {["day","night"].map(t=><button key={t} onClick={()=>setDrawType(t)} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,padding:"3px 7px",border:"none",cursor:"pointer",background:drawType===t?C.ink:"transparent",color:drawType===t?C.bg:C.gray}}>{t}</button>)}
+      </div>
+    </div>}
+  </div>;
+  const editBars=<>
     {sr&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
       <span style={{fontSize:9,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {sr.state}</span></span>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,-1)}}))}>◀</Btn>
@@ -1526,7 +1533,6 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       <Btn small kind="danger" onClick={()=>{delReq(sr.id);setSel(null);}}>delete</Btn>
       <Btn small onClick={()=>setSel(null)}>done</Btn>
     </div>}
-    {/* selected-trip bar — edit takes you to the trip tab */}
     {stp&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
       <span style={{fontSize:9,fontWeight:800}}>{stp.name} <span style={{color:C.mute,fontWeight:600}}>{LOC_NAME[stp.loc]} · {stp.workFactor} · {md(stp.from)}–{md(stp.to)}</span></span>
       <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),-1)),to:ds(ad(pd(x.to),-1))}))}>◀</Btn>
@@ -1535,6 +1541,67 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       <Btn small kind="danger" onClick={()=>{setTrip(stp.id,x=>({...x,placed:false}));setSel(null);}}>unplace</Btn>
       <Btn small onClick={()=>setSel(null)}>done</Btn>
     </div>}
+  </>;
+
+  if(mobile){
+    const fM=selected,fld=loadYM[`${focusY}-${fM}`]||{conf:0,win:0},ftint=pressureTint(fld.conf+fld.win,ceiling);
+    const fctx={byDay:footprint.byDay,famBy:footprint.famBy,lockBy:footprint.lockBy,layerCov:focusCov,tint:ftint,
+      drawSet:draw&&draw.y===focusY&&draw.m===fM?drawSet:null,selReqDates:srDates,selTripDates:stpDates};
+    const fg=monthGrid(focusY,fM);
+    const tapSelect=str=>{const r=editableAt(str);if(r){setSel({kind:"req",id:r.id});return;}const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);};
+    const monthStep=d=>{let nm=fM+d,ny=focusY;if(nm<0){nm=11;ny--;}else if(nm>11){nm=0;ny++;}setFocusY(ny);onSelect(ny,nm);};
+    const dow=<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
+      {"MTWTFSS".split("").map((c,i)=><div key={i} style={{textAlign:"center",fontSize:8,fontWeight:700,color:C.mute}}>{c}</div>)}</div>;
+    const grid=big=><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+      {fg.cells.map((d,i)=><DayCell key={i} d={d} ctx={fctx} box={{width:"100%",aspectRatio:"1"}} num
+        tool={big?tool:null} onCellDown={cellDown} onTap={big?undefined:tapSelect} y={focusY} m={fM}/>)}</div>;
+    return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
+      {/* pressure ribbon — the year at a glance */}
+      <div style={{display:"flex",alignItems:"center",gap:4,padding:"7px 8px",borderBottom:`1px solid ${C.line2}`,overflowX:"auto"}}>
+        <button onClick={()=>setFocusY(y=>y-1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>‹</button>
+        <span style={{fontSize:9,fontWeight:800,minWidth:30,textAlign:"center"}}>{focusY}</span>
+        <button onClick={()=>setFocusY(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>›</button>
+        {MON.map((mn,m)=>{const l=loadYM[`${focusY}-${m}`]||{conf:0,win:0},t=pressureTint(l.conf+l.win,ceiling),on=m===fM;
+          return <button key={m} onClick={()=>onSelect(focusY,m)} style={{flexShrink:0,fontFamily:MONO,fontSize:8.5,fontWeight:800,
+            padding:"4px 7px",borderRadius:5,cursor:"pointer",border:`1px solid ${on?C.ink:C.line}`,
+            background:on?C.ink:(t||C.panel),color:on?C.bg:C.ink}}>{mn[0]}</button>;})}
+      </div>
+      {/* focus month — view (scrolls); tap to inspect */}
+      <div style={{padding:"9px 11px"}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:7}}>
+          <span style={{fontSize:13,fontWeight:800}}>{MONL[fM]} {focusY}</span>
+          <span style={{fontSize:8.5,color:fld.conf+fld.win>ceiling?C.pressHot:C.mute}}>{fld.conf}+{fld.win}/{ceiling}/mo</span>
+          <Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit month</Btn>
+        </div>
+        {dow}{grid(false)}
+        <FootLegend/>
+      </div>
+      {/* EDIT MODE — full-screen, scroll locked, expanded month, movement restricted to it */}
+      {editing&&<div style={{position:"fixed",inset:0,zIndex:250,background:C.bg,display:"flex",flexDirection:"column",paddingBottom:"env(safe-area-inset-bottom)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderBottom:`1px solid ${C.line}`,flexShrink:0}}>
+          <button onClick={()=>monthStep(-1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:13}}>‹</button>
+          <span style={{fontSize:13,fontWeight:800}}>{MONL[fM]} {focusY}</span>
+          <button onClick={()=>monthStep(1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:13}}>›</button>
+          <span style={{marginLeft:"auto"}}><Btn small kind="prim" onClick={()=>{setEditing(false);setDraw(null);}}>done</Btn></span>
+        </div>
+        <div style={{padding:"8px 12px",borderBottom:`1px solid ${C.line2}`,flexShrink:0}}>{toolPalette}</div>
+        {editBars}
+        <div style={{flex:1,overflow:"auto",padding:"12px",touchAction:tool==="select"?"auto":"none"}}>
+          {dow}{grid(true)}
+        </div>
+      </div>}
+    </div>;
+  }
+
+  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
+      {toolPalette}
+      <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginLeft:"auto"}}>
+        {[["cal","year"],["school","school yr"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
+          padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
+      </div>
+    </div>
+    {editBars}
     <div onScroll={onScroll} style={{maxHeight:320,overflow:"auto",padding:"8px 12px"}}>
       <div style={{minWidth:width}}>
         <div style={{textAlign:"center",marginBottom:6}}><button onClick={()=>setRange(r=>({...r,s:r.s-1}))}
@@ -1718,7 +1785,7 @@ function App(){
   const VIEWS=[["work","▦","Calendar"],["pending","◷","Pending"],["pace","∿","Pace"],["setup","⚙","Setup"]];
   const content=view==="pending"
     ? <Pending state={state} setState={setState} tsp={tsp}/>
-    : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view} goto={setView}/>;
+    : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view} goto={setView} mobile={isMobile}/>;
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
     {/* header */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
