@@ -839,8 +839,8 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   const winEl=<>
     <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 2px 8px",flexWrap:"wrap"}}>
       <span style={{fontSize:15.5,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} windows</span>
-      <span style={{fontSize:11,color:C.gray}}>the “where” · glow by fit, never ranked</span>
-      <span style={{marginLeft:"auto",fontSize:9.5,color:C.est,fontStyle:"italic"}}>~amber = estimate</span>
+      <span style={{fontSize:11,color:C.gray}}>Choose where to work each week.</span>
+      <span style={{marginLeft:"auto",fontSize:9.5,color:C.est,fontStyle:"italic"}}>~ = estimate</span>
     </div>
     <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:10,color:C.mute,margin:"0 2px 10px"}}>
       <span>glow = brightness:</span>
@@ -899,7 +899,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
                     background:w.type===t?C.ink:"transparent",color:w.type===t?C.bg:C.gray}}>{t}</button>)}
               </div>
               {w.existing? <Tag bg={C.softInfo} col={C.blue}>request exists · {w.existing.state}</Tag>
-                : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>+ request</Btn>}
+                : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>Add to calendar</Btn>}
               <span style={{marginLeft:"auto",fontSize:9.5,color:C.mute}}>{w.site.submissionType==="by_window"?"by window":"by shift"}</span>
               <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why bright"}</Btn>
             </div>
@@ -908,10 +908,6 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
         })}
       </div>;
     })}
-    <p style={{fontSize:11,color:C.mute,textAlign:"center",marginTop:18,lineHeight:1.6}}>
-      Brightness is attention; order is structural; the choice is read from the raw facts.<br/>
-      No window is hidden, reordered by desirability, or recommended.
-    </p>
   </>;
 
   const tripsPaletteEl=<TripsPalette state={state} setState={setState} sel={sel} setSel={setSel} goto={goto}/>;
@@ -972,7 +968,7 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
     {/* live readout — what this candidate records */}
     <div style={{border:`1px solid ${C.line}`,borderRadius:7,background:C.panel2,padding:"10px 12px",marginBottom:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
-        <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>This candidate records</span>
+        <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>What this adds</span>
         <span style={{fontSize:13,fontWeight:800}}>{count}× · {fmt$(totalPay)}{byWindow&&count<picked.length?" if all land":""}</span>
       </div>
       <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8}}>
@@ -1163,7 +1159,7 @@ function Pending({state,setState,tsp}){
 function OverrideEditor({r,site,onRm,onAdd,onRate,onConfirm,onReject}){
   const [add,setAdd]=useState("");
   return <div style={{marginTop:8,padding:"9px 10px",border:`1px dashed ${C.pressHot}`,borderRadius:6,background:C.softWarn}}>
-    <div style={{fontSize:9.5,fontWeight:800,color:C.pressHot,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated terms · can fall outside the original window</div>
+    <div style={{fontSize:9.5,fontWeight:800,color:C.pressHot,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated dates and rate</div>
     <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
       {r.footprint.dates.map(d=><span key={d} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,
         padding:"2px 4px 2px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel}}>
@@ -1200,7 +1196,7 @@ function SiteWizard({state,setState,embed,onClose}){
   const N=props=> <input type="number" style={inp} {...props}/>;
   const Inner=<div style={{maxHeight:embed?"none":"82vh",display:"flex",flexDirection:"column"}}>
       {!embed&&<div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>Sites worksheet</div>}
-      <div style={{fontSize:11,color:C.gray,marginBottom:10}}>Sites carry satisfaction in their <b>name</b> + free-text <b>note</b> — never a rating (Inv 4). Edits are live.</div>
+      <div style={{fontSize:11,color:C.gray,marginBottom:10}}>Name and note are free text. Changes save as you type.</div>
       <div style={{flex:1,overflow:"auto",margin:"0 -2px",padding:"0 2px"}}>
         {sites.map(s=>{
           const open=openId===s.id, refs=reqCount(s.id);
@@ -1439,7 +1435,7 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
   const barW=44,confW=Math.min(barW,ld.conf/Math.max(1,ceil2(ceiling))*barW),winW=Math.min(barW-confW,ld.win/Math.max(1,ceil2(ceiling))*barW);
   function ceil2(c){return Math.max(c,load);}                 // bar scales to whichever is larger
   const GW=200,gsc=Math.max(ceiling,load)||1,gcw=ld.conf/gsc*GW,gww=Math.min(GW-gcw,ld.win/gsc*GW),gtick=Math.min(GW-1,ceiling/gsc*GW);  // focused-month pressure gauge
-  return <div style={{display:"flex",alignItems:"center",marginBottom:CAL_RG,borderRadius:5,
+  return <div data-now={isNow?"1":undefined} style={{display:"flex",alignItems:"center",marginBottom:CAL_RG,borderRadius:5,
     background:sel?C.sel:"transparent",boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
     <div onClick={selectable?()=>onSelect(y,m):undefined} style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8,cursor:selectable?"pointer":"default"}}>
       <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{MON[m].toUpperCase()}{sel&&" ◂"}</div>
@@ -1504,6 +1500,8 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const cov=useMemo(()=>layerCoverage(layers,range.s,range.e+1),[layers,range.s,range.e]);
   const focusCov=useMemo(()=>layerCoverage(layers,focusY-1,focusY+1),[layers,focusY]);
   const onScroll=e=>{const el=e.target;if(el.scrollHeight-el.scrollTop-el.clientHeight<140)setRange(r=>({...r,e:r.e+1}));};
+  const scrollRef=useRef(null);
+  const scrollToToday=()=>{onSelect&&onSelect(YEAR,TODAY.getMonth());requestAnimationFrame(()=>{const el=scrollRef.current&&scrollRef.current.querySelector("[data-now]");if(el)el.scrollIntoView({block:"center",behavior:"smooth"});});};
   const setReqs=fn=>setState(s=>({...s,requests:fn(s.requests)}));
   const setLayers=fn=>setState(s=>({...s,layers:fn(s.layers)}));
   const addReq=r=>setReqs(rs=>mergeCandidates([...rs,r]));
@@ -1664,15 +1662,18 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       {editing
         ? <>{toolPalette}<Btn small onClick={()=>{setEditing(false);setDraw(null);}}>done</Btn></>
         : <><span style={{fontSize:9.5,color:C.mute}}>browse · tap to select</span><Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit</Btn></>}
-      <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginLeft:"auto"}}>
-        {[["cal","year"],["school","school yr"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
-          padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
+      <div style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:6}}>
+        <Btn small onClick={scrollToToday}>Today</Btn>
+        <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
+          {[["cal","year"],["school","school yr"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
+            padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
+        </div>
       </div>
     </div>
     <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
     {editing&&editBars}
     {/* browse vs edit: tools are gated behind edit so dragging doesn't fight browsing */}
-    <div onScroll={onScroll} style={{maxHeight:380,overflow:"auto",padding:"8px 12px"}}>
+    <div ref={scrollRef} onScroll={onScroll} style={{maxHeight:380,overflow:"auto",padding:"8px 12px"}}>
       <div style={{minWidth:width}}>
         <div style={{textAlign:"center",marginBottom:6}}><button onClick={()=>setRange(r=>({...r,s:r.s-1}))}
           style={{fontFamily:MONO,fontSize:9.5,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>◤ earlier</button></div>
@@ -1733,7 +1734,7 @@ function TripsDrawer({state,setState}){
   const rm=id=>setTrips(ts=>ts.filter(t=>t.id!==id));
   const WF=[["colocate","co-locate"],["commute","commute"],["closed","closed"]];
   const WFNOTE={colocate:"work locally — nearby sites co-locate (cheap)",commute:"leave the trip to work — full travel",closed:"no work — windows closed (e.g. international)"};
-  return <Drawer title="Trips" sub="family travel · gates windows" n={trips.length} open={open} setOpen={setOpen}>
+  return <Drawer title="Trips" sub="Family travel" n={trips.length} open={open} setOpen={setOpen}>
     {trips.map(t=><div key={t.id} style={{border:`1px solid ${C.line2}`,borderRadius:6,padding:"7px 8px",marginBottom:6}}>
       <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",marginBottom:5}}>
         <input style={{...inp,flex:"1 1 120px"}} value={t.name} onChange={e=>upd(t.id,{name:e.target.value})}/>
@@ -1757,7 +1758,7 @@ function TripsDrawer({state,setState}){
 }
 function SitesWorksheet({state,setState}){
   const [open,setOpen]=useState(false);
-  return <Drawer title="Sites" sub="rates, reach, cadence — near your windows" n={state.sites.length} open={open} setOpen={setOpen}>
+  return <Drawer title="Sites" sub="Rates, reach, and timing" n={state.sites.length} open={open} setOpen={setOpen}>
     <SiteWizard state={state} setState={setState} embed/>
   </Drawer>;
 }
