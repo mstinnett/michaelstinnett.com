@@ -348,7 +348,7 @@ const reqDates=r=>r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.cand
 const reqMinDate=r=>reqDates(r).reduce((m,d)=>d<m?d:m,reqDates(r)[0]||"");
 const reqMaxDate=r=>reqDates(r).reduce((m,d)=>d>m?d:m,reqDates(r)[0]||"");
 const isPastReq=r=>r.state==="confirmed"&&reqMaxDate(r)<ds(TODAY);
-const EDITABLE=["candidate","pending","override"];          // can be drawn/nudged/erased on the calendar
+const EDITABLE=["candidate"];          // only candidate drafts can be drawn/nudged/erased — the calendar is a drafting space
 
 /* calendar-drawing helpers (the main verb) */
 function weekdaysBetween(a,b){
@@ -1502,8 +1502,9 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const delReq=id=>setReqs(rs=>rs.filter(x=>x.id!==id));
   const setTrip=(id,fn)=>setState(s=>({...s,trips:s.trips.map(x=>x.id===id?fn(x):x)}));
   const editableAt=str=>state.requests.find(r=>EDITABLE.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));
+  const occupantAt=str=>state.requests.find(r=>OCCUPY.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));  // any draft or committed shift
   const tripAt=str=>state.trips.find(t=>placed(t)&&str>=t.from&&str<=t.to);
-  const tapSelect=str=>{const r=editableAt(str);if(r){setSel({kind:"req",id:r.id});return;}const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);};
+  const tapSelect=str=>{const r=occupantAt(str);if(r){setSel({kind:"req",id:r.id});return;}const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);};  // candidates edit · pending/confirmed inspect (read-only)
   const dayClosed=str=>state.trips.some(t=>placed(t)&&t.workFactor==="closed"&&str>=t.from&&str<=t.to);
   const pt=e=>e.touches?e.touches[0]:e;
   function listen(move,up){const m=e=>move(pt(e)),u=e=>{window.removeEventListener("pointermove",m);window.removeEventListener("pointerup",u);up(pt(e));};
@@ -1525,12 +1526,15 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       erase(str);listen(p=>erase(nearestDate(p.clientX,p.clientY)),()=>{});return;
     }
     // direct manipulation (default): existing window → tap selects / drag moves; empty → draw a new window
-    const r=editableAt(str),t=!r&&tripAt(str);
+    const r=editableAt(str);
     if(r){setSel({kind:"req",id:r.id});const orig=r.footprint.dates.slice();let moved=false;
       listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));if(delta!==0)moved=true;
         setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(orig,delta)}}));},
         ()=>{if(moved)setReqs(rs=>mergeCandidates(rs));});
       return;}
+    const occ=occupantAt(str);                          // pending / confirmed → read-only: select to inspect, no drag
+    if(occ){setSel({kind:"req",id:occ.id});return;}
+    const t=tripAt(str);
     if(t){setSel({kind:"trip",id:t.id});const f0=t.from,t0=t.to;
       listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));
         setTrip(t.id,x=>({...x,from:ds(ad(pd(f0),delta)),to:ds(ad(pd(t0),delta)),placed:true}));},()=>{});
@@ -1545,7 +1549,8 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const sr=sel&&sel.kind==="req"?state.requests.find(r=>r.id===sel.id):null;
   const stp=sel&&sel.kind==="trip"?state.trips.find(t=>t.id===sel.id):null;
   const srDates=sr?new Set(sr.footprint.dates):null;
-  const srStart=sr?reqMinDate(sr):null,srEnd=sr?reqMaxDate(sr):null;
+  const srEditable=sr&&sr.state==="candidate";                          // only drafts resize/move on the calendar
+  const srStart=srEditable?reqMinDate(sr):null,srEnd=srEditable?reqMaxDate(sr):null;
   const stpDates=stp?(()=>{const s=new Set();let d=pd(stp.from);const t=pd(stp.to);while(d<=t){s.add(ds(d));d=ad(d,1);}return s;})():null;
   const items=[];
   if(mode==="cal"){for(let y=range.s;y<=range.e;y++){items.push({h:`${y}`});for(let mm=0;mm<12;mm++)items.push({y,m:mm});}}
@@ -1568,8 +1573,8 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     </div>}
   </div>;
   const editBars=<>
-    {sr&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
-      <span style={{fontSize:11,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {sr.state}</span></span>
+    {sr&&sr.state==="candidate"&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+      <span style={{fontSize:11,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · draft</span></span>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,-1)}}))}>◀</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,1)}}))}>▶</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();if(ds2.length>1)ds2.pop();return {...x,footprint:{kind:"pinned",dates:ds2}};})}>− day</Btn>
@@ -1579,6 +1584,12 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       {/* no submit here — the calendar is a drafting space; candidates are applied from the Pending list */}
       <Btn small kind="danger" onClick={()=>{delReq(sr.id);setSel(null);}}>delete</Btn>
       <Btn small kind="prim" onClick={()=>setSel(null)}>done</Btn>
+    </div>}
+    {sr&&sr.state!=="candidate"&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+      <span style={{fontSize:11,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {ST_LABEL[sr.state]||sr.state}</span></span>
+      <span style={{fontSize:9.5,color:C.mute}}>read-only here</span>
+      <Btn small kind="prim" onClick={()=>goto&&goto("pending")}>manage in Pending →</Btn>
+      <Btn small onClick={()=>setSel(null)}>done</Btn>
     </div>}
     {stp&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
       <span style={{fontSize:11,fontWeight:800}}>{stp.name} <span style={{color:C.mute,fontWeight:600}}>{LOC_NAME[stp.loc]} · {stp.workFactor} · {md(stp.from)}–{md(stp.to)}</span></span>
