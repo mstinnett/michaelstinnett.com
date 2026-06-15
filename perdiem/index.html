@@ -155,7 +155,7 @@ function coarseBucket(s){return s<0.34?"dim":s<0.55?"normal":s<0.74?"bright":"br
 function seedState(){
   const sites=[
     {id:"boston",  name:"Boston ED",   note:"home rink. easy charting, know the nurses.",
-     reach:"local",   homeBaseLoc:"boston",  dayRate:210,nightRate:255,dayHours:9, nightHours:9,
+     reach:"local",   homeBaseLoc:"boston",  dayRate:245,nightRate:290,dayHours:9, nightHours:9,
      submissionType:"by_shift",  cadence:{opensDaysBefore:75,dueByDaysBefore:21,expectedResponseDays:14},
      travel:{beforeDays:0,departTime:"06:00",afterDays:0,returnTime:"20:00"}},
     {id:"santa_fe",name:"Santa Fe ED", note:"good people. depends on hearing from ABQ first.",
@@ -163,11 +163,11 @@ function seedState(){
      submissionType:"by_window", cadence:{opensDaysBefore:90,dueByDaysBefore:30,expectedResponseDays:10},
      travel:{beforeDays:1,departTime:"16:00",afterDays:0,returnTime:"22:00"}},
     {id:"abq",     name:"Albuquerque ED",note:"high volume, fast. anchors the NM trip.",
-     reach:"nm",      homeBaseLoc:"abq",     dayRate:180,nightRate:200,dayHours:9, nightHours:10,
+     reach:"nm",      homeBaseLoc:"abq",     dayRate:285,nightRate:305,dayHours:9, nightHours:10,
      submissionType:"by_shift",  cadence:{opensDaysBefore:80,dueByDaysBefore:25,expectedResponseDays:7},
      travel:{beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"21:00"}},
-    {id:"gallup",  name:"Gallup ED",   note:"rural, long days, pays for it. tiring.",
-     reach:"rural_nm",homeBaseLoc:"abq",     dayRate:175,nightRate:210,dayHours:12,nightHours:12,
+    {id:"gallup",  name:"Silver City ED",note:"rural, long days, pays for it. tiring.",
+     reach:"rural_nm",homeBaseLoc:"abq",     dayRate:300,nightRate:335,dayHours:12,nightHours:12,
      submissionType:"by_window", cadence:{opensDaysBefore:70,dueByDaysBefore:14,expectedResponseDays:21},
      travel:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"}},
   ];
