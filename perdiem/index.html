@@ -282,7 +282,7 @@ function sanitizeState(obj){
     const tripSrc=Array.isArray(obj.trips)?obj.trips:(Array.isArray(obj.familySpans)?obj.familySpans:seed.trips);
     const trips=tripSrc.filter(s=>s&&DATE_RE.test(s.from||"")&&DATE_RE.test(s.to||"")&&s.loc).map((s,i)=>({
       id:String(s.id||("t"+i)),name:String(s.name||LOC_NAME[s.loc]||"Trip"),from:s.from,to:s.to,loc:s.loc,
-      workFactor:WF.includes(s.workFactor)?s.workFactor:"colocate"}));
+      workFactor:WF.includes(s.workFactor)?s.workFactor:"colocate",placed:s.placed!==false}));
     const locks=(Array.isArray(obj.locks)?obj.locks:seed.locks).filter(l=>l&&DATE_RE.test(l.date||"")).map(l=>{
       const o={date:l.date,kind:l.kind==="hard"?"hard":"soft",label:String(l.label||"lock")};
       if(Number.isFinite(+l.recoveryBufferHrs))o.recoveryBufferHrs=+l.recoveryBufferHrs;return o;});
@@ -360,11 +360,12 @@ function typicalShiftPay(sites){
 }
 
 /* §4.2 co-location + travel — trips with workFactor: colocate / commute / closed */
+const placed=t=>t.placed!==false&&DATE_RE.test(t.from||"")&&DATE_RE.test(t.to||"");
 const tripOverlaps=(trip,weekDates)=>{const f=pd(trip.from),t=pd(trip.to);return weekDates.some(d=>d>=f&&d<=t);};
-const closedTrip=(trips,weekDates)=>trips.find(tp=>tp.workFactor==="closed"&&tripOverlaps(tp,weekDates));
+const closedTrip=(trips,weekDates)=>trips.find(tp=>placed(tp)&&tp.workFactor==="closed"&&tripOverlaps(tp,weekDates));
 function coLocation(site,weekDates,trips){
   for(const sp of trips){
-    if(sp.workFactor!=="colocate")continue;          // only a co-locating trip makes a site cheap
+    if(!placed(sp)||sp.workFactor!=="colocate")continue;   // only a placed, co-locating trip makes a site cheap
     if(!tripOverlaps(sp,weekDates))continue;
     const hrs=(REACH_ADJ[sp.loc]||{})[site.reach];
     if(hrs!=null&&hrs<=CHEAP_HRS)return {coLocated:true,loc:sp.loc,hrs};
@@ -869,12 +870,12 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view}){
     </p>
   </>;
 
+  const tripsPaletteEl=<TripsPalette state={state} setState={setState}/>;
   let body;
-  if(view==="calendar")body=<>{calEl}{sp}{tripsEl}</>;
-  else if(view==="windows")body=winEl;
-  else if(view==="pace")body=<><div style={{fontSize:13,fontWeight:800,marginBottom:10}}>Pace</div>{paceInner}</>;
+  if(view==="pace")body=<><div style={{fontSize:13,fontWeight:800,marginBottom:10}}>Pace</div>{paceInner}</>;
   else if(view==="setup")body=<>{layersEl}{sp}{tripsEl}{sp}{sitesEl}</>;
-  else body=<>{paceDrawerEl}{layersEl}{sp}{calEl}{sp}{tripsEl}{winEl}<div style={{marginTop:16}}>{sitesEl}</div></>;
+  // main workspace: calendar + windows together, with the trips palette as the third pillar
+  else body=<>{calEl}{sp}{tripsPaletteEl}{sp}{winEl}</>;
 
   return <div style={{height:"100%",overflow:"auto"}}>
     <div style={{maxWidth:980,margin:"0 auto",padding:"12px 16px 60px"}}>{body}</div>
@@ -1306,7 +1307,7 @@ function useFootprint(state){
         for(const d of fp.candidates){(byDay[d]=byDay[d]||[]).push({state:"smeared",type:r.shiftType,site:s});}
       }
     }
-    for(const sp of state.trips){let d=pd(sp.from);const t=pd(sp.to);while(d<=t){famBy[ds(d)]={loc:sp.loc,wf:sp.workFactor,name:sp.name};d=ad(d,1);}}
+    for(const sp of state.trips){if(!placed(sp))continue;let d=pd(sp.from);const t=pd(sp.to);while(d<=t){famBy[ds(d)]={loc:sp.loc,wf:sp.workFactor,name:sp.name};d=ad(d,1);}}
     for(const l of state.locks)lockBy[l.date]=l;
     return {byDay,famBy,lockBy,perYM,loadYM:loadByYM(state)};
   },[state]);
@@ -1416,7 +1417,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling}){
   const editableAt=str=>state.requests.find(r=>EDITABLE.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));
   const eraseDay=str=>{const r=editableAt(str);if(!r)return;const left=r.footprint.dates.filter(x=>x!==str);
     if(left.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:left}}));else delReq(r.id);};
-  const dayClosed=str=>state.trips.some(t=>t.workFactor==="closed"&&str>=t.from&&str<=t.to);
+  const dayClosed=str=>state.trips.some(t=>placed(t)&&t.workFactor==="closed"&&str>=t.from&&str<=t.to);
   function cellDown(e,str,y,m){
     if(tool==="eraser"){eraseDay(str);return;}
     if(tool==="select"){const r=editableAt(str);setSelReq(r?r.id:null);return;}
@@ -1557,6 +1558,49 @@ function SitesWorksheet({state,setState}){
     <SiteWizard state={state} setState={setState} embed/>
   </Drawer>;
 }
+/* ════════ TRIPS PALETTE — the third workspace pillar: drag a trip card onto the calendar ════════ */
+function TripsPalette({state,setState}){
+  const [ghost,setGhost]=useState(null);
+  const trips=state.trips;
+  const setTrips=fn=>setState(s=>({...s,trips:fn(s.trips)}));
+  const dur=t=>Math.max(1,(DATE_RE.test(t.from||"")&&DATE_RE.test(t.to||""))?days(pd(t.from),pd(t.to))+1:7);
+  const place=(id,fromDate)=>setTrips(ts=>ts.map(t=>t.id===id?{...t,from:fromDate,to:ds(ad(pd(fromDate),dur(t)-1)),placed:true}:t));
+  const addTrip=()=>setTrips(ts=>[...ts,{id:"t"+Date.now(),name:"New trip",from:`${YEAR}-07-06`,to:`${YEAR}-07-10`,loc:Object.keys(LOC_NAME)[0],workFactor:"closed",placed:false}]);
+  const start=(e,t)=>{
+    e.preventDefault();
+    const move=ev=>{const el=document.elementFromPoint(ev.clientX,ev.clientY);const c=el&&el.closest&&el.closest("[data-date]");
+      setGhost({name:t.name,x:ev.clientX,y:ev.clientY,date:c?c.dataset.date:null});};
+    const up=ev=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);
+      const el=document.elementFromPoint(ev.clientX,ev.clientY);const c=el&&el.closest&&el.closest("[data-date]");
+      if(c&&c.dataset.date)place(t.id,c.dataset.date);setGhost(null);};
+    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
+    setGhost({name:t.name,x:e.clientX,y:e.clientY,date:null});
+  };
+  const WFC={colocate:C.juniper,commute:C.ocean,closed:C.pressHot};
+  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"9px 11px"}}>
+    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:7}}>
+      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Trips</span>
+      <span style={{fontSize:8,color:C.mute}}>drag a card onto the calendar to place it · edit in Setup</span>
+    </div>
+    <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+      {trips.map(t=><div key={t.id} onPointerDown={e=>start(e,t)} title={`drag onto a day — ${t.workFactor}`}
+        style={{display:"inline-flex",flexDirection:"column",gap:2,padding:"6px 9px",borderRadius:7,cursor:"grab",touchAction:"none",
+          border:`1px solid ${C.line}`,background:placed(t)?C.panel2:C.panel,opacity:placed(t)?1:0.92,minWidth:96}}>
+        <div style={{display:"flex",alignItems:"center",gap:5}}>
+          <span style={{width:8,height:8,borderRadius:"50%",background:WFC[t.workFactor]}}/>
+          <span style={{fontSize:10,fontWeight:800}}>{t.name}</span>
+        </div>
+        <div style={{fontSize:7.5,color:C.mute}}>{LOC_NAME[t.loc]} · {t.workFactor} · {dur(t)}d</div>
+        <div style={{fontSize:7,color:placed(t)?C.gray:C.est,fontWeight:700}}>{placed(t)?`${md(t.from)}–${md(t.to)}`:"⤓ unplaced — drag in"}</div>
+      </div>)}
+      <button onClick={addTrip} style={{fontFamily:MONO,fontSize:9,fontWeight:700,padding:"6px 10px",borderRadius:7,cursor:"pointer",
+        border:`1px dashed ${C.line}`,background:"transparent",color:C.gray}}>+ trip</button>
+    </div>
+    {ghost&&<div style={{position:"fixed",left:ghost.x+12,top:ghost.y+12,zIndex:400,pointerEvents:"none",
+      background:C.ink,color:C.bg,fontSize:9,fontWeight:700,padding:"4px 8px",borderRadius:5,boxShadow:`0 6px 18px var(--shadow)`}}>
+      {ghost.name}{ghost.date?` → ${md(ghost.date)}`:" · drop on a day"}</div>}
+  </div>;
+}
 
 /* ════════ APP SHELL ════════ */
 function App(){
@@ -1566,7 +1610,7 @@ function App(){
     try{const s=localStorage.getItem("perDiemState");if(s){const v=sanitizeState(JSON.parse(s));if(v)return v;}}catch(e){}
     return seedState();
   });
-  const [view,setView]=useState("calendar");   // one tab set, top on desktop / bottom on mobile
+  const [view,setView]=useState("work");   // one tab set, top on desktop / bottom on mobile
   const [monthIdx,setMonthIdx]=useState(7); // August — requests are open now
   const [isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width: 760px)").matches);
   const [toast,setToast]=useState(null);
@@ -1605,7 +1649,7 @@ function App(){
     else prompt("Copy this share link:",url);
   };
 
-  const VIEWS=[["calendar","▦","Calendar"],["windows","▤","Windows"],["pending","◷","Pending"],["pace","∿","Pace"],["setup","⚙","Setup"]];
+  const VIEWS=[["work","▦","Calendar"],["pending","◷","Pending"],["pace","∿","Pace"],["setup","⚙","Setup"]];
   const content=view==="pending"
     ? <Pending state={state} setState={setState} tsp={tsp}/>
     : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view}/>;
