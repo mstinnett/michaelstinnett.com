@@ -103,6 +103,7 @@ const dim=(y,m)=>new Date(y,m+1,0).getDate();
 const firstOfMonth=d=>new Date(d.getFullYear(),d.getMonth(),1);
 // deadlines are per site + per month: every shift in a month shares one due date = month start − the site's lead.
 const monthDueBy=(d,leadDays)=>ds(ad(firstOfMonth(typeof d==="string"?pd(d):d),-(leadDays||0)));
+const fmtDT=d=>`${MON[d.getMonth()]} ${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
 const clamp01=x=>Math.max(0,Math.min(1,x));
 const fmt$=v=>"$"+Math.round(v).toLocaleString();
 const fmtK=v=>"$"+(Math.round(v/100)/10).toLocaleString()+"k";
@@ -684,7 +685,8 @@ function buildWindows(state,monthIdx,types,tsp){
       const lockHit=wk.dates.filter(d=>locks.some(l=>l.date===ds(d)));
       const weekdayStrs=wk.dates.filter(d=>d.getDay()!==0&&d.getDay()!==6).map(ds);
       const perKid=kidDaysOut(weekdayStrs,layers);
-      raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,weekdayStrs,perKid,
+      const kidHrs=kidHoursCost(weekdayStrs,site);     // family-time cost if you worked this week here
+      raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,weekdayStrs,perKid,kidHrs,
         closing,closed,notOpen,lockHit,
         existing:requests.find(r=>r.siteId===site.id&&r.footprint&&
           (r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates).some(d=>pd(d).getMonth()===monthIdx&&wk.dates.some(wd=>ds(wd)===d)))});
@@ -784,6 +786,9 @@ function WhyBright({w}){
         <div style={{width:64,fontSize:9.5,color:C.mute,textAlign:"right",flexShrink:0}}>×{BW[k]} = {(v*BW[k]).toFixed(2)}</div>
       </div>;
     })}
+    {w.kidHrs&&w.kidHrs.window&&<div style={{fontSize:10,color:C.mute,marginTop:7,paddingTop:6,borderTop:`1px dashed ${C.line2}`}}>
+      family-time cost <b style={{color:C.gray}}>{w.kidHrs.hours} kid-awake hrs</b> away · {fmtDT(w.kidHrs.window.start)} → {fmtDT(w.kidHrs.window.end)} <span style={{color:C.est,fontStyle:"italic"}}>~ full-week estimate</span>
+    </div>}
     <div style={{marginTop:8,paddingTop:7,borderTop:`1px solid ${C.line}`,fontSize:11,color:C.gray,display:"flex",justifyContent:"space-between"}}>
       <span>weighted score <b style={{color:C.ink}}>{w.score.toFixed(2)}</b> → fit <b style={{color:C.ink}}>{BUCKET_LABEL[w.bucket]}</b></span>
       <span style={{color:C.mute}}>fit only · never orders / hides / recommends</span>
@@ -935,7 +940,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
               <div style={{display:"flex",borderLeft:`1px solid ${C.line2}`}}>
                 <Fact label="$/hr ER"><Num e={w.money.erPerHr} money/></Fact>
                 <Fact label="$/hr away"><Num e={w.money.awayPerHr} money/></Fact>
-                <Fact label="days-out">{w.dout}</Fact>
+                <Fact label="kid-hrs"><span title={`${w.kidHrs.hours} kid-awake hours (7a–8p) away if you work the full week · ${w.site.name} travel`}>{w.kidHrs.hours}h</span></Fact>
                 <Fact label="close"><span style={{color:w.closing>0.7?C.est:C.gray}}>{Math.round(w.closing*100)}%</span></Fact>
               </div>
             </div>
@@ -948,7 +953,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
               {w.existing? <Tag bg={C.softInfo} col={C.blue}>request exists · {w.existing.state}</Tag>
                 : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>Add to calendar</Btn>}
               <span style={{marginLeft:"auto",fontSize:9.5,color:C.mute}}>{w.site.submissionType==="by_window"?"by week":"by shift"}</span>
-              <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why bright"}</Btn>
+              <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why"}</Btn>
             </div>
             {isOpen&&<WhyBright w={w}/>}
           </div>;
@@ -994,7 +999,6 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
   const effDates=byWindow?picked.slice(0,Math.min(take,picked.length)):picked;
   const perKid=kidDaysOut(effDates,state.layers);
   const cost=kidHoursCost(effDates,w.site,travelOn?tv:null);
-  const fmtDT=d=>`${MON[d.getMonth()]} ${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
   const totalPay=money.shiftPay*count;
   return <Overlay onClose={onClose}>
     <div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
