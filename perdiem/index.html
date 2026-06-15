@@ -19,7 +19,7 @@
     --bg:#F7F6F4;--panel:#FFFFFF;--panel2:#FBFAF8;--ink:#1C1A18;--gray:#6B6660;--mute:#A6A09A;
     --line:#E6E3E0;--line2:#EFEDEA;--faint:#D5D1CD;
     --juniper:#3E7D63;--ocean:#356C88;--danger:#7A645E;
-    --est:#7C766F;--est-line:#B8B2AB;
+    --est:#7C766F;--est-line:#B8B2AB;--on-shift:#F7F6F4;
     --shift-day:#6E6A64;--shift-night:#2C2A27;--ov-day:#B7B2AB;--ov-night:#8A857E;
     --tint-fam:#EEEAE3;--tint-out:#ECE7E0;--weekend:#F1EFEC;--sel:#EFEAE1;
     --good-soft:#E6F0E9;--info-soft:#E6EEF3;--warn-soft:#EFE9E5;--press-hot:#6E5F5A;
@@ -28,16 +28,16 @@
     --shadow:rgba(28,26,24,.14);--shadow-sm:rgba(28,26,24,.08);
   }
   :root[data-theme="dark"]{
-    --bg:#171614;--panel:#211F1D;--panel2:#1D1B19;--ink:#ECE8E3;--gray:#A6A09A;--mute:#6E685F;
-    --line:#332F2B;--line2:#2A2723;--faint:#454039;
-    --juniper:#76BA92;--ocean:#65AAC9;--danger:#C99B93;
-    --est:#A39C93;--est-line:#5A554E;
-    --shift-day:#A39C92;--shift-night:#DAD4CC;--ov-day:#6A655E;--ov-night:#8E897F;
-    --tint-fam:#262320;--tint-out:#2B2724;--weekend:#1E1C1A;--sel:#2D2924;
-    --good-soft:#1F2E27;--info-soft:#1E2B33;--warn-soft:#2C2622;--press-hot:#C99B93;
-    --bar:#5C574F;--glow-bd:#4A453E;--glow-bd2:#69635B;
-    --press-1:#211F1D;--press-2:#2A2723;--press-3:#3A352E;--press-4:#4C463D;
-    --shadow:rgba(0,0,0,.45);--shadow-sm:rgba(0,0,0,.30);
+    --bg:#141310;--panel:#221F1B;--panel2:#1A1714;--ink:#F0ECE6;--gray:#B2ABA1;--mute:#7E776C;
+    --line:#4A4239;--line2:#373028;--faint:#5A5147;
+    --juniper:#7CC79C;--ocean:#6FB6D6;--danger:#CDA59B;
+    --est:#B0A89D;--est-line:#5E574E;--on-shift:#16140F;
+    --shift-day:#C6BAA6;--shift-night:#8E877C;--ov-day:#6E685E;--ov-night:#938C81;
+    --tint-fam:#2B2722;--tint-out:#2F2A25;--weekend:#1B1916;--sel:#332D25;
+    --good-soft:#21342B;--info-soft:#1F3039;--warn-soft:#33291F;--press-hot:#E0AFA3;
+    --bar:#6C6358;--glow-bd:#514A41;--glow-bd2:#7A7165;
+    --press-1:#23201A;--press-2:#373020;--press-3:#4E442F;--press-4:#695B41;
+    --shadow:rgba(0,0,0,.5);--shadow-sm:rgba(0,0,0,.34);
   }
   body{overflow:hidden;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;transition:background .2s ease,color .2s ease;}
   #loader{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;background:var(--bg);font-family:'SF Mono','JetBrains Mono',monospace;}
@@ -1406,7 +1406,7 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandl
       cursor:v.closed?"not-allowed":(tool==="eraser"?"cell":"pointer"),touchAction:tool&&tool!=="off"?"none":"auto",
       outline:v.inSel?`2px solid ${C.ink}`:(v.inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:v.closed&&!v.conf&&!v.neg?0.82:1,
       display:num?"flex":"block",alignItems:"center",justifyContent:"center"}}>
-    {num&&<span style={{fontSize:11,fontWeight:v.conf?800:500,color:v.conf?"#fff":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
+    {num&&<span style={{fontSize:11,fontWeight:v.conf?800:500,color:v.conf?"var(--on-shift)":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
     {v.closed&&!v.conf&&!v.neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
     {v.inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
     {v.lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:v.lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
