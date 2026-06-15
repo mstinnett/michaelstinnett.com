@@ -88,9 +88,11 @@ const TAG_W={summer:0,light:0.55,normal:1,heavy:1.5,travel:0.5};
 const TAGS=["summer","light","normal","heavy","travel"];
 
 /* ─── brightness weights — FIXED v1 defaults, NOT user knobs (§4.3, Inv 1) ─── */
-const BW={workQuality:0.22,familyEfficiency:0.22,coLocation:0.15,lowDaysOut:0.13,quotaFit:0.18,closing:0.10};
-const BW_EST={workQuality:false,familyEfficiency:true,coLocation:false,lowDaysOut:false,quotaFit:true,closing:false};
-const BW_LABEL={workQuality:"work quality",familyEfficiency:"family efficiency",coLocation:"co-location",lowDaysOut:"low days-out",quotaFit:"quota fit",closing:"closing"};
+/* work quality ($/hr ER) is NOT a brightness factor — it stays a raw choosing
+   column. familyEfficiency is the only money-derived term, so glow leans on fit. */
+const BW={familyEfficiency:0.28,coLocation:0.19,lowDaysOut:0.17,quotaFit:0.23,closing:0.13};
+const BW_EST={familyEfficiency:true,coLocation:false,lowDaysOut:false,quotaFit:true,closing:false};
+const BW_LABEL={familyEfficiency:"family efficiency",coLocation:"co-location",lowDaysOut:"low days-out",quotaFit:"quota fit",closing:"closing"};
 const BUCKETS=["dim","normal","bright","brightest"];
 function coarseBucket(s){return s<0.34?"dim":s<0.55?"normal":s<0.74?"bright":"brightest";}
 
@@ -402,11 +404,10 @@ function buildWindows(state,monthIdx,types,tsp){
     });
   });
   // normalization ranges across the month's windows
-  const er=raw.map(w=>w.money.erPerHr.value), aw=raw.map(w=>w.money.awayPerHr.value), dt=raw.map(w=>w.dout);
+  const aw=raw.map(w=>w.money.awayPerHr.value), dt=raw.map(w=>w.dout);
   const nrm=(v,a)=>{const lo=Math.min(...a),hi=Math.max(...a);return hi>lo?(v-lo)/(hi-lo):0.5;};
   raw.forEach(w=>{
     const c={
-      workQuality:nrm(w.money.erPerHr.value,er),
       familyEfficiency:nrm(w.money.awayPerHr.value,aw),
       coLocation:w.co.coLocated?1:0,
       lowDaysOut:1-nrm(w.dout,dt),
