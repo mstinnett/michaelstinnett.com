@@ -22,9 +22,10 @@
     --est:#7C766F;--est-line:#B8B2AB;--on-shift:#F7F6F4;
     --shift-day:#6E6A64;--shift-night:#2C2A27;--ov-day:#B7B2AB;--ov-night:#8A857E;
     --tint-fam:#EEEAE3;--tint-out:#ECE7E0;--weekend:#F1EFEC;--sel:#EFEAE1;
-    --good-soft:#E6F0E9;--info-soft:#E6EEF3;--warn-soft:#EFE9E5;--press-hot:#6E5F5A;
+    --block-fam:#E6F0E9;--block-trip:#E6EEF3;   /* family-calendar = green · trip = blue */
+    --good-soft:#E6F0E9;--info-soft:#E6EEF3;--warn-soft:#EFE9E5;--press-hot:#9E5C46;
     --bar:#C7C1B9;--glow-bd:#BDB7AF;--glow-bd2:#9A948C;
-    --press-1:#F0EEEA;--press-2:#E2DDD6;--press-3:#CEC8BF;--press-4:#B2ABA1;
+    --press-1:#F2ECE6;--press-2:#E1CDC2;--press-3:#D1AF9E;--press-4:#C0907A;   /* pressure = clay ramp */
     --shadow:rgba(28,26,24,.14);--shadow-sm:rgba(28,26,24,.08);
   }
   :root[data-theme="dark"]{
@@ -34,9 +35,10 @@
     --est:#B0A89D;--est-line:#5E574E;--on-shift:#16140F;
     --shift-day:#C6BAA6;--shift-night:#8E877C;--ov-day:#6E685E;--ov-night:#938C81;
     --tint-fam:#2B2722;--tint-out:#2F2A25;--weekend:#1B1916;--sel:#332D25;
+    --block-fam:#21342B;--block-trip:#1F3039;   /* family-calendar = green · trip = blue */
     --good-soft:#21342B;--info-soft:#1F3039;--warn-soft:#33291F;--press-hot:#E0AFA3;
     --bar:#6C6358;--glow-bd:#514A41;--glow-bd2:#7A7165;
-    --press-1:#23201A;--press-2:#373020;--press-3:#4E442F;--press-4:#695B41;
+    --press-1:#241C18;--press-2:#3D2B23;--press-3:#553B2F;--press-4:#6E4A3A;   /* pressure = clay ramp */
     --shadow:rgba(0,0,0,.5);--shadow-sm:rgba(0,0,0,.34);
   }
   body{overflow:hidden;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;transition:background .2s ease,color .2s ease;}
@@ -82,7 +84,8 @@ const C={ink:V("ink"),bg:V("bg"),panel:V("panel"),panel2:V("panel2"),line:V("lin
   gray:V("gray"),mute:V("mute"),faint:V("faint"),blue:V("ocean"),red:V("danger"),
   est:V("est"),estLine:V("est-line"),green:V("juniper"),juniper:V("juniper"),ocean:V("ocean"),
   softGood:V("good-soft"),softInfo:V("info-soft"),softWarn:V("warn-soft"),sel:V("sel"),
-  weekend:V("weekend"),tintOut:V("tint-out"),pressHot:V("press-hot"),bar:V("bar")};
+  weekend:V("weekend"),tintOut:V("tint-out"),pressHot:V("press-hot"),bar:V("bar"),
+  blockFam:V("block-fam"),blockTrip:V("block-trip")};
 const MONO="'SF Mono','JetBrains Mono','Fira Code',ui-monospace,monospace";
 const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const MONL=["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -1327,7 +1330,7 @@ function LayersPanel({state,setState}){
 /* ════════ YEAR VIEW — the footprint / home base (§7): confirmed placements + pending ════════ */
 const SHIFT_COL={day:"var(--shift-day)",night:"var(--shift-night)"};
 const OVERRIDE_COL={day:"var(--ov-day)",night:"var(--ov-night)"};   // tentative (in-negotiation) shifts
-const LOC_TINT={boston:"var(--tint-fam)",santa_fe:"var(--tint-fam)",abq:"var(--tint-fam)",montana:"var(--tint-fam)",portland:"var(--tint-fam)"};
+const LOC_TINT={boston:"var(--block-trip)",santa_fe:"var(--block-trip)",abq:"var(--block-trip)",montana:"var(--block-trip)",portland:"var(--block-trip)"};
 function monthGrid(y,m){
   const f=(new Date(y,m,1).getDay()+6)%7,n=dim(y,m),wk=Math.ceil((f+n)/7);
   const cells=[];for(let i=0;i<wk*7;i++){const dn=i-f+1;cells.push(dn>=1&&dn<=n?new Date(y,m,dn):null);}
@@ -1386,11 +1389,16 @@ function dayVisual(d,ctx){
   const marks=ctx.byDay[str]||[],fam=ctx.famBy[str],lk=ctx.lockBy[str],lays=ctx.layerCov[str]||[];
   const closed=fam&&fam.wf==="closed";
   const conf=marks.find(x=>x.state==="confirmed"),neg=marks.find(x=>x.state==="override"),pend=marks.find(x=>x.state==="pending"),cand=marks.find(x=>x.state==="candidate"),smear=marks.find(x=>x.state==="smeared");
-  let bg=fam?LOC_TINT[fam.loc]:(ctx.tint||(we?C.weekend:C.panel)),border=`1px solid ${C.line2}`,inner=null;
+  // base fill + edge: trip → blue (ocean edge), family-calendar day → green (juniper edge), else month pressure
+  let bg,border,inner=null;
+  if(fam){bg=LOC_TINT[fam.loc];border=`1px solid ${C.ocean}`;}
+  else if(lays.length){bg=C.blockFam;border=`1px solid ${C.juniper}`;}
+  else {bg=ctx.tint||(we?C.weekend:C.panel);border=`1px solid ${C.line2}`;}
+  // shifts/windows draw on top — confirmed/negotiation fill the cell; windows are outline-only
   if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
   else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
-  else if(pend){border=`1.5px solid ${C.blue}`;}
-  else if(cand){border=`1.5px solid ${C.faint}`;}
+  else if(pend){border=`1.5px solid ${C.ink}`;}
+  else if(cand){border=`1.5px dotted ${C.est}`;}
   else if(smear){inner="dotted";}
   const drawing=ctx.drawSet&&ctx.drawSet.has(str),inSel=ctx.selReqDates&&ctx.selReqDates.has(str),inTrip=ctx.selTripDates&&ctx.selTripDates.has(str);
   if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
@@ -1667,9 +1675,10 @@ const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignIt
   <LegDot bg={SHIFT_COL.day}>day confirmed</LegDot>
   <LegDot bg={SHIFT_COL.night}>night confirmed</LegDot>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:OVERRIDE_COL.day,border:`1.5px dashed ${SHIFT_COL.day}`}}/>in negotiation</span>
-  <LegDot ring={C.blue}>pending</LegDot>
+  <LegDot ring={C.ink}>pending</LegDot>
   <LegDot dotted>candidate</LegDot>
-  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:LOC_TINT.santa_fe,border:`1px solid ${C.line}`}}/>family</span>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:C.blockTrip,border:`1px solid ${C.ocean}`}}/>trip</span>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:C.blockFam,border:`1px solid ${C.juniper}`}}/>family off</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:3}}><span style={{width:3,height:3,borderRadius:"50%",background:C.juniper}}/><span style={{width:3,height:3,borderRadius:"50%",background:C.ocean}}/>layer day (~ inferred)</span>
   <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:3}}>month pressure
