@@ -1779,6 +1779,7 @@ function App(){
   const [view,setView]=useState("work");   // one tab set, top on desktop / bottom on mobile
   const [monthIdx,setMonthIdx]=useState(7); // August — requests are open now
   const [isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width: 760px)").matches);
+  const [back,setBack]=useState(null);   // single-level return target for in-app deep links
   const [toast,setToast]=useState(null);
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}}); // system|light|dark
   const fileRef=useRef();
@@ -1816,9 +1817,12 @@ function App(){
   };
 
   const VIEWS=[["work","▦","Calendar"],["pending","◷","Pending"],["pace","∿","Pace"],["setup","⚙","Setup"]];
+  const labelOf=v=>(VIEWS.find(x=>x[0]===v)||[,,v])[2];
+  const goto=t=>{if(t!==view){setBack(view);setView(t);}};   // deep link, remembers where to return
+  const pick=t=>{setView(t);setBack(null);};                  // manual tab tap clears the return crumb
   const content=view==="pending"
     ? <Pending state={state} setState={setState} tsp={tsp}/>
-    : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view} goto={setView} mobile={isMobile}/>;
+    : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view} goto={goto} mobile={isMobile}/>;
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
     {/* header */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
@@ -1842,11 +1846,16 @@ function App(){
       boxShadow:"0 8px 24px rgba(0,0,0,.25)",maxWidth:"90vw",textAlign:"center"}}>{toast}</div>}
     {/* desktop: top tabs — each a view into the same model (calendar and windows are separate) */}
     {!isMobile&&<div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
-      {VIEWS.map(([id,ic,label])=><button key={id} onClick={()=>setView(id)}
+      {VIEWS.map(([id,ic,label])=><button key={id} onClick={()=>pick(id)}
         style={{fontFamily:MONO,fontSize:11,fontWeight:800,padding:"9px 15px",border:"none",cursor:"pointer",
           background:"transparent",color:view===id?C.ink:C.mute,letterSpacing:"-0.01em",
           borderBottom:view===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
       <span style={{marginLeft:"auto",alignSelf:"center",fontSize:8,color:C.mute,padding:"0 14px"}}>today {ds(TODAY)}</span>
+    </div>}
+    {/* in-app back crumb — there's no browser back, so deep links always offer a way home */}
+    {back&&back!==view&&<div style={{flexShrink:0,borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"5px 12px"}}>
+      <button onClick={()=>{setView(back);setBack(null);}} style={{fontFamily:MONO,fontSize:10,fontWeight:700,border:"none",background:"none",
+        cursor:"pointer",color:C.blue,display:"inline-flex",alignItems:"center",gap:4}}>‹ back to {labelOf(back)}</button>
     </div>}
     {/* surface — one active view */}
     <div style={{flex:1,minHeight:0}}>{content}</div>
@@ -1854,7 +1863,7 @@ function App(){
     {isMobile&&<div style={{display:"flex",borderTop:`1px solid ${C.line}`,background:C.panel,flexShrink:0,paddingBottom:"env(safe-area-inset-bottom)"}}>
       {VIEWS.map(([id,ic,label])=>{
         const on=view===id;
-        return <button key={id} onClick={()=>setView(id)} style={{flex:1,fontFamily:MONO,border:"none",cursor:"pointer",background:"transparent",
+        return <button key={id} onClick={()=>pick(id)} style={{flex:1,fontFamily:MONO,border:"none",cursor:"pointer",background:"transparent",
           padding:"7px 2px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,
           color:on?C.ink:C.mute,borderTop:on?`2px solid ${C.ink}`:"2px solid transparent",marginTop:-1}}>
           <span style={{fontSize:14,lineHeight:1}}>{ic}</span>
