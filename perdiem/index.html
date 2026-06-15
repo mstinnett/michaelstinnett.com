@@ -141,16 +141,16 @@ function coarseBucket(s){return s<0.34?"dim":s<0.55?"normal":s<0.74?"bright":"br
 function seedState(){
   const sites=[
     {id:"boston",  name:"Boston ED",   note:"home rink. easy charting, know the nurses.",
-     reach:"local",   homeBaseLoc:"boston",  dayRate:1900,nightRate:2300,dayHours:9, nightHours:9,
+     reach:"local",   homeBaseLoc:"boston",  dayRate:210,nightRate:255,dayHours:9, nightHours:9,
      submissionType:"by_shift",  cadence:{opensDaysBefore:75,dueByDaysBefore:21,expectedResponseDays:14}},
     {id:"santa_fe",name:"Santa Fe ED", note:"good people. depends on hearing from ABQ first.",
-     reach:"nm",      homeBaseLoc:"santa_fe",dayRate:1700,nightRate:2100,dayHours:10,nightHours:10,
+     reach:"nm",      homeBaseLoc:"santa_fe",dayRate:170,nightRate:210,dayHours:10,nightHours:10,
      submissionType:"by_window", cadence:{opensDaysBefore:90,dueByDaysBefore:30,expectedResponseDays:10}, dependsOn:"abq"},
     {id:"abq",     name:"Albuquerque ED",note:"high volume, fast. anchors the NM trip.",
-     reach:"nm",      homeBaseLoc:"abq",     dayRate:1600,nightRate:2000,dayHours:9, nightHours:10,
+     reach:"nm",      homeBaseLoc:"abq",     dayRate:180,nightRate:200,dayHours:9, nightHours:10,
      submissionType:"by_shift",  cadence:{opensDaysBefore:80,dueByDaysBefore:25,expectedResponseDays:7}},
     {id:"gallup",  name:"Gallup ED",   note:"rural, long days, pays for it. tiring.",
-     reach:"rural_nm",homeBaseLoc:"abq",     dayRate:2100,nightRate:2500,dayHours:12,nightHours:12,
+     reach:"rural_nm",homeBaseLoc:"abq",     dayRate:175,nightRate:210,dayHours:12,nightHours:12,
      submissionType:"by_window", cadence:{opensDaysBefore:70,dueByDaysBefore:14,expectedResponseDays:21}},
   ];
   // trips — family travel; workFactor: colocate (work locally), commute (leave to work), closed (no work)
@@ -216,7 +216,7 @@ function seedState(){
      footprint:{kind:"pinned",dates:["2026-07-23","2026-07-24","2026-07-27"]}},
     // in negotiation — site countered with different dates + a rate; shows on the calendar
     {id:"ov1",siteId:"santa_fe",shiftType:"day",opens:"2026-04-20",dueBy:"2026-06-10",
-     state:"override",submittedOn:"2026-05-15",expectedResponseBy:"2026-06-18",rateOverride:1850,
+     state:"override",submittedOn:"2026-05-15",expectedResponseBy:"2026-06-18",rateOverride:185,
      footprint:{kind:"pinned",dates:["2026-07-21","2026-07-22","2026-07-28"]}},
     // selected to apply for → the Candidate section (smeared, with the dependency chain on ABQ)
     {id:"s2",siteId:"santa_fe",shiftType:"day",opens:"2026-04-08",dueBy:"2026-06-25",
@@ -261,7 +261,7 @@ function sanitizeState(obj){
       const out={id:String(s.id),name:String(s.name||"Unnamed"),note:String(s.note||""),
         reach:reach.includes(s.reach)?s.reach:"local",
         homeBaseLoc:LOC_NAME[s.homeBaseLoc]?s.homeBaseLoc:"boston",
-        dayRate:numOr(s.dayRate,1800),nightRate:numOr(s.nightRate,2200),
+        dayRate:numOr(s.dayRate,200),nightRate:numOr(s.nightRate,240),
         dayHours:numOr(s.dayHours,9),nightHours:numOr(s.nightHours,9),
         submissionType:s.submissionType==="by_window"?"by_window":"by_shift",
         cadence:{opensDaysBefore:numOr(c.opensDaysBefore,60),dueByDaysBefore:numOr(c.dueByDaysBefore,21),expectedResponseDays:numOr(c.expectedResponseDays,14)}};
@@ -333,7 +333,7 @@ function shareLink(state){
 
 /* ════════ DERIVED VALUES & FORMULAS (§4) — all readouts (Inv 5) ════════ */
 
-const siteRate=(s,t)=>t==="day"?s.dayRate:s.nightRate;
+const siteRate=(s,t)=>t==="day"?s.dayRate:s.nightRate;   // $/hr — rates are always hourly
 const siteHours=(s,t)=>t==="day"?s.dayHours:s.nightHours;
 const shiftCount=r=>r.footprint.kind==="pinned"?r.footprint.dates.length:r.footprint.take;
 
@@ -342,7 +342,8 @@ const shiftCount=r=>r.footprint.kind==="pinned"?r.footprint.dates.length:r.footp
    month; TENTATIVE = occupies but not yet booked money. */
 const REQ_STATES=["candidate","pending","override","confirmed","rejected","expired"];
 const OCCUPY=["candidate","pending","override","confirmed"];
-const reqRate=(r,s)=>Number.isFinite(r.rateOverride)?r.rateOverride:siteRate(s,r.shiftType);
+const reqRate=(r,s)=>Number.isFinite(r.rateOverride)?r.rateOverride:siteRate(s,r.shiftType);   // effective $/hr
+const reqShiftPay=(r,s)=>reqRate(r,s)*siteHours(s,r.shiftType);                                 // $/hr × clinical hours = per-shift pay
 const reqDates=r=>r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates;
 const reqMinDate=r=>reqDates(r).reduce((m,d)=>d<m?d:m,reqDates(r)[0]||"");
 const reqMaxDate=r=>reqDates(r).reduce((m,d)=>d>m?d:m,reqDates(r)[0]||"");
@@ -397,8 +398,8 @@ function makeWindow(site,type,dates){                       // a drawn window �
 
 /* typicalShiftPay — estimate; carries assumption (§4.4) */
 function typicalShiftPay(sites){
-  const v=sites.reduce((a,s)=>a+(s.dayRate+s.nightRate)/2,0)/sites.length;
-  return est(Math.round(v/10)*10,["typicalShiftPay = mean of site day/night rates"]);
+  const v=sites.reduce((a,s)=>a+(s.dayRate*s.dayHours+s.nightRate*s.nightHours)/2,0)/sites.length;
+  return est(Math.round(v/10)*10,["typicalShiftPay = mean of site day/night ($/hr × hours)"]);
 }
 
 /* §4.2 co-location + travel — trips with workFactor: colocate / commute / closed */
@@ -421,9 +422,10 @@ function travelHours(site,weekDates,trips){
 
 /* §4.1 per-window money — facts for choosing */
 function windowMoney(site,type,weekDates,trips){
-  const shiftPay=siteRate(site,type);
+  const hourly=siteRate(site,type);                  // $/hr
   const clinicalHours=siteHours(site,type);
-  const erPerHr=known(shiftPay/clinicalHours);
+  const shiftPay=hourly*clinicalHours;
+  const erPerHr=known(hourly);
   const travel=travelHours(site,weekDates,trips);
   const rest=REST_HOURS[type];
   const awayHours=travel+clinicalHours+rest;
@@ -522,13 +524,13 @@ function coolingAggregate(state,tsp){
     if(r.state==="confirmed"&&r.footprint.kind==="pinned"){
       const yr=r.footprint.dates.filter(d=>pd(d).getFullYear()===YEAR);
       const worked=yr.filter(d=>pd(d)<=TODAY).length;
-      bookedToDate$+=worked*reqRate(r,s);                 // already worked
-      bookedFuture$+=(yr.length-worked)*reqRate(r,s);     // confirmed, not yet worked
+      bookedToDate$+=worked*reqShiftPay(r,s);                 // already worked
+      bookedFuture$+=(yr.length-worked)*reqShiftPay(r,s);     // confirmed, not yet worked
     }else if(r.state==="candidate"||r.state==="pending"||r.state==="override"){
       const n=r.footprint.kind==="pinned"
         ?r.footprint.dates.filter(d=>pd(d).getFullYear()===YEAR).length
         :(r.footprint.candidates.some(d=>pd(d).getFullYear()===YEAR)?r.footprint.take:0);
-      requested$+=n*(r.footprint.kind==="pinned"?reqRate(r,s):tsp.value);   // speculative ask
+      requested$+=n*(r.footprint.kind==="pinned"?reqShiftPay(r,s):tsp.value);   // speculative ask
     }
   }
   const flatRunRate$=fracYearElapsed>0?bookedToDate$/fracYearElapsed:0;
@@ -552,11 +554,11 @@ function weekExposure(weekDates,requests,siteById,tsp){
     const datesIn=(fp.kind==="pinned"?fp.dates:fp.candidates).filter(d=>wf.has(d));
     if(!datesIn.length)continue;
     const s=siteById[r.siteId];if(!s)continue;
-    const rate=reqRate(r,s);
-    if(r.state==="confirmed"&&fp.kind==="pinned"){floor$+=datesIn.length*rate;}
+    const pay=reqShiftPay(r,s);
+    if(r.state==="confirmed"&&fp.kind==="pinned"){floor$+=datesIn.length*pay;}
     else if(r.state==="candidate"||r.state==="pending"||r.state==="override"){
       pending.push(r);                               // not-yet-confirmed → the ceiling hedge
-      if(fp.kind==="pinned")ceil$+=datesIn.length*rate;
+      if(fp.kind==="pinned")ceil$+=datesIn.length*pay;
       else ceil$+=Math.min(fp.take,datesIn.length)*tsp.value; // smeared → typicalShiftPay (estimate)
     }
   }
@@ -1024,7 +1026,7 @@ function Pending({state,setState,tsp}){
   const reject=r=>setReq(r.id,x=>({...x,state:"rejected",resolvedOn:ds(TODAY)}));
   const toOverride=r=>setReq(r.id,x=>({...x,state:"override",footprint:{kind:"pinned",dates:pinFrom(x)},rateOverride:Number.isFinite(x.rateOverride)?x.rateOverride:siteRate(siteById[x.siteId],x.shiftType)}));
   const confirmOverride=r=>setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY)}));
-  const payOf=r=>{const s=siteById[r.siteId];return shiftCount(r)*(s?reqRate(r,s):0);};
+  const payOf=r=>{const s=siteById[r.siteId];return s?shiftCount(r)*reqShiftPay(r,s):0;};
 
   function chainFor(r){
     const site=siteById[r.siteId];if(!site||!site.dependsOn)return null;
@@ -1054,7 +1056,7 @@ function Pending({state,setState,tsp}){
     <span style={{fontSize:13,fontWeight:800}}>{site?site.name:"(removed site)"}</span>
     <Tag bg={C.line2} col={ST_COL[r.state]}>{ST_LABEL[r.state]}</Tag>
     <Tag>{r.shiftType}</Tag>
-    {Number.isFinite(r.rateOverride)&&<Tag bg={C.softWarn} col={C.pressHot}>rate {fmt$(r.rateOverride)}</Tag>}
+    {Number.isFinite(r.rateOverride)&&<Tag bg={C.softWarn} col={C.pressHot}>rate {fmt$(r.rateOverride)}/hr</Tag>}
     <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:C.ink}}>{fmt$(payOf(r))}</span>
   </div>;};
   const Dates=({r})=> <div style={{fontSize:10,color:C.gray,marginTop:4}}>
@@ -1170,9 +1172,9 @@ function OverrideEditor({r,site,onRm,onAdd,onRate,onConfirm,onReject}){
     <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
       <input type="date" value={add} onChange={e=>setAdd(e.target.value)} style={{...inp,width:140}}/>
       <Btn small onClick={()=>{if(DATE_RE.test(add)){onAdd(add);setAdd("");}}}>+ add date</Btn>
-      <span style={{marginLeft:"auto",fontSize:10,color:C.gray}}>rate</span>
+      <span style={{marginLeft:"auto",fontSize:10,color:C.gray}}>$/hr</span>
       <input type="number" value={r.rateOverride} onChange={e=>onRate(+e.target.value||0)} style={{...inp,width:80}}/>
-      <span style={{fontSize:10,color:C.mute}}>={fmt$((r.footprint.dates.length)*(Number(r.rateOverride)||0))}</span>
+      <span style={{fontSize:10,color:C.mute}}>={fmt$((r.footprint.dates.length)*(Number(r.rateOverride)||0)*siteHours(site,r.shiftType))}</span>
     </div>
     <div style={{display:"flex",gap:6}}>
       <Btn small kind="good" disabled={!r.footprint.dates.length} onClick={onConfirm}>confirm</Btn>
@@ -1191,7 +1193,7 @@ function SiteWizard({state,setState,embed,onClose}){
   const updCad=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,cadence:{...s.cadence,...patch}}:s));
   const addSite=()=>{const id="site"+Date.now();
     setSites(p=>[...p,{id,name:"New site",note:"",reach:"local",homeBaseLoc:"boston",
-      dayRate:1800,nightRate:2200,dayHours:9,nightHours:9,submissionType:"by_shift",
+      dayRate:200,nightRate:240,dayHours:9,nightHours:9,submissionType:"by_shift",
       cadence:{opensDaysBefore:60,dueByDaysBefore:21,expectedResponseDays:14}}]);
     setOpenId(id);};
   const rm=id=>{if(reqCount(id)>0)return;setSites(p=>p.filter(s=>s.id!==id));if(openId===id)setOpenId(null);};
@@ -1220,9 +1222,9 @@ function SiteWizard({state,setState,embed,onClose}){
                   {Object.keys(LOC_NAME).map(l=><option key={l} value={l}>{LOC_NAME[l]}</option>)}</select></Field>
               </div>
               <div style={{display:"flex",gap:8}}>
-                <Field label="Day rate $"><N value={s.dayRate} onChange={e=>upd(s.id,{dayRate:+e.target.value||0})}/></Field>
+                <Field label="Day $/hr"><N value={s.dayRate} onChange={e=>upd(s.id,{dayRate:+e.target.value||0})}/></Field>
                 <Field label="Day hours"><N value={s.dayHours} onChange={e=>upd(s.id,{dayHours:+e.target.value||0})}/></Field>
-                <Field label="Night rate $"><N value={s.nightRate} onChange={e=>upd(s.id,{nightRate:+e.target.value||0})}/></Field>
+                <Field label="Night $/hr"><N value={s.nightRate} onChange={e=>upd(s.id,{nightRate:+e.target.value||0})}/></Field>
                 <Field label="Night hours"><N value={s.nightHours} onChange={e=>upd(s.id,{nightHours:+e.target.value||0})}/></Field>
               </div>
               <Field label="Submission type"><select style={inp} value={s.submissionType} onChange={e=>upd(s.id,{submissionType:e.target.value})}>
@@ -1345,7 +1347,7 @@ function useFootprint(state){
       const fp=r.footprint;
       if(fp.kind==="pinned"){
         for(const d of fp.dates){(byDay[d]=byDay[d]||[]).push({state:r.state,type:r.shiftType,site:s});
-          if(r.state==="confirmed"){const dt=pd(d),k=`${dt.getFullYear()}-${dt.getMonth()}`;(perYM[k]=perYM[k]||{n:0,$:0});perYM[k].n++;perYM[k].$+=reqRate(r,s);}}
+          if(r.state==="confirmed"){const dt=pd(d),k=`${dt.getFullYear()}-${dt.getMonth()}`;(perYM[k]=perYM[k]||{n:0,$:0});perYM[k].n++;perYM[k].$+=reqShiftPay(r,s);}}
       }else if(r.state==="candidate"||r.state==="pending"){
         for(const d of fp.candidates){(byDay[d]=byDay[d]||[]).push({state:"smeared",type:r.shiftType,site:s});}
       }
