@@ -1544,7 +1544,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   </>;
 
   if(mobile){
-    const fM=selected,fld=loadYM[`${focusY}-${fM}`]||{conf:0,win:0},ftint=pressureTint(fld.conf+fld.win,ceiling);
+    const fM=selected,fld=footprint.loadYM[`${focusY}-${fM}`]||{conf:0,win:0},ftint=pressureTint(fld.conf+fld.win,ceiling);
     const fctx={byDay:footprint.byDay,famBy:footprint.famBy,lockBy:footprint.lockBy,layerCov:focusCov,tint:ftint,
       drawSet:draw&&draw.y===focusY&&draw.m===fM?drawSet:null,selReqDates:srDates,selTripDates:stpDates};
     const fg=monthGrid(focusY,fM);
@@ -1561,7 +1561,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
         <button onClick={()=>setFocusY(y=>y-1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>‹</button>
         <span style={{fontSize:9,fontWeight:800,minWidth:30,textAlign:"center"}}>{focusY}</span>
         <button onClick={()=>setFocusY(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:11}}>›</button>
-        {MON.map((mn,m)=>{const l=loadYM[`${focusY}-${m}`]||{conf:0,win:0},t=pressureTint(l.conf+l.win,ceiling),on=m===fM;
+        {MON.map((mn,m)=>{const l=footprint.loadYM[`${focusY}-${m}`]||{conf:0,win:0},t=pressureTint(l.conf+l.win,ceiling),on=m===fM;
           return <button key={m} onClick={()=>onSelect(focusY,m)} style={{flexShrink:0,fontFamily:MONO,fontSize:8.5,fontWeight:800,
             padding:"4px 7px",borderRadius:5,cursor:"pointer",border:`1px solid ${on?C.ink:C.line}`,
             background:on?C.ink:(t||C.panel),color:on?C.bg:C.ink}}>{mn[0]}</button>;})}
