@@ -147,6 +147,7 @@ const BW={familyEfficiency:0.28,coLocation:0.19,lowDaysOut:0.17,quotaFit:0.23,cl
 const BW_EST={familyEfficiency:true,coLocation:false,lowDaysOut:false,quotaFit:true,closing:false};
 const BW_LABEL={familyEfficiency:"family efficiency",coLocation:"co-location",lowDaysOut:"low days-out",quotaFit:"quota fit",closing:"closing"};
 const BUCKETS=["dim","normal","bright","brightest"];
+const BUCKET_LABEL={dim:"low",normal:"fair",bright:"good",brightest:"best"};   // plain "fit" wording for the same buckets
 function coarseBucket(s){return s<0.34?"dim":s<0.55?"normal":s<0.74?"bright":"brightest";}
 
 /* ════════ SEED STATE ════════ */
@@ -230,7 +231,7 @@ function seedState(){
     {id:"s1",siteId:"abq",shiftType:"day",opens:"2026-04-13",dueBy:"2026-05-08",
      state:"pending",submittedOn:"2026-05-02",expectedResponseBy:"2026-06-20",
      footprint:{kind:"pinned",dates:["2026-07-23","2026-07-24","2026-07-27"]}},
-    // in negotiation — site countered with different dates + a rate; shows on the calendar
+    // negotiating — site countered with different dates + a rate; shows on the calendar
     {id:"ov1",siteId:"santa_fe",shiftType:"day",opens:"2026-04-20",dueBy:"2026-06-10",
      state:"override",submittedOn:"2026-05-15",expectedResponseBy:"2026-06-18",rateOverride:185,
      footprint:{kind:"pinned",dates:["2026-07-21","2026-07-22","2026-07-28"]}},
@@ -757,7 +758,7 @@ function StatsReadout({cool}){
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"11px 10px"}}>
       <StatItem label="On pace" e={est(cool.onCurveProjection$,["curve-weighted projection"])} strong accent={C.juniper}/>
       <StatItem label="Annualized" e={est(cool.flatRunRate$,["flat run-rate × full year"])}/>
-      <StatItem label="Requested" e={est(cool.requested$,["pending + candidate + override"])} accent={C.ocean}/>
+      <StatItem label="Requested" e={est(cool.requested$,["submitted + draft + negotiating"])} accent={C.ocean}/>
       <StatItem label="Worked" value={fmtK(cool.bookedToDate$)}/>
       <StatItem label="Booked ahead" value={fmtK(cool.bookedFuture$)}/>
       <StatItem label="Expected by now" e={est(cool.expectedToDate$,["curve-weighted to-date"])}/>
@@ -769,7 +770,7 @@ function StatsReadout({cool}){
 function WhyBright({w}){
   return <div style={{padding:"10px 12px",background:C.panel2,borderTop:`1px dashed ${C.line}`}}>
     <div style={{fontSize:10,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>
-      Why it glows — components combine for surfacing only
+      Why it fits — components combine for surfacing only
     </div>
     {Object.keys(BW).map(k=>{
       const v=w.components[k],pct=Math.round(v*100);
@@ -784,8 +785,8 @@ function WhyBright({w}){
       </div>;
     })}
     <div style={{marginTop:8,paddingTop:7,borderTop:`1px solid ${C.line}`,fontSize:11,color:C.gray,display:"flex",justifyContent:"space-between"}}>
-      <span>weighted score <b style={{color:C.ink}}>{w.score.toFixed(2)}</b> → bucket <b style={{color:C.ink}}>{w.bucket}</b></span>
-      <span style={{color:C.mute}}>glow only · never orders / hides / recommends</span>
+      <span>weighted score <b style={{color:C.ink}}>{w.score.toFixed(2)}</b> → fit <b style={{color:C.ink}}>{BUCKET_LABEL[w.bucket]}</b></span>
+      <span style={{color:C.mute}}>fit only · never orders / hides / recommends</span>
     </div>
   </div>;
 }
@@ -884,14 +885,14 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   const sitesEl=<SitesWorksheet state={state} setState={setState}/>;
   const winEl=<>
     <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 2px 8px",flexWrap:"wrap"}}>
-      <span style={{fontSize:15.5,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} windows</span>
+      <span style={{fontSize:15.5,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} options</span>
       <span style={{fontSize:11,color:C.gray}}>Choose where to work each week.</span>
       <span style={{marginLeft:"auto",fontSize:9.5,color:C.est,fontStyle:"italic"}}>~ = estimate</span>
     </div>
     <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:10,color:C.mute,margin:"0 2px 10px"}}>
-      <span>glow = brightness:</span>
+      <span>fit:</span>
       {BUCKETS.map(b=><span key={b} style={{display:"inline-flex",alignItems:"center",gap:4}}>
-        <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{b}</span>)}
+        <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{BUCKET_LABEL[b]}</span>)}
     </div>
     {weeks.map((wk,wi)=>{
       const wkWins=windows.filter(w=>w.wi===wi);
@@ -922,7 +923,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
                   <Tag>{REACH_LABEL[w.site.reach]}</Tag>
                   {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
                   {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
-                  {w.closed&&<Tag bg={C.line2} col={C.mute}>window closed</Tag>}
+                  {w.closed&&<Tag bg={C.line2} col={C.mute}>closed</Tag>}
                   {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
                 </div>
                 <div style={{fontSize:11.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.note||w.site.note}</div>
@@ -946,7 +947,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
               </div>
               {w.existing? <Tag bg={C.softInfo} col={C.blue}>request exists · {w.existing.state}</Tag>
                 : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>Add to calendar</Btn>}
-              <span style={{marginLeft:"auto",fontSize:9.5,color:C.mute}}>{w.site.submissionType==="by_window"?"by window":"by shift"}</span>
+              <span style={{marginLeft:"auto",fontSize:9.5,color:C.mute}}>{w.site.submissionType==="by_window"?"by week":"by shift"}</span>
               <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why bright"}</Btn>
             </div>
             {isOpen&&<WhyBright w={w}/>}
@@ -997,7 +998,7 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
   const totalPay=money.shiftPay*count;
   return <Overlay onClose={onClose}>
     <div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
-    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>{byWindow?"by window — pick candidates + how many to take":"by shift — pick the dates"}</div>
+    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>{byWindow?"by week — pick days + how many to take":"by shift — pick the dates"}</div>
     <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginBottom:12}}>
       {["day","night"].map(t=><button key={t} onClick={()=>setType(t)} style={{fontFamily:MONO,fontSize:12,fontWeight:700,
         padding:"5px 14px",border:"none",cursor:"pointer",background:type===t?C.ink:"transparent",color:type===t?C.bg:C.gray}}>{t}</button>)}
@@ -1013,7 +1014,7 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
       <Btn small onClick={()=>setTake(t=>Math.max(1,t-1))}>−</Btn>
       <span style={{fontSize:15.5,fontWeight:800,minWidth:18,textAlign:"center"}}>{take}</span>
       <Btn small onClick={()=>setTake(t=>Math.min(picked.length,t+1))}>+</Btn>
-      <span style={{fontSize:11,color:C.mute}}>of {picked.length} candidates · ceiling at <Num e={tsp} money/>/shift</span>
+      <span style={{fontSize:11,color:C.mute}}>of {picked.length} days · ceiling at <Num e={tsp} money/>/shift</span>
     </div>}
     <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.gray,marginBottom:travelOn?7:14,cursor:"pointer"}}>
       <input type="checkbox" checked={travelOn} onChange={e=>setTravelOn(e.target.checked)}/>
@@ -1073,7 +1074,7 @@ function Overlay({children,onClose}){
    Pending (awaiting + in-negotiation overrides) → Past (worked, scrolling down). */
 const md=d=>`${MON[pd(d).getMonth()]} ${pd(d).getDate()}`;
 const ST_COL={candidate:C.gray,pending:C.blue,override:C.pressHot,confirmed:C.green,rejected:C.red,expired:C.mute};
-const ST_LABEL={candidate:"candidate",pending:"pending",override:"in negotiation",confirmed:"confirmed",rejected:"rejected",expired:"expired"};
+const ST_LABEL={candidate:"draft",pending:"submitted",override:"negotiating",confirmed:"booked",rejected:"rejected",expired:"expired"};
 function Pending({state,setState,tsp}){
   const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
   const setReq=(id,fn)=>setState(s=>({...s,requests:s.requests.map(x=>x.id===id?fn(x):x)}));
@@ -1126,19 +1127,19 @@ function Pending({state,setState,tsp}){
 
   return <div style={{height:"100%",overflow:"auto"}}>
     <div style={{maxWidth:720,margin:"0 auto",padding:"14px 16px 80px"}}>
-      <div style={{fontSize:18,fontWeight:800,letterSpacing:"-0.02em"}}>Pending</div>
+      <div style={{fontSize:18,fontWeight:800,letterSpacing:"-0.02em"}}>Requests</div>
       <div style={{fontSize:11.5,color:C.gray,marginBottom:16}}>the request lifecycle, newest intent on top, history scrolling down.</div>
 
-      {/* ── CANDIDATES ── */}
-      <Head title="Candidates" n={candidates.length} sub="selected to apply for · deadline chain"/>
-      {candidates.length===0&&<Empty t="None staged — create one on the Board."/>}
+      {/* ── DRAFTS ── */}
+      <Head title="Drafts" n={candidates.length} sub="drafts to submit · deadline chain"/>
+      {candidates.length===0&&<Empty t="No drafts yet — create one on the calendar."/>}
       {candidates.map(r=>{
         const press=requestPressure(r),notOpen=TODAY<pd(r.opens),chain=chainFor(r);
         return <RowCard key={r.id}>
           <Ident r={r}/><Dates r={r}/>
           <div style={{marginTop:7}}>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:9.5,color:C.mute,marginBottom:2}}>
-              <span>{notOpen?`opens ${r.opens}`:`window open`}</span>
+              <span>{notOpen?`opens ${r.opens}`:`open now`}</span>
               <span style={{color:press>0.7?C.red:C.gray}}>apply by {r.dueBy}</span>
             </div>
             <div style={{height:5,background:C.line2,borderRadius:3,overflow:"hidden"}}>
@@ -1158,15 +1159,15 @@ function Pending({state,setState,tsp}){
       })}
 
       {/* ── CONFIRMED (upcoming) ── */}
-      <div style={{marginTop:18}}><Head title="Confirmed" n={confirmedUp.length} sub="upcoming · on the calendar"/></div>
-      {confirmedUp.length===0&&<Empty t="No upcoming confirmed shifts."/>}
+      <div style={{marginTop:18}}><Head title="Booked" n={confirmedUp.length} sub="upcoming · on the calendar"/></div>
+      {confirmedUp.length===0&&<Empty t="No upcoming booked shifts."/>}
       {confirmedUp.map(r=><RowCard key={r.id} accent={C.juniper}>
         <Ident r={r}/><Dates r={r}/>
         <div style={{fontSize:9.5,color:C.green,fontWeight:700,marginTop:6}}>→ hardened placement (home base, §7)</div>
       </RowCard>)}
 
-      {/* ── PENDING (awaiting + in negotiation) ── */}
-      <div style={{marginTop:18}}><Head title="Pending" n={inflight.length} sub="awaiting the site · accept / reject / override"/></div>
+      {/* ── SUBMITTED (awaiting + negotiating) ── */}
+      <div style={{marginTop:18}}><Head title="Submitted" n={inflight.length} sub="awaiting the site · accept / decline / negotiate"/></div>
       {inflight.length===0&&<Empty t="Nothing out for response."/>}
       {inflight.map(r=>{
         const wait=responseWait(r),neg=r.state==="override";
@@ -1213,7 +1214,7 @@ function Pending({state,setState,tsp}){
       </RowCard>)}
 
       <p style={{fontSize:11,color:C.mute,textAlign:"center",marginTop:22,lineHeight:1.6}}>
-        Confirmed and in-negotiation shifts land on the calendar and press the month.<br/>
+        Booked and negotiating shifts land on the calendar and press the month.<br/>
         Only the pace/exposure readout crosses back to the Board (the seam, §7).
       </p>
     </div>
@@ -1269,7 +1270,7 @@ function SiteWizard({state,setState,embed,onClose}){
             <div onClick={()=>setOpenId(open?null:s.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",cursor:"pointer"}}>
               <span style={{fontSize:13,fontWeight:800}}>{s.name||"(unnamed)"}</span>
               <Tag>{REACH_LABEL[s.reach]}</Tag>
-              <Tag bg={C.line2}>{s.submissionType==="by_window"?"by window":"by shift"}</Tag>
+              <Tag bg={C.line2}>{s.submissionType==="by_window"?"by week":"by shift"}</Tag>
               <Tag bg={C.line2}>due {s.cadence.dueByDaysBefore}d before month</Tag>
               <span style={{marginLeft:"auto",fontSize:11,color:C.mute}}>{open?"▾":"▸"}</span>
             </div>
@@ -1289,7 +1290,7 @@ function SiteWizard({state,setState,embed,onClose}){
                 <Field label="Night hours"><N value={s.nightHours} onChange={e=>upd(s.id,{nightHours:+e.target.value||0})}/></Field>
               </div>
               <Field label="Submission type"><select style={inp} value={s.submissionType} onChange={e=>upd(s.id,{submissionType:e.target.value})}>
-                <option value="by_shift">by shift (pinned)</option><option value="by_window">by window (smeared)</option></select></Field>
+                <option value="by_shift">by shift (pinned)</option><option value="by_window">by week (smeared)</option></select></Field>
               <div style={{display:"flex",gap:8}}>
                 <Field label="Opens (days before)"><N value={s.cadence.opensDaysBefore} onChange={e=>updCad(s.id,{opensDaysBefore:+e.target.value||0})}/></Field>
                 <Field label="Requests due (days before the month)"><N value={s.cadence.dueByDaysBefore} onChange={e=>updCad(s.id,{dueByDaysBefore:+e.target.value||0})}/></Field>
@@ -1471,7 +1472,7 @@ function dayVisual(d,ctx){
   const drawing=ctx.drawSet&&ctx.drawSet.has(str),inSel=ctx.selReqDates&&ctx.selReqDates.has(str),inTrip=ctx.selTripDates&&ctx.selTripDates.has(str);
   if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
   const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
-  const title=`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
+  const title=`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · negotiating ${neg.site.name}`:""}${pend?` · submitted ${pend.site.name}`:""}${cand?` · draft ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
   return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,cost,bg,border,inner,drawing,inSel,inTrip,title};
 }
 function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandle}){
@@ -1514,7 +1515,7 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
       <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{MON[m].toUpperCase()}{sel&&" ◂"}</div>
       <div style={{fontSize:8.5,color:pm&&pm.n?C.ink:C.mute}}>{pm&&pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
       {/* two-layer pressure: confirmed (dark) + window (mid) vs ceiling */}
-      <div title={`${ld.conf} confirmed + ${ld.win} window of ~${ceiling}/mo`} style={{display:"inline-flex",alignItems:"center",gap:3,marginTop:1}}>
+      <div title={`${ld.conf} booked + ${ld.win} in-flight of ~${ceiling}/mo`} style={{display:"inline-flex",alignItems:"center",gap:3,marginTop:1}}>
         <div style={{width:barW,height:4,background:C.line2,borderRadius:2,overflow:"hidden",display:"flex",position:"relative"}}>
           <div style={{width:confW,height:"100%",background:hot?C.pressHot:C.ink}}/>
           <div style={{width:winW,height:"100%",background:C.bar}}/>
@@ -1524,7 +1525,7 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
       </div>
     </div>
     <div style={{display:"flex",flexDirection:"column",gap:3,paddingTop:sel?3:0}}>
-      {sel&&<div title={`${ld.conf} confirmed + ${ld.win} window of ~${ceiling}/mo`} style={{display:"flex",alignItems:"center",gap:6,marginLeft:1}}>
+      {sel&&<div title={`${ld.conf} booked + ${ld.win} in-flight of ~${ceiling}/mo`} style={{display:"flex",alignItems:"center",gap:6,marginLeft:1}}>
         <div style={{width:GW,height:7,background:C.line2,borderRadius:3,overflow:"hidden",display:"flex",position:"relative"}}>
           <div style={{width:gcw,height:"100%",background:hot?C.pressHot:C.ink}}/>
           <div style={{width:gww,height:"100%",background:C.bar}}/>
@@ -1668,7 +1669,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     {sr&&sr.state!=="candidate"&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
       <span style={{fontSize:11,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {ST_LABEL[sr.state]||sr.state}</span></span>
       <span style={{fontSize:9.5,color:C.mute}}>read-only here</span>
-      <Btn small kind="prim" onClick={()=>goto&&goto("pending")}>manage in Pending →</Btn>
+      <Btn small kind="prim" onClick={()=>goto&&goto("pending")}>manage in Requests →</Btn>
       <Btn small onClick={()=>setSel(null)}>done</Btn>
     </div>}
     {stp&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
@@ -1768,11 +1769,11 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   </div>;
 }
 const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",fontSize:9.5,color:C.mute,margin:"6px 2px 0"}}>
-  <LegDot bg={SHIFT_COL.day}>day confirmed</LegDot>
-  <LegDot bg={SHIFT_COL.night}>night confirmed</LegDot>
-  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:OVERRIDE_COL.day,border:`1.5px dashed ${SHIFT_COL.day}`}}/>in negotiation</span>
-  <LegDot ring={C.ink}>pending</LegDot>
-  <LegDot dotted>candidate</LegDot>
+  <LegDot bg={SHIFT_COL.day}>day booked</LegDot>
+  <LegDot bg={SHIFT_COL.night}>night booked</LegDot>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:OVERRIDE_COL.day,border:`1.5px dashed ${SHIFT_COL.day}`}}/>negotiating</span>
+  <LegDot ring={C.ink}>submitted</LegDot>
+  <LegDot dotted>draft</LegDot>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:C.blockTrip,border:`1px solid ${C.ocean}`}}/>trip</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,backgroundImage:`repeating-linear-gradient(135deg,${C.pressHot} 0 1.5px,transparent 1.5px 5px)`,border:`1px solid ${C.line}`}}/>family-time cost</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
@@ -1806,7 +1807,7 @@ function TripsDrawer({state,setState}){
   const add=()=>setTrips(ts=>[...ts,{id:"t"+Date.now(),name:"New trip",from:`${YEAR}-07-06`,to:`${YEAR}-07-12`,loc:Object.keys(LOC_NAME)[0],workFactor:"closed"}]);
   const rm=id=>setTrips(ts=>ts.filter(t=>t.id!==id));
   const WF=[["colocate","co-locate"],["commute","commute"],["closed","closed"]];
-  const WFNOTE={colocate:"work locally — nearby sites co-locate (cheap)",commute:"leave the trip to work — full travel",closed:"no work — windows closed (e.g. international)"};
+  const WFNOTE={colocate:"work locally — nearby sites co-locate (cheap)",commute:"leave the trip to work — full travel",closed:"no work — options closed (e.g. international)"};
   return <Drawer title="Trips" sub="Family travel" n={trips.length} open={open} setOpen={setOpen}>
     {trips.map(t=><div key={t.id} style={{border:`1px solid ${C.line2}`,borderRadius:6,padding:"7px 8px",marginBottom:6}}>
       <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",marginBottom:5}}>
@@ -1930,7 +1931,7 @@ function App(){
     else prompt("Copy this share link:",url);
   };
 
-  const VIEWS=[["work","▦","Calendar"],["pending","◷","Pending"],["pace","∿","Pace"],["setup","⚙","Setup"]];
+  const VIEWS=[["work","▦","Calendar"],["pending","◷","Requests"],["pace","∿","Pace"],["setup","⚙","Setup"]];
   const labelOf=v=>(VIEWS.find(x=>x[0]===v)||[,,v])[2];
   const goto=t=>{if(t!==view){setBack(view);setView(t);}};   // deep link, remembers where to return
   const pick=t=>{setView(t);setBack(null);};                  // manual tab tap clears the return crumb
