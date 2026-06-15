@@ -1392,14 +1392,18 @@ function dayVisual(d,ctx){
   const title=`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
   return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,bg,border,inner,drawing,inSel,inTrip,title};
 }
-function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m}){
+function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandle}){
   const base={...box,marginLeft:ml||0,flexShrink:0,borderRadius:2,position:"relative",boxSizing:"border-box"};
   if(!d)return <div style={base}/>;
   const v=dayVisual(d,ctx);
+  const nub=which=><span onPointerDown={e=>{e.stopPropagation();onHandle&&onHandle(e,which,v.str);}}
+    style={{position:"absolute",top:0,bottom:0,[which==="start"?"left":"right"]:-3,width:7,zIndex:5,cursor:"ew-resize",touchAction:"none",
+      display:"flex",alignItems:"center",justifyContent:"center"}}>
+    <span style={{width:3,height:"62%",borderRadius:2,background:C.ink,boxShadow:`0 0 0 1px ${C.bg}`}}/></span>;
   return <div data-date={v.str} onPointerDown={tool&&tool!=="off"?e=>onCellDown(e,v.str,y,m):undefined}
     onClick={onTap?()=>onTap(v.str):undefined} title={v.title}
     style={{...base,background:v.bg,border:v.border,
-      cursor:v.closed?"not-allowed":(tool==="pencil"?"crosshair":(tool==="eraser"?"cell":"pointer")),touchAction:tool&&tool!=="off"?"none":"auto",
+      cursor:v.closed?"not-allowed":(tool==="eraser"?"cell":"pointer"),touchAction:tool&&tool!=="off"?"none":"auto",
       outline:v.inSel?`2px solid ${C.ink}`:(v.inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:v.closed&&!v.conf&&!v.neg?0.82:1,
       display:num?"flex":"block",alignItems:"center",justifyContent:"center"}}>
     {num&&<span style={{fontSize:11,fontWeight:v.conf?800:500,color:v.conf?"#fff":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
@@ -1408,10 +1412,11 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m}){
     {v.lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:v.lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
     {v.lays.length>0&&<div style={{position:"absolute",left:1,right:1,bottom:1,display:"flex",gap:1,justifyContent:"center",pointerEvents:"none"}}>
       {v.lays.slice(0,4).map((x,i)=><span key={i} style={{width:3,height:3,borderRadius:"50%",background:x.color,opacity:x.inferred?0.45:1}}/>)}</div>}
+    {hStart&&nub("start")}{hEnd&&nub("end")}
   </div>;
 }
 /* one month as a weekday-aligned by-row strip — cells are the drawing surface */
-function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,selTripDates,onCellDown}){
+function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,selTripDates,onCellDown,selStart,selEnd,onHandle}){
   const {byDay,famBy,lockBy,perYM,loadYM}=footprint;
   const g=monthGrid(y,m),isNow=y===YEAR&&m===TODAY.getMonth();
   const pm=perYM[`${y}-${m}`],ld=loadYM[`${y}-${m}`]||{conf:0,win:0},load=ld.conf+ld.win;
@@ -1436,8 +1441,9 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
     </div>
     <div style={{display:"flex"}}>
       {Array.from({length:calMaxCols},(_,ci)=>{
-        const d=ci<g.cells.length?g.cells[ci]:null;
-        return <DayCell key={ci} d={d} ctx={ctx} box={{width:CAL_CELL,height:CAL_CELL}} ml={calMl(ci)} tool={tool} onCellDown={onCellDown} y={y} m={m}/>;
+        const d=ci<g.cells.length?g.cells[ci]:null,str=d&&ds(d);
+        return <DayCell key={ci} d={d} ctx={ctx} box={{width:CAL_CELL,height:CAL_CELL}} ml={calMl(ci)} tool={tool} onCellDown={onCellDown} y={y} m={m}
+          hStart={str&&str===selStart} hEnd={str&&str===selEnd} onHandle={onHandle}/>;
       })}
     </div>
   </div>;
@@ -1447,7 +1453,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const sites=state.sites;
   const [mode,setMode]=useState("cal");
   const [range,setRange]=useState({s:YEAR-1,e:YEAR+2});
-  const [tool,setTool]=useState("select");                    // select | pencil | eraser
+  const [tool,setTool]=useState("edit");                      // edit (direct: draw/move/select/resize) | eraser
   const [drawType,setDrawType]=useState("day");
   const [drawSiteId,setDrawSiteId]=useState(sites[0]&&sites[0].id);
   const [draw,setDraw]=useState(null);                        // {startStr,endStr,y,m}
@@ -1467,6 +1473,14 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const pt=e=>e.touches?e.touches[0]:e;
   function listen(move,up){const m=e=>move(pt(e)),u=e=>{window.removeEventListener("pointermove",m);window.removeEventListener("pointerup",u);up(pt(e));};
     window.addEventListener("pointermove",m);window.addEventListener("pointerup",u);}
+  // drag a window's end handle to extend / collapse on the run
+  function handleResize(e,which,r){
+    e.preventDefault();const start=reqMinDate(r),end=reqMaxDate(r);
+    listen(p=>{const d=nearestDate(p.clientX,p.clientY);if(!d)return;
+      let ns=start,ne=end;if(which==="end")ne=d<start?start:d;else ns=d>end?end:d;
+      const dates=weekdaysBetween(ns,ne);if(dates.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates}}));},
+      ()=>setReqs(rs=>mergeCandidates(rs)));
+  }
   function cellDown(e,str,y,m){
     e.preventDefault();
     if(tool==="eraser"){                                   // drag to erase
@@ -1475,15 +1489,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
         const left=r.footprint.dates.filter(x=>x!==d);if(left.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:left}}));else delReq(r.id);};
       erase(str);listen(p=>erase(nearestDate(p.clientX,p.clientY)),()=>{});return;
     }
-    if(tool==="pencil"){
-      if(dayClosed(str))return;
-      setDraw({startStr:str,endStr:str,y,m});
-      listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(dd){const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}},
-        ()=>setDraw(d=>{if(d){const dates=weekdaysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));const site=sites.find(s=>s.id===drawSiteId)||sites[0];
-          if(dates.length&&site){const r=makeWindow(site,drawType,dates);addReq(r);setSel({kind:"req",id:r.id});}}return null;}));
-      return;
-    }
-    // select tool: tap selects; drag moves (like a multi-day calendar item)
+    // direct manipulation (default): existing window → tap selects / drag moves; empty → draw a new window
     const r=editableAt(str),t=!r&&tripAt(str);
     if(r){setSel({kind:"req",id:r.id});const orig=r.footprint.dates.slice();let moved=false;
       listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));if(delta!==0)moved=true;
@@ -1494,25 +1500,31 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));
         setTrip(t.id,x=>({...x,from:ds(ad(pd(f0),delta)),to:ds(ad(pd(t0),delta)),placed:true}));},()=>{});
       return;}
-    setSel(null);
+    if(dayClosed(str)){setSel(null);return;}
+    setSel(null);setDraw({startStr:str,endStr:str,y,m});
+    listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(dd){const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}},
+      ()=>setDraw(d=>{if(d){const dates=weekdaysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));const site=sites.find(s=>s.id===drawSiteId)||sites[0];
+        if(dates.length&&site){const rr=makeWindow(site,drawType,dates);addReq(rr);setSel({kind:"req",id:rr.id});}}return null;}));
   }
   const drawSet=draw?new Set(weekdaysBetween(draw.startStr,draw.endStr)):null;
   const sr=sel&&sel.kind==="req"?state.requests.find(r=>r.id===sel.id):null;
   const stp=sel&&sel.kind==="trip"?state.trips.find(t=>t.id===sel.id):null;
   const srDates=sr?new Set(sr.footprint.dates):null;
+  const srStart=sr?reqMinDate(sr):null,srEnd=sr?reqMaxDate(sr):null;
   const stpDates=stp?(()=>{const s=new Set();let d=pd(stp.from);const t=pd(stp.to);while(d<=t){s.add(ds(d));d=ad(d,1);}return s;})():null;
   const items=[];
   if(mode==="cal"){for(let y=range.s;y<=range.e;y++){items.push({h:`${y}`});for(let mm=0;mm<12;mm++)items.push({y,m:mm});}}
   else{for(let y=range.s;y<=range.e;y++){items.push({h:`${y}–${String((y+1)%100).padStart(2,"0")} school year`});
     for(const mm of [7,8,9,10,11])items.push({y,m:mm});for(const mm of [0,1,2,3,4,5,6])items.push({y:y+1,m:mm});}}
   const width=CAL_LBL+calMaxCols*(CAL_CELL+CAL_CG)+(calMaxCols/7)*CAL_WG;
-  const TOOLS=[["select","⌖ select"],["pencil","✎ draw"],["eraser","⌫ erase"]];
+  const TOOLS=[["edit","✎ draw · move"],["eraser","⌫ erase"]];   // tap selects · drag moves · handles resize · drag empty draws
   const toolPalette=<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
     <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
       {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSel(null);}} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
         padding:"4px 9px",border:"none",cursor:"pointer",background:tool===k?C.ink:"transparent",color:tool===k?C.bg:C.gray}}>{l}</button>)}
     </div>
-    {tool==="pencil"&&<div style={{display:"inline-flex",alignItems:"center",gap:5}}>
+    {tool==="edit"&&<div style={{display:"inline-flex",alignItems:"center",gap:5}}>
+      <span style={{fontSize:8,color:C.mute}}>new:</span>
       <select value={drawSiteId} onChange={e=>setDrawSiteId(e.target.value)} style={{...inp,width:120,padding:"3px 6px"}}>
         {sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
       <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
@@ -1553,8 +1565,10 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     const dow=<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
       {"MTWTFSS".split("").map((c,i)=><div key={i} style={{textAlign:"center",fontSize:8,fontWeight:700,color:C.mute}}>{c}</div>)}</div>;
     const grid=big=><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
-      {fg.cells.map((d,i)=><DayCell key={i} d={d} ctx={fctx} box={{width:"100%",aspectRatio:"1"}} num
-        tool={big?tool:null} onCellDown={cellDown} onTap={big?undefined:tapSelect} y={focusY} m={fM}/>)}</div>;
+      {fg.cells.map((d,i)=>{const str=d&&ds(d);
+        return <DayCell key={i} d={d} ctx={fctx} box={{width:"100%",aspectRatio:"1"}} num
+        tool={big?tool:null} onCellDown={cellDown} onTap={big?undefined:tapSelect} y={focusY} m={fM}
+        hStart={big&&str&&str===srStart} hEnd={big&&str&&str===srEnd} onHandle={(e,which)=>sr&&handleResize(e,which,sr)}/>;})}</div>;
     return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
       {/* pressure ribbon — the year at a glance */}
       <div style={{display:"flex",alignItems:"center",gap:4,padding:"7px 8px",borderBottom:`1px solid ${C.line2}`,overflowX:"auto"}}>
@@ -1607,7 +1621,8 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
           ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:11,fontWeight:900,color:C.ink}}>{it.h}</div>
           : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
               selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}
-              tool={tool} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selTripDates={stpDates} onCellDown={cellDown}/>)}
+              tool={tool} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selTripDates={stpDates} onCellDown={cellDown}
+              selStart={srStart} selEnd={srEnd} onHandle={(e,which)=>sr&&handleResize(e,which,sr)}/>)}
         <div style={{textAlign:"center",marginTop:4}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
           style={{fontFamily:MONO,fontSize:8,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>later ◢</button></div>
       </div>
