@@ -345,6 +345,37 @@ function weekdaysBetween(a,b){
   return out;
 }
 const shiftDates=(dates,delta)=>dates.map(x=>ds(ad(pd(x),delta))).sort();
+/* forgiving hit-test: the date under (x,y), or the nearest cell within ~60px */
+function nearestDate(x,y){
+  const el=document.elementFromPoint(x,y),c=el&&el.closest&&el.closest("[data-date]");
+  if(c)return c.dataset.date;
+  let best=null,bd=1e9;
+  document.querySelectorAll("[data-date]").forEach(n=>{const r=n.getBoundingClientRect();
+    const dx=Math.max(r.left-x,0,x-r.right),dy=Math.max(r.top-y,0,y-r.bottom);const d=Math.hypot(dx,dy);
+    if(d<bd){bd=d;best=n.dataset.date;}});
+  return bd<60?best:null;
+}
+/* automerge: contiguous candidate work-windows of the same site+type → one coherent block */
+function mergeCandidates(requests){
+  const cands=requests.filter(r=>r.state==="candidate"&&r.footprint.kind==="pinned");
+  const rest=requests.filter(r=>!(r.state==="candidate"&&r.footprint.kind==="pinned"));
+  const groups={};
+  for(const r of cands)(groups[r.siteId+"|"+r.shiftType]=groups[r.siteId+"|"+r.shiftType]||[]).push(r);
+  const out=[];
+  for(const k in groups){
+    const list=groups[k].slice().sort((a,b)=>reqMinDate(a).localeCompare(reqMinDate(b)));
+    let cur=null;
+    for(const r of list){
+      if(!cur){cur={...r,footprint:{kind:"pinned",dates:[...r.footprint.dates]}};continue;}
+      if(days(pd(reqMaxDate(cur)),pd(reqMinDate(r)))<=3){   // contiguous (weekend gap allowed)
+        cur.footprint.dates=Array.from(new Set([...cur.footprint.dates,...r.footprint.dates])).sort();
+        if(r.opens<cur.opens)cur.opens=r.opens; if(r.dueBy<cur.dueBy)cur.dueBy=r.dueBy;
+      }else{out.push(cur);cur={...r,footprint:{kind:"pinned",dates:[...r.footprint.dates]}};}
+    }
+    if(cur)out.push(cur);
+  }
+  return [...rest,...out];
+}
 function makeWindow(site,type,dates){                       // a drawn window → a candidate request
   if(!dates.length)return null;
   const first=dates[0];
@@ -759,12 +790,15 @@ function PaceCurve({pace,setPace,tsp}){
   </div>;
 }
 
-function Board({state,setState,monthIdx,setMonthIdx,tsp,view}){
+function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto}){
   view=view||"all";
   const [types,setTypes]=useState({});
   const [open,setOpen]=useState(null);
   const [creating,setCreating]=useState(null);
   const [drawer,setDrawer]=useState(true);
+  const [sel,setSel]=useState(null);                 // {kind:"req"|"trip", id}
+  const winRef=useRef();
+  useEffect(()=>{if(sel&&sel.kind==="req"&&winRef.current)winRef.current.scrollIntoView({behavior:"smooth",block:"start"});},[sel]);
   const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
   const footprint=useFootprint(state);
   const {weeks,windows,qInfo,committed,remaining}=useMemo(
@@ -788,7 +822,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view}){
     </div>
     {drawer&&<div style={{padding:"0 12px 12px"}}>{paceInner}</div>}
   </div>;
-  const calEl=<><Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling}/><FootLegend/></>;
+  const calEl=<><Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling} sel={sel} setSel={setSel} goto={goto}/><FootLegend/></>;
   const layersEl=<LayersPanel state={state} setState={setState}/>;
   const tripsEl=<TripsDrawer state={state} setState={setState}/>;
   const sitesEl=<SitesWorksheet state={state} setState={setState}/>;
@@ -870,12 +904,12 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view}){
     </p>
   </>;
 
-  const tripsPaletteEl=<TripsPalette state={state} setState={setState}/>;
+  const tripsPaletteEl=<TripsPalette state={state} setState={setState} sel={sel} setSel={setSel} goto={goto}/>;
   let body;
   if(view==="pace")body=<><div style={{fontSize:13,fontWeight:800,marginBottom:10}}>Pace</div>{paceInner}</>;
   else if(view==="setup")body=<>{layersEl}{sp}{tripsEl}{sp}{sitesEl}</>;
   // main workspace: calendar + windows together, with the trips palette as the third pillar
-  else body=<>{calEl}{sp}{tripsPaletteEl}{sp}{winEl}</>;
+  else body=<>{calEl}{sp}{tripsPaletteEl}{sp}<div ref={winRef}>{winEl}</div></>;
 
   return <div style={{height:"100%",overflow:"auto"}}>
     <div style={{maxWidth:980,margin:"0 auto",padding:"12px 16px 60px"}}>{body}</div>
@@ -1341,7 +1375,7 @@ const CAL_CELL=15,CAL_CG=2,CAL_WG=7,CAL_LBL=74,CAL_RG=3;
 const calMl=ci=>(ci%7===0&&ci>0)?CAL_WG:(ci===0?0:CAL_CG);
 const calMaxCols=42;
 /* one month as a weekday-aligned by-row strip — cells are the drawing surface */
-function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,onCellDown}){
+function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,selTripDates,onCellDown}){
   const {byDay,famBy,lockBy,perYM,loadYM}=footprint;
   const g=monthGrid(y,m),isNow=y===YEAR&&m===TODAY.getMonth();
   const pm=perYM[`${y}-${m}`],ld=loadYM[`${y}-${m}`]||{conf:0,win:0},load=ld.conf+ld.win;
@@ -1379,7 +1413,7 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
         else if(pend){border=`1.5px solid ${C.blue}`;}
         else if(cand){border=`1.5px solid ${C.faint}`;}
         else if(smear){inner="dotted";}
-        const drawing=drawSet&&drawSet.has(str), inSel=selReqDates&&selReqDates.has(str);
+        const drawing=drawSet&&drawSet.has(str), inSel=selReqDates&&selReqDates.has(str), inTrip=selTripDates&&selTripDates.has(str);
         if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
         const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
         return <div key={ci} data-date={str}
@@ -1387,7 +1421,7 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
           title={`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · in negotiation ${neg.site.name}`:""}${pend?` · pending ${pend.site.name}`:""}${cand?` · candidate ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`}
           style={{width:CAL_CELL,height:CAL_CELL,marginLeft:calMl(ci),flexShrink:0,borderRadius:2,background:bg,border,position:"relative",boxSizing:"border-box",
             cursor:closed?"not-allowed":(tool==="pencil"?"crosshair":(tool==="eraser"?"cell":"pointer")),touchAction:tool&&tool!=="off"?"none":"auto",
-            outline:inSel?`2px solid ${C.ink}`:"none",outlineOffset:-1,opacity:closed&&!conf&&!neg?0.82:1}}>
+            outline:inSel?`2px solid ${C.ink}`:(inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:closed&&!conf&&!neg?0.82:1}}>
           {closed&&!conf&&!neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
           {inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
           {lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
@@ -1400,7 +1434,7 @@ function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,d
   </div>;
 }
 /* the calendar engine + workbench: dual-mode, infinite scroll, future inference, draw/erase/edit */
-function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling}){
+function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto}){
   const sites=state.sites;
   const [mode,setMode]=useState("cal");
   const [range,setRange]=useState({s:YEAR-1,e:YEAR+2});
@@ -1408,33 +1442,53 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling}){
   const [drawType,setDrawType]=useState("day");
   const [drawSiteId,setDrawSiteId]=useState(sites[0]&&sites[0].id);
   const [draw,setDraw]=useState(null);                        // {startStr,endStr,y,m}
-  const [selReq,setSelReq]=useState(null);
   const cov=useMemo(()=>layerCoverage(layers,range.s,range.e+1),[layers,range.s,range.e]);
   const onScroll=e=>{const el=e.target;if(el.scrollHeight-el.scrollTop-el.clientHeight<140)setRange(r=>({...r,e:r.e+1}));};
-  const addReq=r=>setState(s=>({...s,requests:[...s.requests,r]}));
-  const setReq=(id,fn)=>setState(s=>({...s,requests:s.requests.map(x=>x.id===id?fn(x):x)}));
-  const delReq=id=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==id)}));
+  const setReqs=fn=>setState(s=>({...s,requests:fn(s.requests)}));
+  const addReq=r=>setReqs(rs=>mergeCandidates([...rs,r]));
+  const setReq=(id,fn)=>setReqs(rs=>rs.map(x=>x.id===id?fn(x):x));
+  const delReq=id=>setReqs(rs=>rs.filter(x=>x.id!==id));
+  const setTrip=(id,fn)=>setState(s=>({...s,trips:s.trips.map(x=>x.id===id?fn(x):x)}));
   const editableAt=str=>state.requests.find(r=>EDITABLE.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));
-  const eraseDay=str=>{const r=editableAt(str);if(!r)return;const left=r.footprint.dates.filter(x=>x!==str);
-    if(left.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:left}}));else delReq(r.id);};
+  const tripAt=str=>state.trips.find(t=>placed(t)&&str>=t.from&&str<=t.to);
   const dayClosed=str=>state.trips.some(t=>placed(t)&&t.workFactor==="closed"&&str>=t.from&&str<=t.to);
+  const pt=e=>e.touches?e.touches[0]:e;
+  function listen(move,up){const m=e=>move(pt(e)),u=e=>{window.removeEventListener("pointermove",m);window.removeEventListener("pointerup",u);up(pt(e));};
+    window.addEventListener("pointermove",m);window.addEventListener("pointerup",u);}
   function cellDown(e,str,y,m){
-    if(tool==="eraser"){eraseDay(str);return;}
-    if(tool==="select"){const r=editableAt(str);setSelReq(r?r.id:null);return;}
-    if(dayClosed(str))return;                            // can't draw inside a closed trip
-    // pencil: drag to draw a contiguous window within this month
-    e.preventDefault();setDraw({startStr:str,endStr:str,y,m});
-    const move=ev=>{const t=ev.touches?ev.touches[0]:ev;const el=document.elementFromPoint(t.clientX,t.clientY);
-      const c=el&&el.closest&&el.closest("[data-date]");
-      if(c&&c.dataset.date){const dd=c.dataset.date;const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}};
-    const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);
-      setDraw(d=>{if(d){const dates=weekdaysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));const site=sites.find(s=>s.id===drawSiteId)||sites[0];
-        if(dates.length&&site){const r=makeWindow(site,drawType,dates);addReq(r);setSelReq(r.id);}}return null;});};
-    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
+    e.preventDefault();
+    if(tool==="eraser"){                                   // drag to erase
+      const done=new Set();
+      const erase=d=>{if(!d||done.has(d))return;done.add(d);const r=editableAt(d);if(!r)return;
+        const left=r.footprint.dates.filter(x=>x!==d);if(left.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:left}}));else delReq(r.id);};
+      erase(str);listen(p=>erase(nearestDate(p.clientX,p.clientY)),()=>{});return;
+    }
+    if(tool==="pencil"){
+      if(dayClosed(str))return;
+      setDraw({startStr:str,endStr:str,y,m});
+      listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(dd){const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}},
+        ()=>setDraw(d=>{if(d){const dates=weekdaysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));const site=sites.find(s=>s.id===drawSiteId)||sites[0];
+          if(dates.length&&site){const r=makeWindow(site,drawType,dates);addReq(r);setSel({kind:"req",id:r.id});}}return null;}));
+      return;
+    }
+    // select tool: tap selects; drag moves (like a multi-day calendar item)
+    const r=editableAt(str),t=!r&&tripAt(str);
+    if(r){setSel({kind:"req",id:r.id});const orig=r.footprint.dates.slice();let moved=false;
+      listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));if(delta!==0)moved=true;
+        setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(orig,delta)}}));},
+        ()=>{if(moved)setReqs(rs=>mergeCandidates(rs));});
+      return;}
+    if(t){setSel({kind:"trip",id:t.id});const f0=t.from,t0=t.to;
+      listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));
+        setTrip(t.id,x=>({...x,from:ds(ad(pd(f0),delta)),to:ds(ad(pd(t0),delta)),placed:true}));},()=>{});
+      return;}
+    setSel(null);
   }
   const drawSet=draw?new Set(weekdaysBetween(draw.startStr,draw.endStr)):null;
-  const sr=selReq?state.requests.find(r=>r.id===selReq):null;
+  const sr=sel&&sel.kind==="req"?state.requests.find(r=>r.id===sel.id):null;
+  const stp=sel&&sel.kind==="trip"?state.trips.find(t=>t.id===sel.id):null;
   const srDates=sr?new Set(sr.footprint.dates):null;
+  const stpDates=stp?(()=>{const s=new Set();let d=pd(stp.from);const t=pd(stp.to);while(d<=t){s.add(ds(d));d=ad(d,1);}return s;})():null;
   const items=[];
   if(mode==="cal"){for(let y=range.s;y<=range.e;y++){items.push({h:`${y}`});for(let mm=0;mm<12;mm++)items.push({y,m:mm});}}
   else{for(let y=range.s;y<=range.e;y++){items.push({h:`${y}–${String((y+1)%100).padStart(2,"0")} school year`});
@@ -1444,7 +1498,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling}){
   return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
     <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
       <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
-        {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSelReq(null);}} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
+        {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSel(null);}} style={{fontFamily:MONO,fontSize:8.5,fontWeight:700,
           padding:"4px 9px",border:"none",cursor:"pointer",background:tool===k?C.ink:"transparent",color:tool===k?C.bg:C.gray}}>{l}</button>)}
       </div>
       {tool==="pencil"&&<div style={{display:"inline-flex",alignItems:"center",gap:5}}>
@@ -1459,18 +1513,27 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling}){
           padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
       </div>
     </div>
-    {/* selected-window edit bar (nudge / extend / contract — handles, on the run) */}
+    {/* selected-window edit bar — drag to move on the calendar; fine controls here */}
     {sr&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
       <span style={{fontSize:9,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {sr.state}</span></span>
-      <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,-1)}}))}>◀ nudge</Btn>
-      <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,1)}}))}>nudge ▶</Btn>
-      <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();if(ds2.length>1)ds2.pop();return {...x,footprint:{kind:"pinned",dates:ds2}};})}>− contract</Btn>
-      <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();let n=ad(pd(ds2[ds2.length-1]),1);while(n.getDay()===0||n.getDay()===6)n=ad(n,1);ds2.push(ds(n));return {...x,footprint:{kind:"pinned",dates:ds2}};})}>extend +</Btn>
+      <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,-1)}}))}>◀</Btn>
+      <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,1)}}))}>▶</Btn>
+      <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();if(ds2.length>1)ds2.pop();return {...x,footprint:{kind:"pinned",dates:ds2}};})}>− day</Btn>
+      <Btn small onClick={()=>{setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();let n=ad(pd(ds2[ds2.length-1]),1);while(n.getDay()===0||n.getDay()===6)n=ad(n,1);ds2.push(ds(n));return {...x,footprint:{kind:"pinned",dates:ds2}};});setReqs(rs=>mergeCandidates(rs));}}>+ day</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,shiftType:x.shiftType==="day"?"night":"day"}))}>{sr.shiftType==="day"?"→night":"→day"}</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>{const i=sites.findIndex(s=>s.id===x.siteId);return {...x,siteId:sites[(i+1)%sites.length].id};})}>site ⇄</Btn>
       {sr.state==="candidate"&&<Btn small kind="prim" onClick={()=>setReq(sr.id,x=>({...x,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,(sites.find(s=>s.id===x.siteId)||{cadence:{}}).cadence.expectedResponseDays||10))}))}>submit</Btn>}
-      <Btn small kind="danger" onClick={()=>{delReq(sr.id);setSelReq(null);}}>delete</Btn>
-      <Btn small onClick={()=>setSelReq(null)}>done</Btn>
+      <Btn small kind="danger" onClick={()=>{delReq(sr.id);setSel(null);}}>delete</Btn>
+      <Btn small onClick={()=>setSel(null)}>done</Btn>
+    </div>}
+    {/* selected-trip bar — edit takes you to the trip tab */}
+    {stp&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+      <span style={{fontSize:9,fontWeight:800}}>{stp.name} <span style={{color:C.mute,fontWeight:600}}>{LOC_NAME[stp.loc]} · {stp.workFactor} · {md(stp.from)}–{md(stp.to)}</span></span>
+      <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),-1)),to:ds(ad(pd(x.to),-1))}))}>◀</Btn>
+      <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),1)),to:ds(ad(pd(x.to),1))}))}>▶</Btn>
+      <Btn small kind="prim" onClick={()=>goto&&goto("setup")}>Edit…</Btn>
+      <Btn small kind="danger" onClick={()=>{setTrip(stp.id,x=>({...x,placed:false}));setSel(null);}}>unplace</Btn>
+      <Btn small onClick={()=>setSel(null)}>done</Btn>
     </div>}
     <div onScroll={onScroll} style={{maxHeight:320,overflow:"auto",padding:"8px 12px"}}>
       <div style={{minWidth:width}}>
@@ -1484,7 +1547,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling}){
           ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:11,fontWeight:900,color:C.ink}}>{it.h}</div>
           : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
               selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}
-              tool={tool} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} onCellDown={cellDown}/>)}
+              tool={tool} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selTripDates={stpDates} onCellDown={cellDown}/>)}
         <div style={{textAlign:"center",marginTop:4}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
           style={{fontFamily:MONO,fontSize:8,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>later ◢</button></div>
       </div>
@@ -1558,44 +1621,47 @@ function SitesWorksheet({state,setState}){
     <SiteWizard state={state} setState={setState} embed/>
   </Drawer>;
 }
-/* ════════ TRIPS PALETTE — the third workspace pillar: drag a trip card onto the calendar ════════ */
-function TripsPalette({state,setState}){
+/* ════════ TRIPS PALETTE — the third workspace pillar: hideable, horizontal, drag onto the calendar ════════ */
+function TripsPalette({state,setState,sel,setSel,goto}){
   const [ghost,setGhost]=useState(null);
+  const [open,setOpen]=useState(true);
   const trips=state.trips;
   const setTrips=fn=>setState(s=>({...s,trips:fn(s.trips)}));
   const dur=t=>Math.max(1,(DATE_RE.test(t.from||"")&&DATE_RE.test(t.to||""))?days(pd(t.from),pd(t.to))+1:7);
   const place=(id,fromDate)=>setTrips(ts=>ts.map(t=>t.id===id?{...t,from:fromDate,to:ds(ad(pd(fromDate),dur(t)-1)),placed:true}:t));
-  const addTrip=()=>setTrips(ts=>[...ts,{id:"t"+Date.now(),name:"New trip",from:`${YEAR}-07-06`,to:`${YEAR}-07-10`,loc:Object.keys(LOC_NAME)[0],workFactor:"closed",placed:false}]);
+  const addTrip=()=>{const id="t"+Date.now();setTrips(ts=>[...ts,{id,name:"New trip",from:`${YEAR}-07-06`,to:`${YEAR}-07-10`,loc:Object.keys(LOC_NAME)[0],workFactor:"closed",placed:false}]);setSel&&setSel({kind:"trip",id});};
   const start=(e,t)=>{
-    e.preventDefault();
-    const move=ev=>{const el=document.elementFromPoint(ev.clientX,ev.clientY);const c=el&&el.closest&&el.closest("[data-date]");
-      setGhost({name:t.name,x:ev.clientX,y:ev.clientY,date:c?c.dataset.date:null});};
+    e.preventDefault();let moved=false;
+    const move=ev=>{const p=ev.touches?ev.touches[0]:ev;moved=true;const d=nearestDate(p.clientX,p.clientY);
+      setGhost({name:t.name,x:p.clientX,y:p.clientY,date:d});};
     const up=ev=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);
-      const el=document.elementFromPoint(ev.clientX,ev.clientY);const c=el&&el.closest&&el.closest("[data-date]");
-      if(c&&c.dataset.date)place(t.id,c.dataset.date);setGhost(null);};
+      const p=ev.touches?ev.touches[0]:ev;const d=nearestDate(p.clientX,p.clientY);
+      if(moved&&d)place(t.id,d); setSel&&setSel({kind:"trip",id:t.id}); setGhost(null);};
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
     setGhost({name:t.name,x:e.clientX,y:e.clientY,date:null});
   };
   const WFC={colocate:C.juniper,commute:C.ocean,closed:C.pressHot};
   return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"9px 11px"}}>
-    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:7}}>
-      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Trips</span>
-      <span style={{fontSize:8,color:C.mute}}>drag a card onto the calendar to place it · edit in Setup</span>
+    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:open?7:0}}>
+      <span onClick={()=>setOpen(o=>!o)} style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray,cursor:"pointer"}}>{open?"▾":"▸"} Trips</span>
+      <span style={{fontSize:8,color:C.mute}}>drag a card onto the calendar · </span>
+      <span onClick={()=>goto&&goto("setup")} style={{fontSize:8,color:C.blue,cursor:"pointer",borderBottom:`1px solid ${C.line}`}}>edit in Setup →</span>
     </div>
-    <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-      {trips.map(t=><div key={t.id} onPointerDown={e=>start(e,t)} title={`drag onto a day — ${t.workFactor}`}
-        style={{display:"inline-flex",flexDirection:"column",gap:2,padding:"6px 9px",borderRadius:7,cursor:"grab",touchAction:"none",
-          border:`1px solid ${C.line}`,background:placed(t)?C.panel2:C.panel,opacity:placed(t)?1:0.92,minWidth:96}}>
+    {open&&<div style={{display:"flex",gap:7,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
+      {trips.map(t=>{const on=sel&&sel.kind==="trip"&&sel.id===t.id;
+      return <div key={t.id} onPointerDown={e=>start(e,t)} title={`drag onto a day — ${t.workFactor}`}
+        style={{display:"inline-flex",flexDirection:"column",gap:2,padding:"6px 9px",borderRadius:7,cursor:"grab",touchAction:"none",flexShrink:0,
+          border:`1px solid ${on?C.ink:C.line}`,outline:on?`1px solid ${C.ink}`:"none",background:placed(t)?C.panel2:C.panel,opacity:placed(t)?1:0.92,minWidth:104}}>
         <div style={{display:"flex",alignItems:"center",gap:5}}>
           <span style={{width:8,height:8,borderRadius:"50%",background:WFC[t.workFactor]}}/>
           <span style={{fontSize:10,fontWeight:800}}>{t.name}</span>
         </div>
         <div style={{fontSize:7.5,color:C.mute}}>{LOC_NAME[t.loc]} · {t.workFactor} · {dur(t)}d</div>
         <div style={{fontSize:7,color:placed(t)?C.gray:C.est,fontWeight:700}}>{placed(t)?`${md(t.from)}–${md(t.to)}`:"⤓ unplaced — drag in"}</div>
-      </div>)}
-      <button onClick={addTrip} style={{fontFamily:MONO,fontSize:9,fontWeight:700,padding:"6px 10px",borderRadius:7,cursor:"pointer",
+      </div>;})}
+      <button onClick={addTrip} style={{fontFamily:MONO,fontSize:9,fontWeight:700,padding:"6px 10px",borderRadius:7,cursor:"pointer",flexShrink:0,
         border:`1px dashed ${C.line}`,background:"transparent",color:C.gray}}>+ trip</button>
-    </div>
+    </div>}
     {ghost&&<div style={{position:"fixed",left:ghost.x+12,top:ghost.y+12,zIndex:400,pointerEvents:"none",
       background:C.ink,color:C.bg,fontSize:9,fontWeight:700,padding:"4px 8px",borderRadius:5,boxShadow:`0 6px 18px var(--shadow)`}}>
       {ghost.name}{ghost.date?` → ${md(ghost.date)}`:" · drop on a day"}</div>}
@@ -1652,7 +1718,7 @@ function App(){
   const VIEWS=[["work","▦","Calendar"],["pending","◷","Pending"],["pace","∿","Pace"],["setup","⚙","Setup"]];
   const content=view==="pending"
     ? <Pending state={state} setState={setState} tsp={tsp}/>
-    : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view}/>;
+    : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view} goto={setView}/>;
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
     {/* header */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
