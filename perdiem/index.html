@@ -1566,30 +1566,23 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
             padding:"4px 7px",borderRadius:5,cursor:"pointer",border:`1px solid ${on?C.ink:C.line}`,
             background:on?C.ink:(t||C.panel),color:on?C.bg:C.ink}}>{mn[0]}</button>;})}
       </div>
-      {/* focus month — view (scrolls); tap to inspect */}
+      {/* focus month — inline. View: scrolls, tap to inspect. Edit: month locked for drags,
+          but the rest of the workspace (candidates + trips) stays right here. */}
       <div style={{padding:"9px 11px"}}>
-        <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:7}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7,flexWrap:"wrap"}}>
           <span style={{fontSize:13,fontWeight:800}}>{MONL[fM]} {focusY}</span>
           <span style={{fontSize:8.5,color:fld.conf+fld.win>ceiling?C.pressHot:C.mute}}>{fld.conf}+{fld.win}/{ceiling}/mo</span>
-          <Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit month</Btn>
+          <span style={{marginLeft:"auto"}}>{editing
+            ? <Btn small onClick={()=>{setEditing(false);setDraw(null);}}>done</Btn>
+            : <Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit</Btn>}</span>
         </div>
-        {dow}{grid(false)}
+        {editing&&<div style={{marginBottom:7}}>{toolPalette}</div>}
+        {editing&&editBars}
+        {dow}
+        {/* lock the month area while editing so drags don't scroll it; page still scrolls to candidates/trips below */}
+        <div style={{touchAction:editing?"none":"auto"}}>{grid(editing)}</div>
         <FootLegend/>
       </div>
-      {/* EDIT MODE — full-screen, scroll locked, expanded month, movement restricted to it */}
-      {editing&&<div style={{position:"fixed",inset:0,zIndex:250,background:C.bg,display:"flex",flexDirection:"column",paddingBottom:"env(safe-area-inset-bottom)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderBottom:`1px solid ${C.line}`,flexShrink:0}}>
-          <button onClick={()=>monthStep(-1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:13}}>‹</button>
-          <span style={{fontSize:13,fontWeight:800}}>{MONL[fM]} {focusY}</span>
-          <button onClick={()=>monthStep(1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:13}}>›</button>
-          <span style={{marginLeft:"auto"}}><Btn small kind="prim" onClick={()=>{setEditing(false);setDraw(null);}}>done</Btn></span>
-        </div>
-        <div style={{padding:"8px 12px",borderBottom:`1px solid ${C.line2}`,flexShrink:0}}>{toolPalette}</div>
-        {editBars}
-        <div style={{flex:1,overflow:"auto",padding:"12px",touchAction:tool==="select"?"auto":"none"}}>
-          {dow}{grid(true)}
-        </div>
-      </div>}
     </div>;
   }
 
