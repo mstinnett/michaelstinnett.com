@@ -1697,11 +1697,13 @@ function DayInfoCard({str,state,fp,onClose}){
   const kids=schools.map(l=>{const c=layerOnDay(l,str);return {name:l.name,off:we||!!c,reason:we?"weekend":(c?c.label:null),inferred:!!(c&&c.inferred)};});
   const events=state.layers.filter(l=>l.kind!=="school").map(l=>{const c=layerOnDay(l,str);
     return c?{name:l.name,kind:l.kind,label:c.label,color:l.color,inferred:c.inferred}:null;}).filter(Boolean);
-  const fam=fp.famBy[str],lk=fp.lockBy[str],marks=fp.byDay[str]||[];
+  const fam=fp.famBy[str],lk=fp.lockBy[str];
+  const allMarks=fp.byDay[str]||[];
+  const marks=allMarks.filter(m=>m.state!=="confirmed");   // booked shifts are hardened placement — already on the calendar, no text line needed
   const Row=({label,children})=> <div style={{display:"flex",gap:8,padding:"4px 0",borderTop:`1px solid ${C.line2}`}}>
     <span style={{flex:"0 0 70px",fontSize:9,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.mute,paddingTop:2}}>{label}</span>
     <div style={{flex:1,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>{children}</div></div>;
-  const quiet=!events.length&&!fam&&!lk&&!marks.length&&kids.every(k=>!k.off);
+  const quiet=!events.length&&!fam&&!lk&&!allMarks.length&&kids.every(k=>!k.off);
   return <div style={{border:`1px solid ${C.ink}`,borderRadius:8,background:C.panel,padding:"9px 12px",marginBottom:10}}>
     <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
       <span style={{fontSize:14,fontWeight:800}}>{WDAY[d.getDay()]}</span>
