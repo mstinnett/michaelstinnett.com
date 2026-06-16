@@ -1907,7 +1907,18 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const setTrip=(id,fn)=>setState(s=>({...s,trips:s.trips.map(x=>x.id===id?fn(x):x)}));
   const setWindows=fn=>setState(s=>({...s,windows:fn(s.windows||[])}));
   const addWindow=w=>setWindows(ws=>[...ws,w]);
-  const updWindow=(id,fn)=>setWindows(ws=>ws.map(w=>w.id===id?(()=>{const n=fn(w);if(Number.isFinite(n.target)&&n.target>=n.dates.length)delete n.target;return n;})():w));
+  // edit a window AND keep its draft candidates in sync (the window is the live source).
+  // a candidate that was deliberately composed to differ (dates ≠ the window's) is left alone.
+  const updWindow=(id,fn)=>setState(s=>{
+    const old=(s.windows||[]).find(w=>w.id===id);if(!old)return s;
+    const oldKey=old.dates.join(",");
+    let win=old;
+    const windows=s.windows.map(w=>{if(w.id!==id)return w;const n=fn(w);if(Number.isFinite(n.target)&&n.target>=n.dates.length)delete n.target;win=n;return n;});
+    const dates=win.dates.slice(),dens=Number.isFinite(win.target)&&win.target<dates.length;
+    const requests=s.requests.map(r=>(r.windowId===id&&r.state==="candidate"&&r.footprint.dates.join(",")===oldKey)
+      ? {...r,footprint:dens?{kind:"pinned",dates,target:win.target}:{kind:"pinned",dates}}:r);
+    return {...s,windows,requests};
+  });
   const delWindow=id=>setState(s=>({...s,windows:(s.windows||[]).filter(w=>w.id!==id),
     requests:s.requests.filter(r=>!(r.windowId===id&&r.state==="candidate"))}));
   const windowAt=str=>(state.windows||[]).find(w=>w.dates.includes(str));
