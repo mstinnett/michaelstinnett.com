@@ -1704,13 +1704,16 @@ function DayInfoCard({str,state,fp,onClose}){
     <span style={{flex:"0 0 70px",fontSize:9,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.mute,paddingTop:2}}>{label}</span>
     <div style={{flex:1,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>{children}</div></div>;
   const quiet=!events.length&&!fam&&!lk&&!allMarks.length&&kids.every(k=>!k.off);
-  return <div style={{border:`1px solid ${C.ink}`,borderRadius:8,background:C.panel,padding:"9px 12px",marginBottom:10}}>
-    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
+  return <div style={{border:`1px solid ${C.ink}`,borderRadius:8,background:C.panel,padding:"9px 12px",marginBottom:10,
+    height:148,boxSizing:"border-box",display:"flex",flexDirection:"column"}}>
+    <div style={{flexShrink:0,display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
       <span style={{fontSize:14,fontWeight:800}}>{WDAY[d.getDay()]}</span>
       <span style={{fontSize:12,color:C.gray}}>{MONL[d.getMonth()]} {d.getDate()}, {d.getFullYear()}</span>
       {we&&<Tag bg={C.line2}>weekend</Tag>}
       <span style={{marginLeft:"auto",fontSize:11,color:C.mute,cursor:"pointer"}} onClick={onClose}>close ✕</span>
     </div>
+    {/* fixed-height box, content scrolls inside — keeps the page from re-flowing as you tap different days */}
+    <div style={{flex:1,minHeight:0,overflowY:"auto"}}>
     {events.length>0&&<Row label="Holiday">{events.map((e,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:700}}>
       <span style={{width:9,height:9,borderRadius:3,background:e.color||C.ink}}/>{e.label||e.name}{e.inferred&&<span style={{fontSize:9,color:C.mute,fontStyle:"italic"}}>~ inferred</span>}</span>)}</Row>}
     {schools.length>0&&<Row label="Kids">{kids.map((k,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,
@@ -1720,6 +1723,7 @@ function DayInfoCard({str,state,fp,onClose}){
     {marks.length>0&&<Row label="Shifts">{marks.map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700}}>
       <span style={{width:9,height:9,borderRadius:3,background:m.state==="smeared"?C.est:shiftCol(m.type)}}/>{m.site.name} · {shiftLabel(m.type)} <span style={{fontWeight:600,color:C.mute}}>· {m.state==="smeared"?"draft (density)":(ST_LABEL[m.state]||m.state)}</span></span>)}</Row>}
     {quiet&&<div style={{fontSize:11,color:C.mute,fontStyle:"italic",paddingTop:4,borderTop:`1px solid ${C.line2}`}}>Nothing scheduled — kids in school, no holiday. Open for work.</div>}
+    </div>
   </div>;
 }
 function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto,mobile,preview}){
