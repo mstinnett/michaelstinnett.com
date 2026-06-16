@@ -125,7 +125,25 @@ const REACH_ADJ={
 };
 const CHEAP_HRS=4;                                   // <= ⇒ co-located
 const ROUNDTRIP={local:1.5,nm:8,rural_nm:12};        // roundTripTravelHrs by reach
-const REST_HOURS={day:10,night:12};                  // restHours(type) — estimate
+/* ─── shift catalog — a shift is (start, duration); "night" = an overnight start ─── */
+const SHIFTS=[
+  {id:"d6", start:"06:00",hours:8, night:false,label:"6a · 8h"},
+  {id:"d7", start:"07:00",hours:8, night:false,label:"7a · 8h"},
+  {id:"d10",start:"10:00",hours:8, night:false,label:"10a · 8h"},
+  {id:"d11",start:"11:00",hours:8, night:false,label:"11a · 8h"},
+  {id:"n22",start:"22:00",hours:8, night:true, label:"10p · 8h"},
+  {id:"n23",start:"23:00",hours:8, night:true, label:"11p · 8h"},
+  {id:"D7", start:"07:00",hours:12,night:false,label:"7a · 12h"},
+  {id:"N19",start:"19:00",hours:12,night:true, label:"7p · 12h"},
+];
+const SHIFT_BY=Object.fromEntries(SHIFTS.map(s=>[s.id,s]));
+const REST_BY_DUR={8:10,12:12};                      // default rest after a shift, by duration (estimate)
+const shiftOf=id=>SHIFT_BY[id]||SHIFT_BY.d7;          // unknown ids fall back to a 7a/8h day
+const shiftHours=id=>shiftOf(id).hours;
+const shiftStart=id=>shiftOf(id).start;
+const shiftIsNight=id=>shiftOf(id).night;
+const shiftLabel=id=>shiftOf(id).label;
+const shiftRestDefault=id=>REST_BY_DUR[shiftHours(id)]||10;
 // per-reach default travel schedule — when you leave home & when you get back, relative to the shift block.
 // Lydia edits these per site (real flight timing); a request can override with its own (incl. multi-day) window.
 const TRAVEL_DEFAULT={
@@ -156,19 +174,19 @@ function coarseBucket(s){return s<0.34?"dim":s<0.55?"normal":s<0.74?"bright":"br
 function seedState(){
   const sites=[
     {id:"boston",  name:"Boston ED",   note:"home rink. easy charting, know the nurses.",
-     reach:"local",   homeBaseLoc:"boston",  dayRate:245,nightRate:290,dayHours:9, nightHours:9,
+     reach:"local",   homeBaseLoc:"boston",  menu:[{shift:"d7",rate:245,rest:10},{shift:"n22",rate:290,rest:12}],
      submissionType:"by_shift",  cadence:{opensDaysBefore:75,dueByDaysBefore:21,expectedResponseDays:14},
      travel:{beforeDays:0,departTime:"06:00",afterDays:0,returnTime:"20:00"}},
     {id:"santa_fe",name:"Santa Fe ED", note:"good people. depends on hearing from ABQ first.",
-     reach:"nm",      homeBaseLoc:"santa_fe",dayRate:170,nightRate:210,dayHours:10,nightHours:10,
+     reach:"nm",      homeBaseLoc:"santa_fe",menu:[{shift:"d7",rate:170,rest:10},{shift:"N19",rate:210,rest:12}],
      submissionType:"by_window", cadence:{opensDaysBefore:90,dueByDaysBefore:30,expectedResponseDays:10},
      travel:{beforeDays:1,departTime:"16:00",afterDays:0,returnTime:"22:00"}},
     {id:"abq",     name:"Albuquerque ED",note:"high volume, fast. anchors the NM trip.",
-     reach:"nm",      homeBaseLoc:"abq",     dayRate:285,nightRate:305,dayHours:9, nightHours:10,
+     reach:"nm",      homeBaseLoc:"abq",     menu:[{shift:"d7",rate:285,rest:10},{shift:"n23",rate:305,rest:12}],
      submissionType:"by_shift",  cadence:{opensDaysBefore:80,dueByDaysBefore:25,expectedResponseDays:7},
      travel:{beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"21:00"}},
     {id:"gallup",  name:"Silver City ED",note:"rural, long days, pays for it. tiring.",
-     reach:"rural_nm",homeBaseLoc:"abq",     dayRate:300,nightRate:335,dayHours:12,nightHours:12,
+     reach:"rural_nm",homeBaseLoc:"abq",     menu:[{shift:"D7",rate:300,rest:12},{shift:"N19",rate:335,rest:14}],
      submissionType:"by_window", cadence:{opensDaysBefore:70,dueByDaysBefore:14,expectedResponseDays:21},
      travel:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"}},
   ];
@@ -228,21 +246,21 @@ function seedState(){
   ];
   const requests=[
     // confirmed work (real) → Past (worked) + Confirmed (upcoming), both on the calendar
-    ...LYDIA.map((s,i)=>cReq("L"+String(i+1).padStart(2,"0"),"boston",s[1],[s[0]])),
+    ...LYDIA.map((s,i)=>cReq("L"+String(i+1).padStart(2,"0"),"boston",s[1]==="night"?"n22":"d7",[s[0]])),
     // ── per-diem requests in flight (illustrative — the sources carry no per-diem asks) ──
     // submitted, awaiting the site's response → Pending (its earlier due date anchors the emergent chain)
-    {id:"s1",siteId:"abq",shiftType:"day",opens:"2026-04-13",dueBy:"2026-05-08",
+    {id:"s1",siteId:"abq",shiftType:"d7",opens:"2026-04-13",dueBy:"2026-05-08",
      state:"pending",submittedOn:"2026-05-02",expectedResponseBy:"2026-06-20",
      footprint:{kind:"pinned",dates:["2026-07-23","2026-07-24","2026-07-27"]}},
     // negotiating — site countered with different dates + a rate; shows on the calendar
-    {id:"ov1",siteId:"santa_fe",shiftType:"day",opens:"2026-04-20",dueBy:"2026-06-10",
+    {id:"ov1",siteId:"santa_fe",shiftType:"d7",opens:"2026-04-20",dueBy:"2026-06-10",
      state:"override",submittedOn:"2026-05-15",expectedResponseBy:"2026-06-18",rateOverride:185,
      footprint:{kind:"pinned",dates:["2026-07-21","2026-07-22","2026-07-28"]}},
     // selected to apply for → the Candidate section (a density window: work 2 of 5, dependency chain on ABQ)
-    {id:"s2",siteId:"santa_fe",shiftType:"day",opens:"2026-04-08",dueBy:"2026-06-25",
+    {id:"s2",siteId:"santa_fe",shiftType:"d7",opens:"2026-04-08",dueBy:"2026-06-25",
      state:"candidate",
      footprint:{kind:"pinned",dates:["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"],target:2}},
-    {id:"s3",siteId:"gallup",shiftType:"day",opens:"2026-05-01",dueBy:"2026-07-01",
+    {id:"s3",siteId:"gallup",shiftType:"D7",opens:"2026-05-01",dueBy:"2026-07-01",
      state:"candidate",
      footprint:{kind:"pinned",dates:["2026-08-04","2026-08-05"]}},
   ];
@@ -281,11 +299,14 @@ function sanitizeState(obj){
       if(!s||typeof s!=="object"||!s.id)return null;
       const c=s.cadence||{};
       const rch=reach.includes(s.reach)?s.reach:"local";
+      let menu=(Array.isArray(s.menu)?s.menu:[]).filter(m=>m&&SHIFT_BY[m.shift]).map(m=>({
+        shift:m.shift,rate:numOr(m.rate,200),rest:Number.isFinite(+m.rest)?Math.max(0,+m.rest):shiftRestDefault(m.shift)}));
+      if(!menu.length)   // migrate the old day/night rate model → a two-line menu
+        menu=[{shift:"d7",rate:numOr(s.dayRate,200),rest:10},{shift:"N19",rate:numOr(s.nightRate,240),rest:12}];
       const out={id:String(s.id),name:String(s.name||"Unnamed"),note:String(s.note||""),
         reach:rch,
         homeBaseLoc:LOC_NAME[s.homeBaseLoc]?s.homeBaseLoc:"boston",
-        dayRate:numOr(s.dayRate,200),nightRate:numOr(s.nightRate,240),
-        dayHours:numOr(s.dayHours,9),nightHours:numOr(s.nightHours,9),
+        menu,
         travel:travelOf({reach:rch,travel:s.travel}),
         submissionType:s.submissionType==="by_window"?"by_window":"by_shift",
         cadence:{opensDaysBefore:numOr(c.opensDaysBefore,60),dueByDaysBefore:numOr(c.dueByDaysBefore,21),expectedResponseDays:numOr(c.expectedResponseDays,14)}};
@@ -328,7 +349,8 @@ function sanitizeState(obj){
       else if(ft.kind==="smeared"&&isDateArr(ft.candidates))footprint={kind:"pinned",dates:ft.candidates,target:Math.max(1,Math.min(ft.candidates.length,numOr(ft.take,1)))};   // migrate old smeared → density window
       else return null;
       const st=MIGRATE[r.state]||r.state;
-      const o={id:String(r.id),siteId:r.siteId,shiftType:r.shiftType==="night"?"night":"day",
+      const shiftId=SHIFT_BY[r.shiftType]?r.shiftType:(r.shiftType==="night"?"n22":"d7");   // migrate day/night → catalog id
+      const o={id:String(r.id),siteId:r.siteId,shiftType:shiftId,
         state:REQ_STATES.includes(st)?st:"candidate",footprint,
         opens:DATE_RE.test(r.opens||"")?r.opens:ds(TODAY),dueBy:DATE_RE.test(r.dueBy||"")?r.dueBy:ds(TODAY)};
       if(Number.isFinite(+r.rateOverride))o.rateOverride=+r.rateOverride;
@@ -357,8 +379,12 @@ function shareLink(state){
 
 /* ════════ DERIVED VALUES & FORMULAS (§4) — all readouts (Inv 5) ════════ */
 
-const siteRate=(s,t)=>t==="day"?s.dayRate:s.nightRate;   // $/hr — rates are always hourly
-const siteHours=(s,t)=>t==="day"?s.dayHours:s.nightHours;
+const siteMenu=s=>s&&Array.isArray(s.menu)&&s.menu.length?s.menu             // a site's offered shifts …
+  :[{shift:"d7",rate:numOr(s&&s.dayRate,200),rest:10},{shift:"N19",rate:numOr(s&&s.nightRate,240),rest:12}];  // … legacy fallback
+const menuEntry=(s,id)=>siteMenu(s).find(m=>m.shift===id);
+const siteRate=(s,id)=>{const m=menuEntry(s,id);return m&&Number.isFinite(m.rate)?m.rate:(shiftIsNight(id)?numOr(s&&s.nightRate,240):numOr(s&&s.dayRate,200));};  // $/hr
+const siteHours=(s,id)=>shiftHours(id);                  // clinical hours come from the catalog (8 or 12)
+const siteRest=(s,id)=>{const m=menuEntry(s,id);return m&&Number.isFinite(m.rest)?m.rest:shiftRestDefault(id);};
 /* one window type: a drawn day-set + an optional density target ("work N of these M").
    target omitted (or === dates.length) → an exact window; target < length → a density window. */
 const fpTarget=fp=>Number.isFinite(fp.target)?Math.max(1,Math.min(fp.dates.length,fp.target)):fp.dates.length;
@@ -426,7 +452,7 @@ function makeWindow(site,type,dates){                       // a drawn window �
 
 /* typicalShiftPay — estimate; carries assumption (§4.4) */
 function typicalShiftPay(sites){
-  const v=sites.reduce((a,s)=>a+(s.dayRate*s.dayHours+s.nightRate*s.nightHours)/2,0)/sites.length;
+  const v=sites.reduce((a,s)=>{const m=siteMenu(s);return a+(m.length?m.reduce((x,e)=>x+e.rate*shiftHours(e.shift),0)/m.length:0);},0)/Math.max(1,sites.length);
   return est(Math.round(v/10)*10,["typicalShiftPay = mean of site day/night ($/hr × hours)"]);
 }
 
@@ -450,15 +476,15 @@ function travelHours(site,weekDates,trips){
 
 /* §4.1 per-window money — facts for choosing */
 function windowMoney(site,type,weekDates,trips){
-  const hourly=siteRate(site,type);                  // $/hr
+  const hourly=siteRate(site,type);                  // $/hr (type is a catalog shift id)
   const clinicalHours=siteHours(site,type);
   const shiftPay=hourly*clinicalHours;
   const erPerHr=known(hourly);
   const travel=travelHours(site,weekDates,trips);
-  const rest=REST_HOURS[type];
+  const rest=siteRest(site,type);
   const awayHours=travel+clinicalHours+rest;
   const awayPerHr=est(shiftPay/awayHours,
-    [`restHours(${type})=${rest}`,`travelHours=${travel}`]);
+    [`restHours(${shiftLabel(type)})=${rest}`,`travelHours=${travel}`]);
   return {shiftPay,clinicalHours,erPerHr,awayPerHr,awayHours,travel};
 }
 
@@ -686,7 +712,7 @@ function buildWindows(state,monthIdx,types,tsp){
   const raw=[];
   weeks.forEach((wk,wi)=>{
     sites.forEach(site=>{
-      const type=types[`${site.id}-${wi}`]||"day";
+      const type=types[`${site.id}-${wi}`]||(siteMenu(site)[0]||{}).shift||"d7";
       const money=windowMoney(site,type,wk.dates,trips);
       const co=coLocation(site,wk.dates,trips);
       const dout=weekDaysOut(wk.dates,layers);
@@ -972,10 +998,10 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
               </div>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 11px",borderTop:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
-              <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
-                {["day","night"].map(t=><button key={t} onClick={()=>setType(w.id,t)}
+              <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden",flexWrap:"wrap"}}>
+                {siteMenu(w.site).map(m=><button key={m.shift} onClick={()=>setType(w.id,m.shift)}
                   style={{fontFamily:MONO,fontSize:11,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
-                    background:w.type===t?C.ink:"transparent",color:w.type===t?C.bg:C.gray}}>{t}</button>)}
+                    background:w.type===m.shift?C.ink:"transparent",color:w.type===m.shift?C.bg:C.gray}}>{shiftLabel(m.shift)}</button>)}
               </div>
               {w.existing? <Tag bg={C.softInfo} col={C.blue}>request exists · {w.existing.state}</Tag>
                 : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>Add to calendar</Btn>}
@@ -1031,9 +1057,9 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
   return <Overlay onClose={onClose}>
     <div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
     <div style={{fontSize:11,color:C.gray,marginBottom:12}}>{byWindow?"by week — pick days + how many to take":"by shift — pick the dates"}</div>
-    <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginBottom:12}}>
-      {["day","night"].map(t=><button key={t} onClick={()=>setType(t)} style={{fontFamily:MONO,fontSize:12,fontWeight:700,
-        padding:"5px 14px",border:"none",cursor:"pointer",background:type===t?C.ink:"transparent",color:type===t?C.bg:C.gray}}>{t}</button>)}
+    <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginBottom:12,flexWrap:"wrap"}}>
+      {siteMenu(w.site).map(m=><button key={m.shift} onClick={()=>setType(m.shift)} style={{fontFamily:MONO,fontSize:12,fontWeight:700,
+        padding:"5px 14px",border:"none",cursor:"pointer",background:type===m.shift?C.ink:"transparent",color:type===m.shift?C.bg:C.gray}}>{shiftLabel(m.shift)}</button>)}
     </div>
     <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
       {days.map(d=>{const on=picked.includes(d);return <button key={d} onClick={()=>toggle(d)}
@@ -1149,7 +1175,7 @@ function Pending({state,setState,tsp}){
   const Ident=({r})=>{const site=siteById[r.siteId];return <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
     <span style={{fontSize:13,fontWeight:800}}>{site?site.name:"(removed site)"}</span>
     <Tag bg={C.line2} col={ST_COL[r.state]}>{ST_LABEL[r.state]}</Tag>
-    <Tag>{r.shiftType}</Tag>
+    <Tag>{shiftLabel(r.shiftType)}</Tag>
     {Number.isFinite(r.rateOverride)&&<Tag bg={C.softWarn} col={C.pressHot}>rate {fmt$(r.rateOverride)}/hr</Tag>}
     <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:C.ink}}>{fmt$(payOf(r))}</span>
   </div>;};
@@ -1285,9 +1311,14 @@ function SiteWizard({state,setState,embed,onClose}){
   const upd=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,...patch}:s));
   const updCad=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,cadence:{...s.cadence,...patch}}:s));
   const updTravel=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,travel:{...travelOf(s),...patch}}:s));
+  const setMenu=(id,fn)=>setSites(p=>p.map(s=>s.id===id?{...s,menu:fn(siteMenu(s))}:s));
+  const updMenu=(id,i,patch)=>setMenu(id,m=>m.map((e,j)=>j===i?{...e,...patch}:e));
+  const delMenu=(id,i)=>setMenu(id,m=>m.length>1?m.filter((_,j)=>j!==i):m);   // keep at least one offered shift
+  const addMenu=id=>setMenu(id,m=>{const used=new Set(m.map(e=>e.shift));const free=SHIFTS.find(sh=>!used.has(sh.id))||SHIFTS[0];
+    return [...m,{shift:free.id,rate:200,rest:shiftRestDefault(free.id)}];});
   const addSite=()=>{const id="site"+Date.now();
     setSites(p=>[...p,{id,name:"New site",note:"",reach:"local",homeBaseLoc:"boston",
-      dayRate:200,nightRate:240,dayHours:9,nightHours:9,submissionType:"by_shift",travel:defaultTravel("local"),
+      menu:[{shift:"d7",rate:200,rest:10}],submissionType:"by_shift",travel:defaultTravel("local"),
       cadence:{opensDaysBefore:60,dueByDaysBefore:21,expectedResponseDays:14}}]);
     setOpenId(id);};
   const rm=id=>{if(reqCount(id)>0)return;setSites(p=>p.filter(s=>s.id!==id));if(openId===id)setOpenId(null);};
@@ -1315,12 +1346,16 @@ function SiteWizard({state,setState,embed,onClose}){
                 <Field label="Home base"><select style={inp} value={s.homeBaseLoc} onChange={e=>upd(s.id,{homeBaseLoc:e.target.value})}>
                   {Object.keys(LOC_NAME).map(l=><option key={l} value={l}>{LOC_NAME[l]}</option>)}</select></Field>
               </div>
-              <div style={{display:"flex",gap:8}}>
-                <Field label="Day $/hr"><N value={s.dayRate} onChange={e=>upd(s.id,{dayRate:+e.target.value||0})}/></Field>
-                <Field label="Day hours"><N value={s.dayHours} onChange={e=>upd(s.id,{dayHours:+e.target.value||0})}/></Field>
-                <Field label="Night $/hr"><N value={s.nightRate} onChange={e=>upd(s.id,{nightRate:+e.target.value||0})}/></Field>
-                <Field label="Night hours"><N value={s.nightHours} onChange={e=>upd(s.id,{nightHours:+e.target.value||0})}/></Field>
-              </div>
+              <div style={{fontSize:10,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.gray,margin:"8px 0 3px"}}>Shift menu — what this site offers ($/hr · rest hrs)</div>
+              {siteMenu(s).map((m,i)=><div key={i} style={{display:"flex",gap:6,alignItems:"flex-end",marginBottom:5}}>
+                <Field label="Shift"><select style={{...inp,width:108}} value={m.shift} onChange={e=>updMenu(s.id,i,{shift:e.target.value})}>
+                  {SHIFTS.map(sh=><option key={sh.id} value={sh.id}>{sh.label}</option>)}</select></Field>
+                <Field label="$/hr"><N value={m.rate} onChange={e=>updMenu(s.id,i,{rate:+e.target.value||0})}/></Field>
+                <Field label="rest hrs"><N value={m.rest} onChange={e=>updMenu(s.id,i,{rest:Math.max(0,+e.target.value||0)})}/></Field>
+                <span style={{fontSize:9.5,color:C.mute,paddingBottom:7}}>{shiftHours(m.shift)}h clinical</span>
+                <Btn small kind="danger" disabled={siteMenu(s).length<=1} onClick={()=>delMenu(s.id,i)}>✕</Btn>
+              </div>)}
+              <div style={{marginBottom:6}}><Btn small onClick={()=>addMenu(s.id)} disabled={siteMenu(s).length>=SHIFTS.length}>+ add shift</Btn></div>
               <Field label="Submission type"><select style={inp} value={s.submissionType} onChange={e=>upd(s.id,{submissionType:e.target.value})}>
                 <option value="by_shift">by shift (pinned)</option><option value="by_window">by week (smeared)</option></select></Field>
               <div style={{display:"flex",gap:8}}>
@@ -1432,6 +1467,8 @@ function LayersPanel({state,setState}){
 /* ════════ YEAR VIEW — the footprint / home base (§7): confirmed placements + pending ════════ */
 const SHIFT_COL={day:"var(--shift-day)",night:"var(--shift-night)"};
 const OVERRIDE_COL={day:"var(--ov-day)",night:"var(--ov-night)"};   // tentative (in-negotiation) shifts
+const shiftCol=id=>SHIFT_COL[shiftIsNight(id)?"night":"day"];       // catalog id → day/night tint
+const overrideCol=id=>OVERRIDE_COL[shiftIsNight(id)?"night":"day"];
 const LOC_TINT={boston:"var(--block-trip)",santa_fe:"var(--block-trip)",abq:"var(--block-trip)",montana:"var(--block-trip)",portland:"var(--block-trip)"};
 function monthGrid(y,m){
   const f=(new Date(y,m,1).getDay()+6)%7,n=dim(y,m),wk=Math.ceil((f+n)/7);
@@ -1492,8 +1529,8 @@ function dayVisual(d,ctx){
   // pressure lives on the focused month; the cost (family-off ∩ work) reads as a hatch.
   let bg=we?C.weekend:C.panel,border=`1px solid ${C.line2}`,inner=null;
   if(fam){bg=LOC_TINT[fam.loc];border=`1px solid ${C.ocean}`;}   // trip → faint blue wash + ocean edge
-  if(conf){bg=SHIFT_COL[conf.type];border=`1px solid ${SHIFT_COL[conf.type]}`;}
-  else if(neg){bg=OVERRIDE_COL[neg.type];border=`1.5px dashed ${SHIFT_COL[neg.type]}`;}
+  if(conf){bg=shiftCol(conf.type);border=`1px solid ${shiftCol(conf.type)}`;}
+  else if(neg){bg=overrideCol(neg.type);border=`1.5px dashed ${shiftCol(neg.type)}`;}
   else if(pend){border=`1.5px solid ${C.ink}`;}
   else if(cand){border=`1.5px dotted ${C.est}`;}
   else if(smear){inner="dotted";}
@@ -1502,7 +1539,7 @@ function dayVisual(d,ctx){
   const prev=!!(ctx.preview&&ctx.preview.set&&ctx.preview.set.has(str));   // a trip drag is hovering this day
   if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
   const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
-  const title=`${str}${conf?` · ${conf.site.name} ${conf.type}`:""}${neg?` · negotiating ${neg.site.name}`:""}${pend?` · submitted ${pend.site.name}`:""}${cand?` · draft ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
+  const title=`${str}${conf?` · ${conf.site.name} ${shiftLabel(conf.type)}`:""}${neg?` · negotiating ${neg.site.name}`:""}${pend?` · submitted ${pend.site.name}`:""}${cand?` · draft ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
   return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,cost,bg,border,inner,drawing,inSel,inTrip,prev,prevColor:ctx.preview&&ctx.preview.color,title};
 }
 function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandle}){
@@ -1598,8 +1635,10 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const [mode,setMode]=useState("cal");
   const [range,setRange]=useState({s:YEAR,e:YEAR+2});
   const [tool,setTool]=useState("edit");                      // edit (direct: draw/move/select/resize) | eraser
-  const [drawType,setDrawType]=useState("day");
   const [drawSiteId,setDrawSiteId]=useState(sites[0]&&sites[0].id);
+  const drawSite=sites.find(s=>s.id===drawSiteId)||sites[0];
+  const [drawShift,setDrawShift]=useState(()=>(siteMenu(drawSite)[0]||{}).shift||"d7");
+  const pickSite=id=>{setDrawSiteId(id);const s=sites.find(x=>x.id===id);if(s&&!siteMenu(s).some(m=>m.shift===drawShift))setDrawShift((siteMenu(s)[0]||{}).shift||"d7");};
   const [draw,setDraw]=useState(null);                        // {startStr,endStr,y,m}
   const [focusY,setFocusY]=useState(YEAR);                    // mobile focus year
   const [editing,setEditing]=useState(false);                 // mobile edit mode (locks scroll, expands month)
@@ -1656,7 +1695,8 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     setSel(null);setDraw({startStr:str,endStr:str,y,m});
     listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(dd){const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}},
       ()=>setDraw(d=>{if(d){const dates=daysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));const site=sites.find(s=>s.id===drawSiteId)||sites[0];
-        if(dates.length&&site){const rr=makeWindow(site,drawType,dates);addReq(rr);setSel({kind:"req",id:rr.id});}}return null;}));
+        const sh=siteMenu(site).some(m=>m.shift===drawShift)?drawShift:(siteMenu(site)[0]||{}).shift||"d7";
+        if(dates.length&&site){const rr=makeWindow(site,sh,dates);addReq(rr);setSel({kind:"req",id:rr.id});}}return null;}));
   }
   const drawSet=draw?new Set(daysBetween(draw.startStr,draw.endStr)):null;
   const sr=sel&&sel.kind==="req"?state.requests.find(r=>r.id===sel.id):null;
@@ -1678,16 +1718,15 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     </div>
     {tool==="edit"&&<div style={{display:"inline-flex",alignItems:"center",gap:5}}>
       <span style={{fontSize:9.5,color:C.mute}}>new:</span>
-      <select value={drawSiteId} onChange={e=>setDrawSiteId(e.target.value)} style={{...inp,width:120,padding:"3px 6px"}}>
+      <select value={drawSiteId} onChange={e=>pickSite(e.target.value)} style={{...inp,width:120,padding:"3px 6px"}}>
         {sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
-      <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
-        {["day","night"].map(t=><button key={t} onClick={()=>setDrawType(t)} style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"3px 7px",border:"none",cursor:"pointer",background:drawType===t?C.ink:"transparent",color:drawType===t?C.bg:C.gray}}>{t}</button>)}
-      </div>
+      <select value={drawShift} onChange={e=>setDrawShift(e.target.value)} style={{...inp,width:96,padding:"3px 6px"}}>
+        {siteMenu(drawSite).map(m=><option key={m.shift} value={m.shift}>{shiftLabel(m.shift)}</option>)}</select>
     </div>}
   </div>;
   const editBars=<>
     {sr&&sr.state==="candidate"&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
-      <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · draft</span></div>
+      <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{shiftLabel(sr.shiftType)} · {sr.footprint.dates.length}d · draft</span></div>
       {/* one window, drawn directly — adjust it on the calendar (drag to move, handles to resize, eraser to trim).
          the only attribute here is density: "work N of these M days." N = M is an exact window. */}
       <div style={{display:"inline-flex",alignItems:"center",gap:6}}>
@@ -1697,13 +1736,15 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
         <Btn small onClick={()=>setReq(sr.id,x=>{const nt=Math.min(x.footprint.dates.length,fpTarget(x.footprint)+1);const fp={...x.footprint,target:nt};if(nt>=x.footprint.dates.length)delete fp.target;return {...x,footprint:fp};})}>+</Btn>
         <span style={{fontSize:11,color:C.mute}}>of {sr.footprint.dates.length} {reqIsDensity(sr)?"— some will land":"— all of them"}</span>
       </div>
-      <Btn small onClick={()=>setReq(sr.id,x=>({...x,shiftType:x.shiftType==="day"?"night":"day"}))}>{sr.shiftType==="day"?"→night":"→day"}</Btn>
+      {(()=>{const menu=siteMenu(sites.find(s=>s.id===sr.siteId)||{});const ids=menu.map(m=>m.shift);
+        const cycle=()=>setReq(sr.id,x=>{const i=ids.indexOf(x.shiftType);return {...x,shiftType:ids[(i+1)%ids.length]||x.shiftType};});
+        return ids.length>1?<Btn small onClick={cycle}>{shiftLabel(sr.shiftType)} ⇄</Btn>:<span style={{fontSize:11,color:C.mute}}>{shiftLabel(sr.shiftType)}</span>;})()}
       {/* no submit here — the calendar is a drafting space; candidates are applied from the Pending list */}
       <Btn small kind="danger" onClick={()=>{delReq(sr.id);setSel(null);}}>delete</Btn>
       <Btn small kind="prim" onClick={()=>setSel(null)}>done</Btn>
     </div>}
     {sr&&sr.state!=="candidate"&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
-      <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {ST_LABEL[sr.state]||sr.state}</span></div>
+      <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{shiftLabel(sr.shiftType)} · {sr.footprint.dates.length}d · {ST_LABEL[sr.state]||sr.state}</span></div>
       <span style={{fontSize:9.5,color:C.mute}}>read-only here</span>
       <Btn small kind="prim" onClick={()=>goto&&goto("pending")}>manage in Requests →</Btn>
       <Btn small onClick={()=>setSel(null)}>done</Btn>
