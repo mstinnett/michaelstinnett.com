@@ -507,12 +507,45 @@ function awakeHoursLost(start,end){
 const travelOf=(site,ov)=>{const d=defaultTravel(site&&site.reach),t=(ov&&typeof ov==="object")?ov:((site&&site.travel)||{});
   return {beforeDays:Math.max(0,numOr(t.beforeDays,d.beforeDays)),departTime:/^\d{1,2}:\d{2}$/.test(t.departTime||"")?t.departTime:d.departTime,
     afterDays:Math.max(0,numOr(t.afterDays,d.afterDays)),returnTime:/^\d{1,2}:\d{2}$/.test(t.returnTime||"")?t.returnTime:d.returnTime};};
-function awayWindow(dates,site,ov){
-  if(!dates||!dates.length)return null;const s=dates.slice().sort();const t=travelOf(site,ov);
-  return {t,start:atHM(ad(pd(s[0]),-t.beforeDays),parseHM(t.departTime)),end:atHM(ad(pd(s[s.length-1]),t.afterDays),parseHM(t.returnTime))};
+const COMMUTE_H=1.5;                                 // local door-to-door buffer on each side of a shift
+/* away intervals for a set of shift dates at a given shift type.
+   flight/overnight trips (beforeDays/afterDays > 0) → one continuous window in the destination city.
+   local shifts → each shift its own interval (start−commute … end+commute), so a night shift
+   that runs while the kids sleep costs ~0 kid-awake hours instead of a full day. */
+function awayIntervals(dates,site,ov,shiftId){
+  const s=dates.slice().sort(),t=travelOf(site,ov),sh=shiftOf(shiftId||"d7");
+  if(t.beforeDays>0||t.afterDays>0){
+    const start=atHM(ad(pd(s[0]),-t.beforeDays),parseHM(t.departTime));
+    const lastEnd=atHM(pd(s[s.length-1]),parseHM(sh.start)+sh.hours);
+    const ret=atHM(ad(pd(s[s.length-1]),t.afterDays),parseHM(t.returnTime));
+    return {t,intervals:[{start,end:ret>lastEnd?ret:lastEnd}]};
+  }
+  return {t,intervals:s.map(d=>({start:atHM(pd(d),parseHM(sh.start)-COMMUTE_H),end:atHM(pd(d),parseHM(sh.start)+sh.hours+COMMUTE_H)}))};
 }
-function kidHoursCost(dates,site,ov){const w=awayWindow(dates,site,ov);
-  return {hours:w?awakeHoursLost(w.start,w.end):0,window:w,t:w?w.t:travelOf(site,ov)};}
+function kidHoursCost(dates,site,ov,shiftId){
+  if(!dates||!dates.length)return {hours:0,window:null,t:travelOf(site,ov)};
+  const {t,intervals}=awayIntervals(dates,site,ov,shiftId);
+  const hours=intervals.reduce((a,iv)=>a+awakeHoursLost(iv.start,iv.end),0);
+  return {hours:Math.round(hours*10)/10,window:{start:intervals[0].start,end:intervals[intervals.length-1].end},t};
+}
+/* a shift's clinical wall-clock interval on a date (no commute) — for booking exclusivity.
+   handles the midnight straddle: a 10p/8h on the 6th runs 6th 22:00 → 7th 06:00. */
+function shiftInterval(dateStr,shiftId){const sh=shiftOf(shiftId);const start=atHM(pd(dateStr),parseHM(sh.start));
+  return {start,end:new Date(start.getTime()+sh.hours*36e5)};}
+const intervalsOverlap=(a,b)=>a.start<b.end&&b.start<a.end;
+/* confirmed shifts as wall-clock instances; a new booking can't overlap one in time. */
+function confirmedInstances(requests,ignoreId){
+  const out=[];
+  for(const r of requests){if(r.state!=="confirmed"||r.id===ignoreId)continue;
+    for(const d of r.footprint.dates)out.push({id:r.id,date:d,shift:r.shiftType,...shiftInterval(d,r.shiftType)});}
+  return out;
+}
+function bookingConflict(dates,shiftId,requests,ignoreId){
+  const inst=confirmedInstances(requests,ignoreId);
+  for(const d of dates){const iv=shiftInterval(d,shiftId);
+    for(const c of inst)if(intervalsOverlap(iv,c))return {date:d,other:c};}
+  return null;
+}
 
 const schoolLayers=layers=>layers.filter(l=>l.kind==="school");
 const layerCovers=(l,d)=>(l.ranges||[]).some(r=>d>=pd(r.from)&&d<=pd(r.to));
@@ -724,7 +757,7 @@ function buildWindows(state,monthIdx,types,tsp){
       const lockHit=wk.dates.filter(d=>locks.some(l=>l.date===ds(d)));
       const dayStrs=wk.dates.map(ds);                   // all days of the week — weekends are workable
       const perKid=kidDaysOut(dayStrs,layers);
-      const kidHrs=kidHoursCost(dayStrs,site);         // family-time cost if you worked this week here
+      const kidHrs=kidHoursCost(dayStrs,site,null,type);   // family-time cost if you worked this week here at this shift
       raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,dayStrs,perKid,kidHrs,
         closing,closed,notOpen,lockHit,
         existing:requests.find(r=>r.siteId===site.id&&r.footprint&&
@@ -1052,7 +1085,7 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
   const count=byWindow?Math.min(take,picked.length):picked.length;
   const effDates=byWindow?picked.slice(0,Math.min(take,picked.length)):picked;
   const perKid=kidDaysOut(effDates,state.layers);
-  const cost=kidHoursCost(effDates,w.site,travelOn?tv:null);
+  const cost=kidHoursCost(effDates,w.site,travelOn?tv:null,type);
   const totalPay=money.shiftPay*count;
   return <Overlay onClose={onClose}>
     <div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
@@ -1135,15 +1168,21 @@ const ST_COL={candidate:C.gray,pending:C.blue,override:C.pressHot,confirmed:C.gr
 const ST_LABEL={candidate:"draft",pending:"submitted",override:"negotiating",confirmed:"booked",rejected:"rejected",expired:"expired"};
 function Pending({state,setState,tsp}){
   const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
+  const [note,setNote]=useState(null);                 // transient booking-conflict notice
   const setReq=(id,fn)=>setState(s=>({...s,requests:s.requests.map(x=>x.id===id?fn(x):x)}));
   const discard=id=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==id)}));
+  // booking exclusivity: a confirm can't land a shift whose wall-clock interval overlaps an already-confirmed one
+  const bookGuard=r=>{const cf=bookingConflict(pinFrom(r),r.shiftType,state.requests,r.id);
+    if(cf){const other=state.requests.find(x=>x.id===cf.other.id),os=other&&siteById[other.siteId];
+      setNote(`Can't book ${shiftLabel(r.shiftType)} on ${md(cf.date)} — overlaps a confirmed ${shiftLabel(cf.other.shift)}${os?` at ${os.name}`:""}.`);return false;}
+    setNote(null);return true;};
   const cadDays=r=>(siteById[r.siteId]&&siteById[r.siteId].cadence.expectedResponseDays)||10;
   const pinFrom=r=>r.footprint.dates.slice(0,shiftCount(r));   // density resolves to its first `target` days; exact keeps all
   const submit=r=>setReq(r.id,x=>({...x,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,cadDays(x)))}));
-  const accept=r=>setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY),footprint:{kind:"pinned",dates:pinFrom(x)}}));
+  const accept=r=>{if(!bookGuard(r))return;setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY),footprint:{kind:"pinned",dates:pinFrom(x)}}));};
   const reject=r=>setReq(r.id,x=>({...x,state:"rejected",resolvedOn:ds(TODAY)}));
   const toOverride=r=>setReq(r.id,x=>({...x,state:"override",footprint:{kind:"pinned",dates:pinFrom(x)},rateOverride:Number.isFinite(x.rateOverride)?x.rateOverride:siteRate(siteById[x.siteId],x.shiftType)}));
-  const confirmOverride=r=>setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY)}));
+  const confirmOverride=r=>{if(!bookGuard(r))return;setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY)}));};
   const payOf=r=>{const s=siteById[r.siteId];return s?shiftCount(r)*reqShiftPay(r,s):0;};
 
   function chainFor(r){
@@ -1187,6 +1226,10 @@ function Pending({state,setState,tsp}){
     <div style={{maxWidth:720,margin:"0 auto",padding:"14px 16px 80px"}}>
       <div style={{fontSize:18,fontWeight:800,letterSpacing:"-0.02em"}}>Requests</div>
       <div style={{fontSize:11.5,color:C.gray,marginBottom:16}}>the request lifecycle, newest intent on top, history scrolling down.</div>
+      {note&&<div onClick={()=>setNote(null)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 11px",marginBottom:12,borderRadius:7,
+        border:`1px solid ${C.pressHot}`,background:C.softWarn,cursor:"pointer"}}>
+        <span style={{fontSize:11.5,fontWeight:700,color:C.pressHot}}>{note}</span>
+        <span style={{marginLeft:"auto",fontSize:10,color:C.mute}}>dismiss ✕</span></div>}
 
       {/* ── DRAFTS ── */}
       <Head title="Drafts" n={candidates.length} sub="drafts to submit · deadline chain"/>
