@@ -238,10 +238,10 @@ function seedState(){
     {id:"ov1",siteId:"santa_fe",shiftType:"day",opens:"2026-04-20",dueBy:"2026-06-10",
      state:"override",submittedOn:"2026-05-15",expectedResponseBy:"2026-06-18",rateOverride:185,
      footprint:{kind:"pinned",dates:["2026-07-21","2026-07-22","2026-07-28"]}},
-    // selected to apply for → the Candidate section (smeared, with the dependency chain on ABQ)
+    // selected to apply for → the Candidate section (a density window: work 2 of 5, dependency chain on ABQ)
     {id:"s2",siteId:"santa_fe",shiftType:"day",opens:"2026-04-08",dueBy:"2026-06-25",
      state:"candidate",
-     footprint:{kind:"smeared",candidates:["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"],take:2}},
+     footprint:{kind:"pinned",dates:["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"],target:2}},
     {id:"s3",siteId:"gallup",shiftType:"day",opens:"2026-05-01",dueBy:"2026-07-01",
      state:"candidate",
      footprint:{kind:"pinned",dates:["2026-08-04","2026-08-05"]}},
@@ -323,8 +323,9 @@ function sanitizeState(obj){
     const requests=(Array.isArray(obj.requests)?obj.requests:[]).map(r=>{
       if(!r||!r.id||!ids.has(r.siteId))return null;
       const ft=r.footprint||{};let footprint=null;
-      if(ft.kind==="pinned"&&isDateArr(ft.dates))footprint={kind:"pinned",dates:ft.dates};
-      else if(ft.kind==="smeared"&&isDateArr(ft.candidates))footprint={kind:"smeared",candidates:ft.candidates,take:Math.max(1,Math.min(ft.candidates.length,numOr(ft.take,1)))};
+      if(ft.kind==="pinned"&&isDateArr(ft.dates)){footprint={kind:"pinned",dates:ft.dates};
+        if(Number.isFinite(+ft.target))footprint.target=Math.max(1,Math.min(ft.dates.length,Math.round(+ft.target)));}
+      else if(ft.kind==="smeared"&&isDateArr(ft.candidates))footprint={kind:"pinned",dates:ft.candidates,target:Math.max(1,Math.min(ft.candidates.length,numOr(ft.take,1)))};   // migrate old smeared → density window
       else return null;
       const st=MIGRATE[r.state]||r.state;
       const o={id:String(r.id),siteId:r.siteId,shiftType:r.shiftType==="night"?"night":"day",
@@ -358,7 +359,11 @@ function shareLink(state){
 
 const siteRate=(s,t)=>t==="day"?s.dayRate:s.nightRate;   // $/hr — rates are always hourly
 const siteHours=(s,t)=>t==="day"?s.dayHours:s.nightHours;
-const shiftCount=r=>r.footprint.kind==="pinned"?r.footprint.dates.length:r.footprint.take;
+/* one window type: a drawn day-set + an optional density target ("work N of these M").
+   target omitted (or === dates.length) → an exact window; target < length → a density window. */
+const fpTarget=fp=>Number.isFinite(fp.target)?Math.max(1,Math.min(fp.dates.length,fp.target)):fp.dates.length;
+const shiftCount=r=>fpTarget(r.footprint);
+const reqIsDensity=r=>Number.isFinite(r.footprint.target)&&r.footprint.target<r.footprint.dates.length;
 
 /* lifecycle: candidate → pending → (override) → confirmed; rejected/expired persist.
    reqRate honors a negotiated rateOverride. OCCUPY = shows on calendar + presses the
@@ -367,7 +372,7 @@ const REQ_STATES=["candidate","pending","override","confirmed","rejected","expir
 const OCCUPY=["candidate","pending","override","confirmed"];
 const reqRate=(r,s)=>Number.isFinite(r.rateOverride)?r.rateOverride:siteRate(s,r.shiftType);   // effective $/hr
 const reqShiftPay=(r,s)=>reqRate(r,s)*siteHours(s,r.shiftType);                                 // $/hr × clinical hours = per-shift pay
-const reqDates=r=>r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates;
+const reqDates=r=>r.footprint.dates;
 const reqMinDate=r=>reqDates(r).reduce((m,d)=>d<m?d:m,reqDates(r)[0]||"");
 const reqMaxDate=r=>reqDates(r).reduce((m,d)=>d>m?d:m,reqDates(r)[0]||"");
 const isPastReq=r=>r.state==="confirmed"&&reqMaxDate(r)<ds(TODAY);
@@ -392,8 +397,8 @@ function nearestDate(x,y){
 }
 /* automerge: contiguous candidate work-windows of the same site+type → one coherent block */
 function mergeCandidates(requests){
-  const cands=requests.filter(r=>r.state==="candidate"&&r.footprint.kind==="pinned");
-  const rest=requests.filter(r=>!(r.state==="candidate"&&r.footprint.kind==="pinned"));
+  const cands=requests.filter(r=>r.state==="candidate"&&!reqIsDensity(r));   // density windows stand alone — never auto-merged
+  const rest=requests.filter(r=>!(r.state==="candidate"&&!reqIsDensity(r)));
   const groups={};
   for(const r of cands)(groups[r.siteId+"|"+r.shiftType]=groups[r.siteId+"|"+r.shiftType]||[]).push(r);
   const out=[];
@@ -516,10 +521,10 @@ function loadByYM(state){
   for(const r of state.requests){
     if(!OCCUPY.includes(r.state))continue;
     const conf=r.state==="confirmed"||r.state==="override";   // locked/near-locked load vs speculative window load
-    if(r.footprint.kind==="pinned"){
-      for(const d of r.footprint.dates){const dt=pd(d);add(`${dt.getFullYear()}-${dt.getMonth()}`,1,conf);}
+    if(reqIsDensity(r)){
+      const dt=pd(r.footprint.dates[0]);add(`${dt.getFullYear()}-${dt.getMonth()}`,shiftCount(r),conf);   // density → target shifts, anchored at the window's start
     }else{
-      const dt=pd(r.footprint.candidates[0]);add(`${dt.getFullYear()}-${dt.getMonth()}`,r.footprint.take,conf);
+      for(const d of r.footprint.dates){const dt=pd(d);add(`${dt.getFullYear()}-${dt.getMonth()}`,1,conf);}
     }
   }
   return by;
@@ -575,16 +580,15 @@ function coolingAggregate(state,tsp){
   let bookedToDate$=0,bookedFuture$=0,requested$=0;
   for(const r of requests){
     const s=siteById[r.siteId];if(!s)continue;
-    if(r.state==="confirmed"&&r.footprint.kind==="pinned"){
+    if(r.state==="confirmed"){
       const yr=r.footprint.dates.filter(d=>pd(d).getFullYear()===YEAR);
       const worked=yr.filter(d=>pd(d)<=TODAY).length;
       bookedToDate$+=worked*reqShiftPay(r,s);                 // already worked
       bookedFuture$+=(yr.length-worked)*reqShiftPay(r,s);     // confirmed, not yet worked
     }else if(r.state==="candidate"||r.state==="pending"||r.state==="override"){
-      const n=r.footprint.kind==="pinned"
-        ?r.footprint.dates.filter(d=>pd(d).getFullYear()===YEAR).length
-        :(r.footprint.candidates.some(d=>pd(d).getFullYear()===YEAR)?r.footprint.take:0);
-      requested$+=n*(r.footprint.kind==="pinned"?reqShiftPay(r,s):tsp.value);   // speculative ask
+      const inYr=r.footprint.dates.filter(d=>pd(d).getFullYear()===YEAR);
+      const n=reqIsDensity(r)?(inYr.length?shiftCount(r):0):inYr.length;
+      requested$+=n*(reqIsDensity(r)?tsp.value:reqShiftPay(r,s));   // density → typicalShiftPay estimate; exact → its own rate
     }
   }
   const flatRunRate$=fracYearElapsed>0?bookedToDate$/fracYearElapsed:0;
@@ -605,26 +609,26 @@ function weekExposure(weekDates,requests,siteById,tsp){
   let floor$=0,ceil$=0,pending=[];
   for(const r of requests){
     const fp=r.footprint;
-    const datesIn=(fp.kind==="pinned"?fp.dates:fp.candidates).filter(d=>wf.has(d));
+    const datesIn=fp.dates.filter(d=>wf.has(d));
     if(!datesIn.length)continue;
     const s=siteById[r.siteId];if(!s)continue;
     const pay=reqShiftPay(r,s);
-    if(r.state==="confirmed"&&fp.kind==="pinned"){floor$+=datesIn.length*pay;}
+    if(r.state==="confirmed"){floor$+=datesIn.length*pay;}
     else if(r.state==="candidate"||r.state==="pending"||r.state==="override"){
       pending.push(r);                               // not-yet-confirmed → the ceiling hedge
-      if(fp.kind==="pinned")ceil$+=datesIn.length*pay;
-      else ceil$+=Math.min(fp.take,datesIn.length)*tsp.value; // smeared → typicalShiftPay (estimate)
+      if(!reqIsDensity(r))ceil$+=datesIn.length*pay;
+      else ceil$+=Math.min(shiftCount(r),datesIn.length)*tsp.value; // density → typicalShiftPay (estimate)
     }
   }
   ceil$+=floor$;
   // collision: two pending footprints overlapping in this week
   let collision=false;
   for(let i=0;i<pending.length;i++)for(let j=i+1;j<pending.length;j++){
-    const a=new Set((pending[i].footprint.kind==="pinned"?pending[i].footprint.dates:pending[i].footprint.candidates).filter(d=>wf.has(d)));
-    const b=(pending[j].footprint.kind==="pinned"?pending[j].footprint.dates:pending[j].footprint.candidates).filter(d=>wf.has(d));
+    const a=new Set(pending[i].footprint.dates.filter(d=>wf.has(d)));
+    const b=pending[j].footprint.dates.filter(d=>wf.has(d));
     if(b.some(d=>a.has(d)))collision=true;
   }
-  const thinOnly=pending.length>0&&pending.every(r=>r.footprint.kind==="smeared"&&r.footprint.take<=2);
+  const thinOnly=pending.length>0&&pending.every(r=>reqIsDensity(r)&&shiftCount(r)<=2);
   const hole=floor$===0&&ceil$>0&&thinOnly;
   return {floor$,ceil$,pending,collision,hole};
 }
@@ -672,9 +676,9 @@ function buildWindows(state,monthIdx,types,tsp){
   let committed=0;
   for(const r of requests){
     if(OCCUPY.includes(r.state)){
-      const dts=(r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates);
-      const n=r.footprint.kind==="pinned"?dts.filter(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR).length
-              :(dts.some(d=>pd(d).getMonth()===monthIdx)?r.footprint.take:0);
+      const dts=r.footprint.dates;
+      const n=reqIsDensity(r)?(dts.some(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR)?shiftCount(r):0)
+              :dts.filter(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR).length;
       committed+=n;
     }
   }
@@ -698,7 +702,7 @@ function buildWindows(state,monthIdx,types,tsp){
       raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,dayStrs,perKid,kidHrs,
         closing,closed,notOpen,lockHit,
         existing:requests.find(r=>r.siteId===site.id&&r.footprint&&
-          (r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates).some(d=>pd(d).getMonth()===monthIdx&&wk.dates.some(wd=>ds(wd)===d)))});
+          r.footprint.dates.some(d=>pd(d).getMonth()===monthIdx&&wk.dates.some(wd=>ds(wd)===d)))});
     });
   });
   // normalization ranges across the month's windows
@@ -1012,8 +1016,9 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
   const [travelOn,setTravelOn]=useState(false);
   const [tv,setTv]=useState(()=>travelOf(w.site));     // per-trip travel override (else the site default)
   function go(){
-    const foot=byWindow?{kind:"smeared",candidates:picked,take:Math.min(take,picked.length)}
-                       :{kind:"pinned",dates:picked};
+    const dates=picked.slice().sort();
+    const foot={kind:"pinned",dates};                  // one window type — a drawn day-set …
+    if(byWindow)foot.target=Math.min(take,dates.length);   // … plus a density target for by-window sites
     onCreate(w,type,foot,travelOn?tv:null);
   }
   // live readout — money + kid-awake hours for what's being built
@@ -1107,7 +1112,7 @@ function Pending({state,setState,tsp}){
   const setReq=(id,fn)=>setState(s=>({...s,requests:s.requests.map(x=>x.id===id?fn(x):x)}));
   const discard=id=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==id)}));
   const cadDays=r=>(siteById[r.siteId]&&siteById[r.siteId].cadence.expectedResponseDays)||10;
-  const pinFrom=r=>r.footprint.kind==="smeared"?r.footprint.candidates.slice(0,r.footprint.take):r.footprint.dates.slice();
+  const pinFrom=r=>r.footprint.dates.slice(0,shiftCount(r));   // density resolves to its first `target` days; exact keeps all
   const submit=r=>setReq(r.id,x=>({...x,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,cadDays(x)))}));
   const accept=r=>setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY),footprint:{kind:"pinned",dates:pinFrom(x)}}));
   const reject=r=>setReq(r.id,x=>({...x,state:"rejected",resolvedOn:ds(TODAY)}));
@@ -1149,7 +1154,7 @@ function Pending({state,setState,tsp}){
     <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:C.ink}}>{fmt$(payOf(r))}</span>
   </div>;};
   const Dates=({r})=> <div style={{fontSize:10,color:C.gray,marginTop:4}}>
-    {r.footprint.kind==="smeared"?`${md(r.footprint.candidates[0])}–${md(r.footprint.candidates.at(-1))} · take ${r.footprint.take} of ${r.footprint.candidates.length}`
+    {reqIsDensity(r)?`${md(r.footprint.dates[0])}–${md(r.footprint.dates.at(-1))} · ${shiftCount(r)} of ${r.footprint.dates.length} days`
       :r.footprint.dates.map(md).join(" · ")}</div>;
 
   return <div style={{height:"100%",overflow:"auto"}}>
@@ -1440,12 +1445,9 @@ function useFootprint(state){
     for(const r of state.requests){
       const s=siteById[r.siteId];if(!s)continue;
       const fp=r.footprint;
-      if(fp.kind==="pinned"){
-        for(const d of fp.dates){(byDay[d]=byDay[d]||[]).push({state:r.state,type:r.shiftType,site:s});
-          if(r.state==="confirmed"){const dt=pd(d),k=`${dt.getFullYear()}-${dt.getMonth()}`;(perYM[k]=perYM[k]||{n:0,$:0});perYM[k].n++;perYM[k].$+=reqShiftPay(r,s);}}
-      }else if(r.state==="candidate"||r.state==="pending"){
-        for(const d of fp.candidates){(byDay[d]=byDay[d]||[]).push({state:"smeared",type:r.shiftType,site:s});}
-      }
+      const speculative=reqIsDensity(r)&&(r.state==="candidate"||r.state==="pending");   // density days read as "some of these will land"
+      for(const d of fp.dates){(byDay[d]=byDay[d]||[]).push({state:speculative?"smeared":r.state,type:r.shiftType,site:s});
+        if(r.state==="confirmed"){const dt=pd(d),k=`${dt.getFullYear()}-${dt.getMonth()}`;(perYM[k]=perYM[k]||{n:0,$:0});perYM[k].n++;perYM[k].$+=reqShiftPay(r,s);}}
     }
     for(const sp of state.trips){if(!placed(sp))continue;let d=pd(sp.from);const t=pd(sp.to);while(d<=t){famBy[ds(d)]={loc:sp.loc,wf:sp.workFactor,name:sp.name};d=ad(d,1);}}
     for(const l of state.locks)lockBy[l.date]=l;
@@ -1625,7 +1627,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     e.preventDefault();const start=reqMinDate(r),end=reqMaxDate(r);
     listen(p=>{const d=nearestDate(p.clientX,p.clientY);if(!d)return;
       let ns=start,ne=end;if(which==="end")ne=d<start?start:d;else ns=d>end?end:d;
-      const dates=daysBetween(ns,ne);if(dates.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates}}));},
+      const dates=daysBetween(ns,ne);if(dates.length)setReq(r.id,x=>({...x,footprint:{...x.footprint,kind:"pinned",dates}}));},
       ()=>setReqs(rs=>mergeCandidates(rs)));
   }
   function cellDown(e,str,y,m){
@@ -1633,14 +1635,14 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     if(tool==="eraser"){                                   // drag to erase
       const done=new Set();
       const erase=d=>{if(!d||done.has(d))return;done.add(d);const r=editableAt(d);if(!r)return;
-        const left=r.footprint.dates.filter(x=>x!==d);if(left.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:left}}));else delReq(r.id);};
+        const left=r.footprint.dates.filter(x=>x!==d);if(left.length)setReq(r.id,x=>({...x,footprint:{...x.footprint,kind:"pinned",dates:left}}));else delReq(r.id);};
       erase(str);listen(p=>erase(nearestDate(p.clientX,p.clientY)),()=>{});return;
     }
     // direct manipulation (default): existing window → tap selects / drag moves; empty → draw a new window
     const r=editableAt(str);
     if(r){setSel({kind:"req",id:r.id});const orig=r.footprint.dates.slice();let moved=false;
       listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));if(delta!==0)moved=true;
-        setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(orig,delta)}}));},
+        setReq(r.id,x=>({...x,footprint:{...x.footprint,kind:"pinned",dates:shiftDates(orig,delta)}}));},
         ()=>{if(moved)setReqs(rs=>mergeCandidates(rs));});
       return;}
     const occ=occupantAt(str);                          // pending / confirmed → read-only: select to inspect, no drag
@@ -1686,12 +1688,16 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const editBars=<>
     {sr&&sr.state==="candidate"&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
       <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · draft</span></div>
-      <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,-1)}}))}>◀</Btn>
-      <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,1)}}))}>▶</Btn>
-      <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();if(ds2.length>1)ds2.pop();return {...x,footprint:{kind:"pinned",dates:ds2}};})}>− day</Btn>
-      <Btn small onClick={()=>{setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();ds2.push(ds(ad(pd(ds2[ds2.length-1]),1)));return {...x,footprint:{kind:"pinned",dates:ds2}};});setReqs(rs=>mergeCandidates(rs));}}>+ day</Btn>
+      {/* one window, drawn directly — adjust it on the calendar (drag to move, handles to resize, eraser to trim).
+         the only attribute here is density: "work N of these M days." N = M is an exact window. */}
+      <div style={{display:"inline-flex",alignItems:"center",gap:6}}>
+        <span style={{fontSize:11,color:C.gray}}>work</span>
+        <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{...x.footprint,target:Math.max(1,fpTarget(x.footprint)-1)}}))}>−</Btn>
+        <span style={{fontSize:13,fontWeight:800,minWidth:14,textAlign:"center"}}>{shiftCount(sr)}</span>
+        <Btn small onClick={()=>setReq(sr.id,x=>{const nt=Math.min(x.footprint.dates.length,fpTarget(x.footprint)+1);const fp={...x.footprint,target:nt};if(nt>=x.footprint.dates.length)delete fp.target;return {...x,footprint:fp};})}>+</Btn>
+        <span style={{fontSize:11,color:C.mute}}>of {sr.footprint.dates.length} {reqIsDensity(sr)?"— some will land":"— all of them"}</span>
+      </div>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,shiftType:x.shiftType==="day"?"night":"day"}))}>{sr.shiftType==="day"?"→night":"→day"}</Btn>
-      <Btn small onClick={()=>setReq(sr.id,x=>{const i=sites.findIndex(s=>s.id===x.siteId);return {...x,siteId:sites[(i+1)%sites.length].id};})}>site ⇄</Btn>
       {/* no submit here — the calendar is a drafting space; candidates are applied from the Pending list */}
       <Btn small kind="danger" onClick={()=>{delReq(sr.id);setSel(null);}}>delete</Btn>
       <Btn small kind="prim" onClick={()=>setSel(null)}>done</Btn>
