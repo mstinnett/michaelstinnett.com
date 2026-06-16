@@ -1941,23 +1941,12 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
         const left=w.dates.filter(x=>x!==d);if(left.length)updWindow(w.id,x=>({...x,dates:left}));else delWindow(w.id);};
       erase(str);listen(p=>erase(nearestDate(p.clientX,p.clientY)),()=>{});return;
     }
-    // draw mode: existing window → drag moves it; trip → drag moves it; empty → draw a new window
-    const w=windowAt(str);
-    if(w){setSel({kind:"window",id:w.id});const orig=w.dates.slice();let lastD=0,cur=orig;
-      listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));if(delta===lastD)return;lastD=delta;
-        cur=shiftDates(orig,delta);setWinPrev({dates:cur,hideId:w.id});},
-        ()=>{updWindow(w.id,x=>({...x,dates:cur}));setWinPrev(null);});
-      return;}
-    const t=tripAt(str);
-    if(t){setSel({kind:"trip",id:t.id});const f0=t.from,t0=t.to;
-      listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));
-        setTrip(t.id,x=>({...x,from:ds(ad(pd(f0),delta)),to:ds(ad(pd(t0),delta)),placed:true}));},()=>{});
-      return;}
+    // draw mode: only ever draws a new window — never selects or moves what's underneath
     if(dayClosed(str))return;
-    setSel(null);setDraw({startStr:str,endStr:str,y,m});
+    setDraw({startStr:str,endStr:str,y,m});
     listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(dd){const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&d.endStr===dd?d:(d&&{...d,endStr:dd}));}},   // no-op when the end cell hasn't changed → no re-render
       ()=>setDraw(d=>{if(d){const dates=daysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));
-        if(dates.length){const nw=makeBlankWindow(dates);addWindow(nw);setSel({kind:"window",id:nw.id});}}return null;}));
+        if(dates.length)addWindow(makeBlankWindow(dates));}return null;}));   // draw commits; no auto-select
   }
   const dragMode=act==="draw"||act==="erase";              // captures pointer drags (locks scroll on those cells)
   const tapMode=act==="select"||act==="inspect";
@@ -1978,7 +1967,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     for(const mm of [7,8,9,10,11])items.push({y,m:mm});for(const mm of [0,1,2,3,4,5,6])items.push({y:y+1,m:mm});}}
   const width=CAL_LBL+calMaxCols*(CAL_CELL+CAL_CG)+(calMaxCols/7)*CAL_WG;
   const MODES=[["select","☞ select"],["draw","✎ draw"],["inspect","◉ inspect"],["erase","⌫ erase"]];
-  const MODE_HINT={select:"tap a window to adjust, request or delete it",draw:"drag across days to add a window · drag a window to move it",
+  const MODE_HINT={select:"tap a window to adjust, move, request or delete it",draw:"drag across days to add a window",
     inspect:"tap a day to see what's on it",erase:"drag across a window to trim it"};
   const modePalette=<div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
     <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:6,overflow:"hidden"}}>
@@ -1999,6 +1988,12 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
         <span style={{fontSize:13,fontWeight:800,minWidth:14,textAlign:"center"}}>{wt}</span>
         <Btn small onClick={()=>updWindow(swin.id,x=>({...x,target:Math.min(x.dates.length,wt+1)}))}>+</Btn>
         <span style={{fontSize:11,color:C.mute}}>of {swin.dates.length} {wt<swin.dates.length?"— some will land":"— all of them"}</span>
+      </div>
+      {/* move the whole window by a day — no drag needed (draw mode is for drawing only) */}
+      <div style={{display:"inline-flex",alignItems:"center",gap:4}}>
+        <span style={{fontSize:11,color:C.gray}}>move</span>
+        <Btn small onClick={()=>updWindow(swin.id,x=>({...x,dates:shiftDates(x.dates,-1)}))}>◀</Btn>
+        <Btn small onClick={()=>updWindow(swin.id,x=>({...x,dates:shiftDates(x.dates,1)}))}>▶</Btn>
       </div>
       {nReq>0&&<Tag bg={C.softInfo} col={C.blue}>{nReq} candidate{nReq>1?"s":""}</Tag>}
       <span style={{marginLeft:"auto"}}/>
