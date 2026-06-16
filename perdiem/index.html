@@ -354,6 +354,7 @@ function sanitizeState(obj){
         state:REQ_STATES.includes(st)?st:"candidate",footprint,
         opens:DATE_RE.test(r.opens||"")?r.opens:ds(TODAY),dueBy:DATE_RE.test(r.dueBy||"")?r.dueBy:ds(TODAY)};
       if(Number.isFinite(+r.rateOverride))o.rateOverride=+r.rateOverride;
+      if(Number.isFinite(+r.bonusOverride))o.bonusOverride=+r.bonusOverride;
       if(r.travel&&typeof r.travel==="object"){const st=sites.find(x=>x.id===r.siteId);o.travel=travelOf({reach:st?st.reach:"local",travel:r.travel});}
       ["expectedResponseBy","submittedOn","resolvedOn"].forEach(k=>{if(DATE_RE.test(r[k]||""))o[k]=r[k];});
       return o;
@@ -397,7 +398,8 @@ const reqIsDensity=r=>Number.isFinite(r.footprint.target)&&r.footprint.target<r.
 const REQ_STATES=["candidate","pending","override","confirmed","rejected","expired"];
 const OCCUPY=["candidate","pending","override","confirmed"];
 const reqRate=(r,s)=>Number.isFinite(r.rateOverride)?r.rateOverride:siteRate(s,r.shiftType);   // effective $/hr
-const reqShiftPay=(r,s)=>reqRate(r,s)*siteHours(s,r.shiftType);                                 // $/hr × clinical hours = per-shift pay
+const reqBonus=r=>Number.isFinite(r.bonusOverride)?r.bonusOverride:0;                          // flat $ per shift (negotiated)
+const reqShiftPay=(r,s)=>reqRate(r,s)*siteHours(s,r.shiftType)+reqBonus(r);                     // $/hr × clinical hours + flat bonus = per-shift pay
 const reqDates=r=>r.footprint.dates;
 const reqMinDate=r=>reqDates(r).reduce((m,d)=>d<m?d:m,reqDates(r)[0]||"");
 const reqMaxDate=r=>reqDates(r).reduce((m,d)=>d>m?d:m,reqDates(r)[0]||"");
@@ -1223,6 +1225,7 @@ function Pending({state,setState,tsp}){
     <Tag bg={C.line2} col={ST_COL[r.state]}>{ST_LABEL[r.state]}</Tag>
     <Tag>{shiftLabel(r.shiftType)}</Tag>
     {Number.isFinite(r.rateOverride)&&<Tag bg={C.softWarn} col={C.pressHot}>rate {fmt$(r.rateOverride)}/hr</Tag>}
+    {Number.isFinite(r.bonusOverride)&&r.bonusOverride>0&&<Tag bg={C.softWarn} col={C.pressHot}>+{fmt$(r.bonusOverride)}/shift</Tag>}
     <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:C.ink}}>{fmt$(payOf(r))}</span>
   </div>;};
   const Dates=({r})=> <div style={{fontSize:10,color:C.gray,marginTop:4}}>
@@ -1299,6 +1302,7 @@ function Pending({state,setState,tsp}){
                 onRm={d=>setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:x.footprint.dates.filter(y=>y!==d)}}))}
                 onAdd={d=>setReq(r.id,x=>x.footprint.dates.includes(d)?x:({...x,footprint:{kind:"pinned",dates:[...x.footprint.dates,d].sort()}}))}
                 onRate={v=>setReq(r.id,x=>({...x,rateOverride:v}))}
+                onBonus={v=>setReq(r.id,x=>({...x,bonusOverride:v}))}
                 onConfirm={()=>confirmOverride(r)} onReject={()=>reject(r)}/>}
         </RowCard>;
       })}
@@ -1328,10 +1332,11 @@ function Pending({state,setState,tsp}){
   </div>;
 }
 /* inline negotiation editor — edits commit live (shows on the calendar / pressure) */
-function OverrideEditor({r,site,onRm,onAdd,onRate,onConfirm,onReject}){
+function OverrideEditor({r,site,onRm,onAdd,onRate,onBonus,onConfirm,onReject}){
   const [add,setAdd]=useState("");
+  const perShift=(Number(r.rateOverride)||0)*siteHours(site,r.shiftType)+(Number(r.bonusOverride)||0);
   return <div style={{marginTop:8,padding:"9px 10px",border:`1px dashed ${C.pressHot}`,borderRadius:6,background:C.softWarn}}>
-    <div style={{fontSize:9.5,fontWeight:800,color:C.pressHot,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated dates and rate</div>
+    <div style={{fontSize:9.5,fontWeight:800,color:C.pressHot,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated dates, rate and bonus</div>
     <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
       {r.footprint.dates.map(d=><span key={d} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,
         padding:"2px 4px 2px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel}}>
@@ -1341,9 +1346,11 @@ function OverrideEditor({r,site,onRm,onAdd,onRate,onConfirm,onReject}){
       <input type="date" value={add} onChange={e=>setAdd(e.target.value)} style={{...inp,width:140}}/>
       <Btn small onClick={()=>{if(DATE_RE.test(add)){onAdd(add);setAdd("");}}}>+ add date</Btn>
       <span style={{marginLeft:"auto",fontSize:10,color:C.gray}}>$/hr</span>
-      <input type="number" value={r.rateOverride} onChange={e=>onRate(+e.target.value||0)} style={{...inp,width:80}}/>
-      <span style={{fontSize:10,color:C.mute}}>={fmt$((r.footprint.dates.length)*(Number(r.rateOverride)||0)*siteHours(site,r.shiftType))}</span>
+      <input type="number" value={r.rateOverride} onChange={e=>onRate(+e.target.value||0)} style={{...inp,width:72}}/>
+      <span style={{fontSize:10,color:C.gray}}>+ bonus/shift</span>
+      <input type="number" value={Number.isFinite(r.bonusOverride)?r.bonusOverride:0} onChange={e=>onBonus(Math.max(0,+e.target.value||0))} style={{...inp,width:72}}/>
     </div>
+    <div style={{fontSize:10,color:C.mute,marginBottom:8}}>{fmt$(perShift)}/shift × {r.footprint.dates.length} = <b style={{color:C.gray}}>{fmt$(perShift*r.footprint.dates.length)}</b>{Number(r.bonusOverride)>0?` (incl. ${fmt$(r.bonusOverride)} bonus/shift)`:""}</div>
     <div style={{display:"flex",gap:6}}>
       <Btn small kind="good" disabled={!r.footprint.dates.length} onClick={onConfirm}>confirm</Btn>
       <Btn small kind="danger" onClick={onReject}>reject</Btn>
