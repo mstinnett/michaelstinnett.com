@@ -1061,6 +1061,11 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
       return {...r,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,cd))};
     })};
   });
+  const submitOne=r=>setState(s=>({...s,requests:s.requests.map(x=>{   // create → submit, inline (no trip to the Requests tab)
+    if(x.id!==r.id||x.state!=="candidate")return x;
+    const cd=(siteById[x.siteId]&&siteById[x.siteId].cadence.expectedResponseDays)||10;
+    return {...x,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,cd))};
+  })}));
   const sp=<div style={{height:10}}/>;
   const paceInner=<><PaceCurve pace={state.pace} setPace={setPace} tsp={tsp}/><div style={{marginTop:12}}><StatsReadout cool={cool}/></div></>;
   const paceDrawerEl=<div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel2,marginBottom:12,overflow:"hidden"}}>
@@ -1111,7 +1116,8 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
         </div>
         {w.existing
           ? <><Tag bg={C.softInfo} col={C.blue}>requested · {ST_LABEL[w.existing.state]||w.existing.state}</Tag>
-              {w.existing.state==="candidate"&&<Btn small kind="danger" onClick={()=>removeReq(w.existing.id)}>remove</Btn>}</>
+              {w.existing.state==="candidate"&&<><Btn small kind="good" onClick={()=>submitOne(w.existing)}>submit →</Btn>
+              <Btn small kind="danger" onClick={()=>removeReq(w.existing.id)}>remove</Btn></>}</>
           : !w.closed&&<><Btn small kind="prim" onClick={()=>requestCard(win,w)}>request</Btn>
               <Btn small onClick={()=>setCreating({w,win})}>compose…</Btn></>}
         <span style={{marginLeft:"auto"}}/>
@@ -2323,6 +2329,22 @@ function App(){
   const labelOf=v=>(VIEWS.find(x=>x[0]===v)||[,,v])[2];
   const goto=t=>{if(t!==view){setBack(view);setView(t);}};   // deep link, remembers where to return
   const pick=t=>{setView(t);setBack(null);};                  // manual tab tap clears the return crumb
+  // request-pipeline counts — surfaced as a strip + Requests-tab badge so the lifecycle is visible from anywhere
+  const pl=(()=>{const rs=state.requests;
+    return {drafts:rs.filter(r=>r.state==="candidate").length,
+      awaiting:rs.filter(r=>r.state==="pending"||r.state==="override").length,
+      overdue:rs.filter(r=>(r.state==="pending"||r.state==="override")&&r.expectedResponseBy&&pd(r.expectedResponseBy)<TODAY).length,
+      booked:rs.filter(r=>r.state==="confirmed"&&!isPastReq(r)).length};})();
+  const reqBadge=(pl.drafts>0||pl.overdue>0)?<span style={{marginLeft:5,fontSize:10,fontWeight:800,color:C.bg,
+    background:pl.overdue>0?C.red:C.ink,borderRadius:8,padding:"0 5px"}}>{pl.drafts>0?pl.drafts:"!"}</span>:null;
+  const pipeStrip=<div style={{display:"flex",alignItems:"center",gap:4,padding:"4px 14px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexShrink:0,flexWrap:"wrap"}}>
+    <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginRight:2}}>requests</span>
+    {[["●",pl.drafts,"drafts",false],["◷",pl.awaiting,"awaiting",false],["⚠",pl.overdue,"overdue",true],["✓",pl.booked,"booked",false]]
+      .filter(([,n,,warn])=>!warn||n>0).map(([ic,n,lab,warn])=>
+        <button key={lab} onClick={()=>goto("pending")} style={{fontFamily:MONO,fontSize:11,fontWeight:700,border:"none",background:"none",
+          cursor:"pointer",color:warn&&n>0?C.red:C.gray,display:"inline-flex",alignItems:"center",gap:4,padding:"1px 5px"}}>
+          <span>{ic}</span><b style={{color:warn&&n>0?C.red:C.ink}}>{n}</b> {lab}</button>)}
+  </div>;
   const content=view==="pending"
     ? <Pending state={state} setState={setState} tsp={tsp}/>
     : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view} goto={goto} mobile={isMobile}/>;
@@ -2346,12 +2368,13 @@ function App(){
     {toast&&<div style={{position:"fixed",bottom:isMobile?68:18,left:"50%",transform:"translateX(-50%)",zIndex:300,
       background:C.ink,color:C.bg,fontSize:12,fontWeight:600,padding:"8px 14px",borderRadius:6,
       boxShadow:"0 8px 24px rgba(0,0,0,.25)",maxWidth:"90vw",textAlign:"center"}}>{toast}</div>}
+    {pipeStrip}
     {/* desktop: top tabs — each a view into the same model (calendar and windows are separate) */}
     {!isMobile&&<div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
       {VIEWS.map(([id,ic,label])=><button key={id} onClick={()=>pick(id)}
         style={{fontFamily:MONO,fontSize:13,fontWeight:800,padding:"9px 15px",border:"none",cursor:"pointer",
           background:"transparent",color:view===id?C.ink:C.mute,letterSpacing:"-0.01em",
-          borderBottom:view===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
+          borderBottom:view===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}{id==="pending"&&reqBadge}</button>)}
       <span style={{marginLeft:"auto",alignSelf:"center",fontSize:9.5,color:C.mute,padding:"0 14px"}}>today {ds(TODAY)}</span>
     </div>}
     {/* in-app back crumb — there's no browser back, so deep links always offer a way home */}
@@ -2368,7 +2391,7 @@ function App(){
         return <button key={id} onClick={()=>pick(id)} style={{flex:1,fontFamily:MONO,border:"none",cursor:"pointer",background:"transparent",
           padding:"7px 2px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,
           color:on?C.ink:C.mute,borderTop:on?`2px solid ${C.ink}`:"2px solid transparent",marginTop:-1}}>
-          <span style={{fontSize:17,lineHeight:1}}>{ic}</span>
+          <span style={{fontSize:17,lineHeight:1,position:"relative"}}>{ic}{id==="pending"&&reqBadge&&<span style={{position:"absolute",top:-4,right:-9}}>{reqBadge}</span>}</span>
           <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"-0.01em"}}>{label}</span>
         </button>;
       })}
