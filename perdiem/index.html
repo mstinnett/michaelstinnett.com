@@ -1734,7 +1734,8 @@ function dayVisual(d,ctx){
   const marks=ctx.byDay[str]||[],fam=ctx.famBy[str],lk=ctx.lockBy[str],lays=ctx.layerCov[str]||[];
   const closed=fam&&fam.wf==="closed";
   const conf=marks.find(x=>x.state==="confirmed"),neg=marks.find(x=>x.state==="override"),pend=marks.find(x=>x.state==="pending"),cand=marks.find(x=>x.state==="candidate"),smear=marks.find(x=>x.state==="smeared");
-  const win=ctx.winBy?ctx.winBy[str]:null;                       // a drawn window covers this day (intent, pre-request)
+  const winRaw=ctx.winBy?ctx.winBy[str]:null;                    // a drawn window covers this day (intent, pre-request)
+  const win=(winRaw&&winRaw!==ctx.hideWinId)?winRaw:null;        // hide the band of a window being moved/resized (its preview shows instead)
   // layered channels: fill = shift (concrete) or a faint trip wash; family blockers ride the bottom bars;
   // pressure lives on the focused month; the cost (family-off ∩ work) reads as a hatch.
   let bg=we?C.weekend:C.panel,border=`1px solid ${C.line2}`,inner=null;
@@ -1746,7 +1747,7 @@ function dayVisual(d,ctx){
   else if(cand){border=`1.5px dotted ${C.est}`;}
   else if(smear){inner="dotted";}
   const cost=lays.length>0&&!!(conf||neg||pend||cand||smear);   // working a family-off day → family-time cost
-  const drawing=ctx.drawSet&&ctx.drawSet.has(str),inSel=ctx.selReqDates&&ctx.selReqDates.has(str),inTrip=ctx.selTripDates&&ctx.selTripDates.has(str);
+  const drawing=(ctx.drawSet&&ctx.drawSet.has(str))||(ctx.winPrevSet&&ctx.winPrevSet.has(str)),inSel=ctx.selReqDates&&ctx.selReqDates.has(str),inTrip=ctx.selTripDates&&ctx.selTripDates.has(str);
   const selWin=ctx.selWinDates&&ctx.selWinDates.has(str);
   const prev=!!(ctx.preview&&ctx.preview.set&&ctx.preview.set.has(str));   // a trip drag is hovering this day
   if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
@@ -1781,12 +1782,12 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandl
   </div>;
 }
 /* one month as a weekday-aligned by-row strip — cells are the drawing surface */
-function MonthRowInner({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,selWinDates,selTripDates,preview,onCellDown,onTap,selStart,selEnd,onHandle}){
+function MonthRowInner({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,winPrevSet,hideWinId,selReqDates,selWinDates,selTripDates,preview,onCellDown,onTap,selStart,selEnd,onHandle}){
   const {byDay,famBy,lockBy,perYM,winBy,loadYM}=footprint;
   const g=monthGrid(y,m),isNow=y===YEAR&&m===TODAY.getMonth();
   const pm=perYM[`${y}-${m}`],ld=loadYM[`${y}-${m}`]||{conf:0,win:0},load=ld.conf+ld.win;
   const tint=pressureTint(load,ceiling),hot=load>ceiling;
-  const ctx={byDay,famBy,lockBy,winBy,layerCov,tint,drawSet,selReqDates,selWinDates,selTripDates,preview};
+  const ctx={byDay,famBy,lockBy,winBy,layerCov,tint,drawSet,winPrevSet,hideWinId,selReqDates,selWinDates,selTripDates,preview};
   const barW=44,confW=Math.min(barW,ld.conf/Math.max(1,ceil2(ceiling))*barW),winW=Math.min(barW-confW,ld.win/Math.max(1,ceil2(ceiling))*barW);
   function ceil2(c){return Math.max(c,load);}                 // bar scales to whichever is larger
   const GW=200,gsc=Math.max(ceiling,load)||1,gcw=ld.conf/gsc*GW,gww=Math.min(GW-gcw,ld.win/gsc*GW),gtick=Math.min(GW-1,ceiling/gsc*GW);  // focused-month pressure gauge
@@ -1827,7 +1828,7 @@ function MonthRowInner({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,t
 /* memoized so a draw (which only changes the active month's drawSet) re-renders one month,
    not the whole multi-year strip. Compares data props by identity; ignores callback props
    (they're closures refreshed on every state change, which re-renders all rows anyway). */
-const MR_KEYS=["y","m","footprint","layerCov","selectable","sel","ceiling","tool","drawSet","selReqDates","selWinDates","selTripDates","preview","selStart","selEnd"];
+const MR_KEYS=["y","m","footprint","layerCov","selectable","sel","ceiling","tool","drawSet","winPrevSet","hideWinId","selReqDates","selWinDates","selTripDates","preview","selStart","selEnd"];
 const MonthRow=React.memo(MonthRowInner,(a,b)=>MR_KEYS.every(k=>Object.is(a[k],b[k])));
 /* calendar filters — toggle which presence layers paint the days, right on the workspace */
 function LayerFilters({layers,setLayers,goto}){
@@ -1891,6 +1892,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const [range,setRange]=useState({s:YEAR,e:YEAR+1});         // two years by default; "load more" extends
   const [act,setAct]=useState("select");                      // calendar interaction mode: select | draw | inspect | erase
   const [draw,setDraw]=useState(null);                        // {startStr,endStr,y,m}
+  const [winPrev,setWinPrev]=useState(null);                  // live move/resize preview: {dates:[...],hideId} — local, commits on pointer-up
   const [focusY,setFocusY]=useState(YEAR);                    // mobile focus year
   const cov=useMemo(()=>layerCoverage(layers,range.s,range.e+1),[layers,range.s,range.e]);
   const focusCov=useMemo(()=>layerCoverage(layers,focusY-1,focusY+1),[layers,focusY]);
@@ -1922,12 +1924,13 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const pt=e=>e.touches?e.touches[0]:e;
   function listen(move,up){const m=e=>move(pt(e)),u=e=>{window.removeEventListener("pointermove",m);window.removeEventListener("pointerup",u);up(pt(e));};
     window.addEventListener("pointermove",m);window.addEventListener("pointerup",u);}
-  // drag a window's end handle to extend / collapse on the run
+  // drag a window's handle to extend / collapse — previews locally, commits once on release
   function handleResize(e,which,w){
-    e.preventDefault();const start=w.dates[0],end=w.dates[w.dates.length-1];let lastD=null;
+    e.preventDefault();const start=w.dates[0],end=w.dates[w.dates.length-1];let lastD=null,cur=w.dates.slice();
     listen(p=>{const d=nearestDate(p.clientX,p.clientY);if(!d||d===lastD)return;lastD=d;
       let ns=start,ne=end;if(which==="end")ne=d<start?start:d;else ns=d>end?end:d;
-      const dates=daysBetween(ns,ne);if(dates.length)updWindow(w.id,x=>({...x,dates}));},()=>{});
+      cur=daysBetween(ns,ne);if(cur.length)setWinPrev({dates:cur,hideId:w.id});},
+      ()=>{if(cur.length)updWindow(w.id,x=>({...x,dates:cur}));setWinPrev(null);});
   }
   // pointer-drag gestures — wired only in draw / erase modes (select & inspect are taps; scrolling stays free)
   function cellDown(e,str,y,m){
@@ -1940,9 +1943,10 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     }
     // draw mode: existing window → drag moves it; trip → drag moves it; empty → draw a new window
     const w=windowAt(str);
-    if(w){setSel({kind:"window",id:w.id});const orig=w.dates.slice();let lastD=0;
+    if(w){setSel({kind:"window",id:w.id});const orig=w.dates.slice();let lastD=0,cur=orig;
       listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));if(delta===lastD)return;lastD=delta;
-        updWindow(w.id,x=>({...x,dates:shiftDates(orig,delta)}));},()=>{});
+        cur=shiftDates(orig,delta);setWinPrev({dates:cur,hideId:w.id});},
+        ()=>{updWindow(w.id,x=>({...x,dates:cur}));setWinPrev(null);});
       return;}
     const t=tripAt(str);
     if(t){setSel({kind:"trip",id:t.id});const f0=t.from,t0=t.to;
@@ -1962,9 +1966,12 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const stp=sel&&sel.kind==="trip"?state.trips.find(t=>t.id===sel.id):null;
   const swin=sel&&sel.kind==="window"?(state.windows||[]).find(w=>w.id===sel.id):null;
   const srDates=sr?new Set(sr.footprint.dates):null;
-  const swinDates=swin?new Set(swin.dates):null;
+  const swinDates=swin&&!winPrev?new Set(swin.dates):null;   // the live preview replaces the static selection outline
   const swinStart=swin?swin.dates[0]:null,swinEnd=swin?swin.dates[swin.dates.length-1]:null;   // windows resize on the calendar
   const stpDates=stp?(()=>{const s=new Set();let d=pd(stp.from);const t=pd(stp.to);while(d<=t){s.add(ds(d));d=ad(d,1);}return s;})():null;
+  // per-month subset of the live move/resize preview (null elsewhere → those months skip re-render via memo)
+  const hideWinId=winPrev?winPrev.hideId:null;
+  const winPrevSetFor=(y,m)=>{if(!winPrev)return null;let s=null;for(const d of winPrev.dates){const dt=pd(d);if(dt.getFullYear()===y&&dt.getMonth()===m)(s=s||new Set()).add(d);}return s;};
   const items=[];
   if(mode==="cal"){for(let y=range.s;y<=range.e;y++){const ms=[];for(let mm=0;mm<12;mm++){if(y<YEAR||(y===YEAR&&mm<START_M))continue;ms.push(mm);}if(!ms.length)continue;items.push({h:`${y}`});for(const mm of ms)items.push({y,m:mm});}}
   else{for(let y=range.s;y<=range.e;y++){items.push({h:`${y}–${String((y+1)%100).padStart(2,"0")} school year`});
@@ -2027,7 +2034,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   if(mobile){
     const fM=selected,fld=footprint.loadYM[`${focusY}-${fM}`]||{conf:0,win:0},ftint=pressureTint(fld.conf+fld.win,ceiling);
     const fctx={byDay:footprint.byDay,famBy:footprint.famBy,lockBy:footprint.lockBy,winBy:footprint.winBy,layerCov:focusCov,tint:ftint,
-      drawSet:draw&&draw.y===focusY&&draw.m===fM?drawSet:null,selReqDates:srDates,selWinDates:swinDates,selTripDates:stpDates,preview};
+      drawSet:draw&&draw.y===focusY&&draw.m===fM?drawSet:null,winPrevSet:winPrevSetFor(focusY,fM),hideWinId,selReqDates:srDates,selWinDates:swinDates,selTripDates:stpDates,preview};
     const fg=monthGrid(focusY,fM);
     const dow=<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
       {"MTWTFSS".split("").map((c,i)=><div key={i} style={{textAlign:"center",fontSize:9.5,fontWeight:700,color:C.mute}}>{c}</div>)}</div>;
@@ -2096,7 +2103,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
           ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:13,fontWeight:900,color:C.ink}}>{it.h}</div>
           : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
               selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}
-              tool={dragMode?act:null} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selWinDates={swinDates} selTripDates={stpDates} preview={preview}
+              tool={dragMode?act:null} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} winPrevSet={winPrevSetFor(it.y,it.m)} hideWinId={hideWinId} selReqDates={srDates} selWinDates={swinDates} selTripDates={stpDates} preview={preview}
               onCellDown={cellDown} onTap={tapMode?tapHandler:undefined}
               selStart={swinStart} selEnd={swinEnd} onHandle={(e,which)=>swin&&handleResize(e,which,swin)}/>)}
         <div style={{textAlign:"center",marginTop:6}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
