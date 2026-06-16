@@ -215,6 +215,7 @@ function seedState(){
       {month:5,shifts:2},{month:6,shifts:2},{month:7,shifts:4},{month:8,shifts:6},
       {month:9,shifts:6},{month:10,shifts:6},{month:11,shifts:2},{month:12,shifts:4},
     ],
+    curves:{},   // per-year overrides; absent years fall back to the curve above
   };
   // Lydia's confirmed S-PHY shifts, imported from her work calendar → Boston home site.
   // night = overnight starts (10p/11p); everything else = day. Past dates feed booked/floor.
@@ -262,13 +263,15 @@ const isDateArr=a=>Array.isArray(a)&&a.length>0&&a.every(d=>typeof d==="string"&
 const numOr=(v,d)=>Number.isFinite(+v)?+v:d;
 function sanitizePace(p,def){
   if(!p||typeof p!=="object")return def;
-  const src=Array.isArray(p.curve)?p.curve:[];
-  const curve=Array.from({length:12},(_,m)=>{
-    const sh=+((src[m]||{}).shifts);
-    return {month:m+1,shifts:Number.isFinite(sh)?Math.max(0,Math.min(30,Math.round(sh))):def.curve[m].shifts};
+  const cleanCurve=(src,fb)=>Array.from({length:12},(_,m)=>{
+    const sh=+(((Array.isArray(src)?src:[])[m]||{}).shifts);
+    return {month:m+1,shifts:Number.isFinite(sh)?Math.max(0,Math.min(30,Math.round(sh))):(fb?fb[m].shifts:0)};
   });
+  const curve=cleanCurve(p.curve,def.curve);
+  const curves={};                                    // per-year overrides (year → 12-month curve)
+  if(p.curves&&typeof p.curves==="object")for(const y of Object.keys(p.curves))if(/^\d{4}$/.test(y))curves[y]=cleanCurve(p.curves[y],curve);
   const pc=+p.pressureCeiling;
-  return {pressureCeiling:Number.isFinite(pc)&&pc>=1?Math.min(30,Math.round(pc)):def.pressureCeiling,curve};
+  return {pressureCeiling:Number.isFinite(pc)&&pc>=1?Math.min(30,Math.round(pc)):def.pressureCeiling,curve,curves};
 }
 function sanitizeState(obj){
   try{
@@ -532,22 +535,27 @@ function pressureTint(load,ceil){
 const PRESS_RAMP=["var(--press-1)","var(--press-2)","var(--press-3)","var(--press-4)"];
 
 /* §4.4 the curve is now SHIFTS per month; dollars extrapolate as shifts × typicalShiftPay.
-   annualTarget$ is derived (no longer a stored dial). Shares = each month's slice of the year. */
-const monthShifts=(pace,m)=>pace.curve[m].shifts||0;
-const totalShifts=pace=>pace.curve.reduce((a,m)=>a+(m.shifts||0),0);
-const annualTargetOf=(pace,tsp)=>totalShifts(pace)*tsp.value;
-function curveShares(pace){
-  const tot=totalShifts(pace);
-  return pace.curve.map(m=>tot>0?(m.shifts||0)/tot:1/12);
+   annualTarget$ is derived (no longer a stored dial). Shares = each month's slice of the year.
+   Per-year: pace.curves[year] overrides the default pace.curve; for YEAR the pre-floor
+   months (Jan–May 2026) are zeroed — no data there, so they don't skew the projection. */
+const curveFor=(pace,year)=>{const b=(pace.curves&&pace.curves[year])||pace.curve;
+  return (year===YEAR&&START_M>0)?b.map((m,i)=>i<START_M?{...m,shifts:0}:m):b;};
+const monthShifts=(pace,m,year=YEAR)=>curveFor(pace,year)[m].shifts||0;
+const totalShifts=(pace,year=YEAR)=>curveFor(pace,year).reduce((a,m)=>a+(m.shifts||0),0);
+const annualTargetOf=(pace,tsp,year=YEAR)=>totalShifts(pace,year)*tsp.value;
+function curveShares(pace,year=YEAR){
+  const tot=totalShifts(pace,year);
+  return curveFor(pace,year).map(m=>tot>0?(m.shifts||0)/tot:1/12);
 }
-function monthQuota(pace,monthIdx,tsp){
-  const q=monthShifts(pace,monthIdx);                 // the curve IS the quota now (exact count)
+function monthQuota(pace,monthIdx,tsp,year=YEAR){
+  const q=monthShifts(pace,monthIdx,year);            // the curve IS the quota now (exact count)
   const monthTarget$=q*tsp.value;                     // $ extrapolated → estimate
-  return {monthTarget$,quota:known(q),quota$:est(monthTarget$,tsp.assumptions),shares:curveShares(pace)};
+  return {monthTarget$,quota:known(q),quota$:est(monthTarget$,tsp.assumptions),shares:curveShares(pace,year)};
 }
 /* fraction of annual pace expected to have elapsed by `date` */
 function curveCumulativeFraction(pace,date){
-  const shares=curveShares(pace);
+  const year=date.getFullYear();
+  const shares=curveShares(pace,year);
   const m=date.getMonth();
   let f=0;
   for(let i=0;i<12;i++){
@@ -804,13 +812,18 @@ function WhyBright({w}){
    line — months above it read hot, matching the year-strip pressure tint. */
 function PaceCurve({pace,setPace,tsp}){
   const SPX=9,MAXSH=18,H=MAXSH*SPX;                    // px per shift, bar area height
-  const shifts=pace.curve.map(m=>m.shifts||0);
+  const [year,setYear]=useState(YEAR);                 // by-year: each year has its own curve
+  const months=year===YEAR?Array.from({length:12-START_M},(_,i)=>i+START_M):Array.from({length:12},(_,i)=>i);  // 2026 floors at June
+  const shifts=curveFor(pace,year).map(m=>m.shifts||0);
   const ceiling=pace.pressureCeiling;
-  const total=shifts.reduce((a,x)=>a+x,0);
-  const annual$=total*tsp.value, avg=total/12;
+  const total=months.reduce((a,m)=>a+shifts[m],0);
+  const annual$=total*tsp.value, avg=months.length?total/months.length:0;
   const setMonthShifts=(m,val)=>{
     const v=Math.max(0,Math.min(MAXSH,Math.round(val)));
-    setPace({curve:pace.curve.map((mm,i)=>i===m?{...mm,shifts:v}:mm)});
+    let base=(pace.curves&&pace.curves[year])?pace.curves[year]:pace.curve;
+    if(year===YEAR&&START_M>0)base=base.map((mm,i)=>i<START_M?{...mm,shifts:0}:mm);   // keep pre-floor months at 0
+    const next=base.map((mm,i)=>i===m?{...mm,shifts:v}:mm);
+    setPace({curves:{...(pace.curves||{}),[year]:next}});                              // edit only this year
   };
   const setCeiling=val=>setPace({pressureCeiling:Math.max(1,Math.min(MAXSH,Math.round(val)))});
   const drag=(e,getStart,commit)=>{
@@ -821,11 +834,19 @@ function PaceCurve({pace,setPace,tsp}){
     el.addEventListener("pointermove",mv);el.addEventListener("pointerup",up);el.addEventListener("pointercancel",up);
   };
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-      <div style={{fontSize:11,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase"}}>Pace curve <span style={{fontWeight:600,textTransform:"none",color:C.mute}}>· drag months · shifts/mo</span></div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4,gap:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",alignItems:"center",gap:7}}>
+        <span style={{fontSize:11,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase"}}>Pace</span>
+        <div style={{display:"inline-flex",alignItems:"center",gap:3}}>
+          <button disabled={year<=YEAR} onClick={()=>setYear(y=>Math.max(YEAR,y-1))} style={{border:"none",background:"none",cursor:year<=YEAR?"default":"pointer",color:year<=YEAR?C.faint:C.gray,fontFamily:MONO,fontSize:14,padding:"0 2px",lineHeight:1}}>‹</button>
+          <span style={{fontSize:13,fontWeight:800,minWidth:34,textAlign:"center"}}>{year}</span>
+          <button onClick={()=>setYear(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:14,padding:"0 2px",lineHeight:1}}>›</button>
+        </div>
+        <span style={{fontSize:9.5,fontWeight:600,color:C.mute}}>drag months · shifts/mo</span>
+      </div>
       <div style={{textAlign:"right",fontSize:11,color:C.gray}}>
-        <b style={{color:C.ink,fontSize:13}}>{total}</b> shifts/yr · avg <b style={{color:C.ink}}>{avg.toFixed(1)}</b>/mo
-        <div style={{fontSize:10}}>≈ <Num e={est(annual$,tsp.assumptions)} money k/>/yr · <b style={{color:C.ink}}>{fmt$(avg*tsp.value)}</b>/mo avg</div>
+        <b style={{color:C.ink,fontSize:13}}>{total}</b> shifts{year===YEAR?" (Jun–Dec)":"/yr"} · avg <b style={{color:C.ink}}>{avg.toFixed(1)}</b>/mo
+        <div style={{fontSize:10}}>≈ <Num e={est(annual$,tsp.assumptions)} money k/> · <b style={{color:C.ink}}>{fmt$(avg*tsp.value)}</b>/mo avg</div>
         <div style={{fontSize:9.5,color:C.mute}}>at <Num e={tsp} money/>/shift avg rate</div>
       </div>
     </div>
@@ -837,9 +858,9 @@ function PaceCurve({pace,setPace,tsp}){
         <div style={{position:"absolute",left:0,right:0,top:6,borderTop:`1.5px dashed ${C.gray}`}}/>
         <span style={{position:"absolute",right:0,top:-3,fontSize:8,fontWeight:700,color:C.pressHot,background:C.panel2,padding:"0 2px"}}>ceil {ceiling}</span>
       </div>
-      {MON.map((mn,m)=>{
-        const sh=shifts[m],h=Math.max(2,Math.min(H,sh*SPX)),isNow=m===TODAY.getMonth(),hot=sh>ceiling;
-        return <div key={m} onPointerDown={e=>drag(e,()=>shifts[m],v=>setMonthShifts(m,v))} title={`${MONL[m]}: ${sh} shifts ≈ ${fmt$(sh*tsp.value)} — drag`}
+      {months.map(m=>{
+        const sh=shifts[m],h=Math.max(2,Math.min(H,sh*SPX)),isNow=year===YEAR&&m===TODAY.getMonth(),hot=sh>ceiling;
+        return <div key={m} onPointerDown={e=>drag(e,()=>shifts[m],v=>setMonthShifts(m,v))} title={`${MONL[m]} ${year}: ${sh} shifts ≈ ${fmt$(sh*tsp.value)} — drag`}
           style={{flex:1,height:H,display:"flex",flexDirection:"column",justifyContent:"flex-end",alignItems:"center",
             cursor:"ns-resize",touchAction:"none"}}>
           <div style={{fontSize:8.5,fontWeight:700,color:hot?C.pressHot:(sh?C.gray:C.mute),marginBottom:1}}>{sh}</div>
@@ -849,7 +870,7 @@ function PaceCurve({pace,setPace,tsp}){
       })}
     </div>
     <div style={{display:"flex",gap:2,marginTop:3}}>
-      {MON.map((mn,m)=><div key={m} style={{flex:1,textAlign:"center",fontSize:8,fontWeight:700,color:m===TODAY.getMonth()?C.ink:C.mute}}>{mn[0]}</div>)}
+      {months.map(m=><div key={m} style={{flex:1,textAlign:"center",fontSize:8,fontWeight:700,color:(year===YEAR&&m===TODAY.getMonth())?C.ink:C.mute}}>{MON[m][0]}</div>)}
     </div>
   </div>;
 }
