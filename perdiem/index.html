@@ -1115,10 +1115,10 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
               background:w.type===c.id?C.ink:"transparent",color:w.type===c.id?C.bg:C.gray}}>{c.label}</button>)}
         </div>
         {w.existing
-          ? <><Tag bg={C.softInfo} col={C.blue}>requested · {ST_LABEL[w.existing.state]||w.existing.state}</Tag>
-              {w.existing.state==="candidate"&&<><Btn small kind="good" onClick={()=>submitOne(w.existing)}>submit →</Btn>
+          ? <><Tag bg={C.softInfo} col={C.blue}>{ST_LABEL[w.existing.state]||w.existing.state}</Tag>
+              {w.existing.state==="candidate"&&<><Btn small kind="good" onClick={()=>submitOne(w.existing)}>mark requested →</Btn>
               <Btn small kind="danger" onClick={()=>removeReq(w.existing.id)}>remove</Btn></>}</>
-          : !w.closed&&<><Btn small kind="prim" onClick={()=>requestCard(win,w)}>request</Btn>
+          : !w.closed&&<><Btn small kind="prim" onClick={()=>requestCard(win,w)}>draft</Btn>
               <Btn small onClick={()=>setCreating({w,win})}>compose…</Btn></>}
         <span style={{marginLeft:"auto"}}/>
         <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why"}</Btn>
@@ -1156,11 +1156,11 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
       </div>
       {!wcol&&windowCards(win,state,types,tsp).map(w=>cardRow(win,w))}
       {!wcol&&drafts.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"7px 9px",border:`1px dashed ${C.line}`,borderRadius:6,flexWrap:"wrap"}}>
-        <span style={{fontSize:10.5,fontWeight:700,color:C.gray}}>request in order:</span>
+        <span style={{fontSize:10.5,fontWeight:700,color:C.gray}}>mark requested, in deadline order:</span>
         {drafts.map((r,i)=><span key={r.id} style={{fontSize:10,fontWeight:700,color:C.gray}}>
           {i>0?"→ ":""}{(siteById[r.siteId]||{}).name} <span style={{color:C.mute}}>by {md(r.dueBy)}</span></span>)}
         <span style={{marginLeft:"auto"}}/>
-        <Btn small kind="prim" onClick={()=>submitInOrder(win)}>submit all →</Btn>
+        <Btn small kind="prim" onClick={()=>submitInOrder(win)}>mark all requested →</Btn>
       </div>}
     </div>;
   };
@@ -1323,7 +1323,7 @@ const dateRuns=dates=>{const s=[...dates].sort();const runs=[];
 const fmtRun=r=>r.from===r.to?md(r.from)
   :`${md(r.from)}–${pd(r.from).getMonth()===pd(r.to).getMonth()?pd(r.to).getDate():md(r.to)}`;
 const ST_COL={candidate:C.gray,pending:C.blue,override:C.pressHot,confirmed:C.green,rejected:C.red,expired:C.mute};
-const ST_LABEL={candidate:"draft",pending:"submitted",override:"negotiating",confirmed:"booked",rejected:"rejected",expired:"expired"};
+const ST_LABEL={candidate:"draft",pending:"requested",override:"negotiating",confirmed:"booked",rejected:"rejected",expired:"expired"};
 function Pending({state,setState,tsp}){
   const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
   const [note,setNote]=useState(null);                 // transient booking-conflict notice
@@ -1411,7 +1411,7 @@ function Pending({state,setState,tsp}){
         <span style={{marginLeft:"auto",fontSize:10,color:C.mute}}>dismiss ✕</span></div>}
 
       {/* ── DRAFTS ── */}
-      <Head title="Drafts" n={candidates.length} sub="drafts to submit · deadline chain"/>
+      <Head title="Drafts" n={candidates.length} sub="planned · mark requested when you ask the site · deadline chain"/>
       {candidates.length===0&&<Empty t="No drafts yet — create one on the calendar."/>}
       {candidates.map(r=>{
         const press=requestPressure(r),notOpen=TODAY<pd(r.opens),chain=chainFor(r);
@@ -1432,7 +1432,7 @@ function Pending({state,setState,tsp}){
               : <Tag bg={C.softGood} col={C.green}>{chain.slack}d slack</Tag>}
           </div>}
           <div style={{display:"flex",gap:6,marginTop:8}}>
-            <Btn small kind="prim" onClick={()=>submit(r)}>submit</Btn>
+            <Btn small kind="prim" onClick={()=>submit(r)}>mark requested →</Btn>
             <Btn small kind="danger" onClick={()=>discard(r.id)}>discard</Btn>
           </div>
         </RowCard>;
@@ -1444,7 +1444,7 @@ function Pending({state,setState,tsp}){
       {bookedRuns(confirmedUp).map((run,i)=><RunRow key={i} run={run}/>)}
 
       {/* ── SUBMITTED (awaiting + negotiating) ── */}
-      <div style={{marginTop:18}}><Head title="Submitted" n={inflight.length} sub="awaiting the site · accept / decline / negotiate"/></div>
+      <div style={{marginTop:18}}><Head title="Requested" n={inflight.length} sub="awaiting the site · accept / decline / negotiate"/></div>
       {inflight.length===0&&<Empty t="Nothing out for response."/>}
       {inflight.map(r=>{
         const wait=responseWait(r),neg=r.state==="override";
@@ -1800,7 +1800,7 @@ function dayVisual(d,ctx){
   const prev=!!(ctx.preview&&ctx.preview.set&&ctx.preview.set.has(str));   // a trip drag is hovering this day
   if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
   const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
-  const title=`${str}${conf?` · ${conf.site.name} ${shiftLabel(conf.type)}`:""}${neg?` · negotiating ${neg.site.name}`:""}${pend?` · submitted ${pend.site.name}`:""}${cand?` · draft ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
+  const title=`${str}${conf?` · ${conf.site.name} ${shiftLabel(conf.type)}`:""}${neg?` · negotiating ${neg.site.name}`:""}${pend?` · requested ${pend.site.name}`:""}${cand?` · draft ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
   return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,win,selWin,cost,bg,border,inner,drawing,inSel,inTrip,prev,prevColor:ctx.preview&&ctx.preview.color,title};
 }
 function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandle}){
@@ -2170,7 +2170,7 @@ const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignIt
   <LegDot bg={SHIFT_COL.day}>day booked</LegDot>
   <LegDot bg={SHIFT_COL.night}>night booked</LegDot>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:OVERRIDE_COL.day,border:`1.5px dashed ${SHIFT_COL.day}`}}/>negotiating</span>
-  <LegDot ring={C.ink}>submitted</LegDot>
+  <LegDot ring={C.ink}>requested</LegDot>
   <LegDot dotted>draft</LegDot>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:C.blockTrip,border:`1px solid ${C.ocean}`}}/>trip</span>
   <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,backgroundImage:`repeating-linear-gradient(135deg,${C.pressHot} 0 1.5px,transparent 1.5px 5px)`,border:`1px solid ${C.line}`}}/>family-time cost</span>
