@@ -1534,6 +1534,21 @@ function useFootprint(state){
     return {byDay,famBy,lockBy,perYM,loadYM:loadByYM(state)};
   },[state]);
 }
+/* does one layer cover a single date? mirrors layerCoverage's future-year inference.
+   returns {label,inferred} for the matching range, or null. visibility-independent. */
+function layerOnDay(layer,dateStr){
+  const d=pd(dateStr),y=d.getFullYear();
+  const yearsWith=new Set((layer.ranges||[]).map(r=>+r.from.slice(0,4)));
+  let src=y,inferred=false;
+  if(!yearsWith.has(y)){const prior=[...yearsWith].filter(yy=>yy<y).sort((a,b)=>b-a)[0];if(prior==null)return null;src=prior;inferred=true;}
+  const shift=y-src;
+  for(const r of (layer.ranges||[])){
+    if(+r.from.slice(0,4)!==src)continue;
+    const f=pd(r.from),t=pd(r.to);f.setFullYear(f.getFullYear()+shift);t.setFullYear(t.getFullYear()+shift);
+    if(d>=f&&d<=t)return {label:r.label,inferred};
+  }
+  return null;
+}
 /* layer-day coverage across a rendered year range, with future-year inference (shifted) */
 function layerCoverage(layers,startY,endY){
   // for each layer+year, the ranges to use: real if present, else shift from the latest prior year that has any
@@ -1551,7 +1566,7 @@ function layerCoverage(layers,startY,endY){
       for(const r of (l.ranges||[])){
         if(+r.from.slice(0,4)!==src)continue;
         let d=ad(pd(r.from),0);const t=pd(r.to);d.setFullYear(d.getFullYear()+shift);t.setFullYear(t.getFullYear()+shift);
-        while(d<=t){const k=ds(d);(byDayLayers[k]=byDayLayers[k]||[]).push({id:l.id,name:l.name,color:l.color,kind:l.kind,inferred});d=ad(d,1);}
+        while(d<=t){const k=ds(d);(byDayLayers[k]=byDayLayers[k]||[]).push({id:l.id,name:l.name,color:l.color,kind:l.kind,childId:l.childId,label:r.label,inferred});d=ad(d,1);}
       }
     }
   }
@@ -1673,9 +1688,42 @@ function LayerFilters({layers,setLayers,goto}){
         border:`1px dashed ${C.line}`,background:"transparent",color:C.gray}}>✎ edit</button>
   </div>;
 }
+/* day info box — what's true about a single day: holidays, which kids are off, trips, locks, shifts */
+const WDAY=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+function DayInfoCard({str,state,fp,onClose}){
+  const d=pd(str),we=d.getDay()===0||d.getDay()===6;
+  const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
+  const schools=state.layers.filter(l=>l.kind==="school");
+  const kids=schools.map(l=>{const c=layerOnDay(l,str);return {name:l.name,off:we||!!c,reason:we?"weekend":(c?c.label:null),inferred:!!(c&&c.inferred)};});
+  const events=state.layers.filter(l=>l.kind!=="school").map(l=>{const c=layerOnDay(l,str);
+    return c?{name:l.name,kind:l.kind,label:c.label,color:l.color,inferred:c.inferred}:null;}).filter(Boolean);
+  const fam=fp.famBy[str],lk=fp.lockBy[str],marks=fp.byDay[str]||[];
+  const Row=({label,children})=> <div style={{display:"flex",gap:8,padding:"4px 0",borderTop:`1px solid ${C.line2}`}}>
+    <span style={{flex:"0 0 70px",fontSize:9,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.mute,paddingTop:2}}>{label}</span>
+    <div style={{flex:1,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>{children}</div></div>;
+  const quiet=!events.length&&!fam&&!lk&&!marks.length&&kids.every(k=>!k.off);
+  return <div style={{border:`1px solid ${C.ink}`,borderRadius:8,background:C.panel,padding:"9px 12px",marginBottom:10}}>
+    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
+      <span style={{fontSize:14,fontWeight:800}}>{WDAY[d.getDay()]}</span>
+      <span style={{fontSize:12,color:C.gray}}>{MONL[d.getMonth()]} {d.getDate()}, {d.getFullYear()}</span>
+      {we&&<Tag bg={C.line2}>weekend</Tag>}
+      <span style={{marginLeft:"auto",fontSize:11,color:C.mute,cursor:"pointer"}} onClick={onClose}>close ✕</span>
+    </div>
+    {events.length>0&&<Row label="Holiday">{events.map((e,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:700}}>
+      <span style={{width:9,height:9,borderRadius:3,background:e.color||C.ink}}/>{e.label||e.name}{e.inferred&&<span style={{fontSize:9,color:C.mute,fontStyle:"italic"}}>~ inferred</span>}</span>)}</Row>}
+    {schools.length>0&&<Row label="Kids">{kids.map((k,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,
+      color:k.off?C.est:C.green}}>{k.off?"◷":"✓"} {k.name} <span style={{fontWeight:600,color:C.mute}}>{k.off?`off${k.reason?` · ${k.reason}`:""}${k.inferred?" ~":""}`:"in school"}</span></span>)}</Row>}
+    {fam&&<Row label="Trip"><span style={{fontSize:12,fontWeight:700}}>✈ {fam.name} <span style={{fontWeight:600,color:C.mute}}>· {fam.wf==="closed"?"no work":fam.wf}</span></span></Row>}
+    {lk&&<Row label="Lock"><span style={{fontSize:12,fontWeight:700,color:C.pressHot}}>🔒 {lk.label} <span style={{fontWeight:600,color:C.mute}}>· {lk.kind}</span></span></Row>}
+    {marks.length>0&&<Row label="Shifts">{marks.map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700}}>
+      <span style={{width:9,height:9,borderRadius:3,background:m.state==="smeared"?C.est:shiftCol(m.type)}}/>{m.site.name} · {shiftLabel(m.type)} <span style={{fontWeight:600,color:C.mute}}>· {m.state==="smeared"?"draft (density)":(ST_LABEL[m.state]||m.state)}</span></span>)}</Row>}
+    {quiet&&<div style={{fontSize:11,color:C.mute,fontStyle:"italic",paddingTop:4,borderTop:`1px solid ${C.line2}`}}>Nothing scheduled — kids in school, no holiday. Open for work.</div>}
+  </div>;
+}
 function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto,mobile,preview}){
   const sites=state.sites;
   const [mode,setMode]=useState("cal");
+  const [dayInfo,setDayInfo]=useState(null);                  // date string of the inspected day
   const [range,setRange]=useState({s:YEAR,e:YEAR+2});
   const [tool,setTool]=useState("edit");                      // edit (direct: draw/move/select/resize) | eraser
   const [drawSiteId,setDrawSiteId]=useState(sites[0]&&sites[0].id);
@@ -1699,7 +1747,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const editableAt=str=>state.requests.find(r=>EDITABLE.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));
   const occupantAt=str=>state.requests.find(r=>OCCUPY.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));  // any draft or committed shift
   const tripAt=str=>state.trips.find(t=>placed(t)&&str>=t.from&&str<=t.to);
-  const tapSelect=str=>{const r=occupantAt(str);if(r){setSel({kind:"req",id:r.id});return;}const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);};  // candidates edit · pending/confirmed inspect (read-only)
+  const tapSelect=str=>{setDayInfo(str);const r=occupantAt(str);if(r){setSel({kind:"req",id:r.id});return;}const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);};  // open the day box · candidates edit · pending/confirmed inspect
   const dayClosed=str=>state.trips.some(t=>placed(t)&&t.workFactor==="closed"&&str>=t.from&&str<=t.to);
   const pt=e=>e.touches?e.touches[0]:e;
   function listen(move,up){const m=e=>move(pt(e)),u=e=>{window.removeEventListener("pointermove",m);window.removeEventListener("pointerup",u);up(pt(e));};
@@ -1714,6 +1762,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   }
   function cellDown(e,str,y,m){
     e.preventDefault();
+    setDayInfo(str);                                       // touching a day (even to draw) opens its info box
     if(tool==="eraser"){                                   // drag to erase
       const done=new Set();
       const erase=d=>{if(!d||done.has(d))return;done.add(d);const r=editableAt(d);if(!r)return;
@@ -1767,6 +1816,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
         {siteMenu(drawSite).map(m=><option key={m.shift} value={m.shift}>{shiftLabel(m.shift)}</option>)}</select>
     </div>}
   </div>;
+  const dayInfoEl=dayInfo?<DayInfoCard str={dayInfo} state={state} fp={footprint} onClose={()=>setDayInfo(null)}/>:null;
   const editBars=<>
     {sr&&sr.state==="candidate"&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
       <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{shiftLabel(sr.shiftType)} · {sr.footprint.dates.length}d · draft</span></div>
@@ -1853,6 +1903,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
           </div>
           {editing&&<div style={{marginBottom:7}}>{toolPalette}</div>}
           {editing&&editBars}
+          {dayInfoEl}
           {dow}
           <div style={{touchAction:editing?"none":"auto"}}>{grid(editing)}</div>
           <FootLegend/>
@@ -1876,6 +1927,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     </div>
     <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
     {editing&&editBars}
+    {dayInfoEl&&<div style={{padding:"8px 12px 0"}}>{dayInfoEl}</div>}
     {/* browse vs edit: tools are gated behind edit so dragging doesn't fight browsing */}
     <div ref={scrollRef} onScroll={onScroll} style={{maxHeight:380,overflow:"auto",padding:"8px 12px"}}>
       <div style={{minWidth:width}}>
