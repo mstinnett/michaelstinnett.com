@@ -1077,29 +1077,30 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   const winSorted=(state.windows||[]).slice().sort((a,b)=>a.dates[0].localeCompare(b.dates[0]));
   const cardRow=(win,w)=>{
     const isOpen=open===w.id,key=`${win.id}-${w.site.id}`;
+    const stL={fontSize:9,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase"};
+    const stV={fontSize:14,fontWeight:700,color:C.ink};
     return <div key={w.id} style={{...glowStyle(w.bucket),borderRadius:7,marginBottom:6,transition:"box-shadow .2s"}}>
-      <div style={{display:"flex",alignItems:"stretch"}}>
-        <div style={{flex:"1 1 200px",minWidth:0,padding:"9px 11px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-            <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
-            <Tag>{REACH_LABEL[w.site.reach]}</Tag>
-            {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
-            {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
-            {w.closed&&<Tag bg={C.line2} col={C.mute}>closed</Tag>}
-            {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
-          </div>
-          <div style={{fontSize:11.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.site.note}</div>
-          <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
-            {w.perKid.map(k=><span key={k.childId} title={`${k.name}: ${k.count} of ${k.of} weekdays out of school`}
-              style={{fontSize:9.5,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
-          </div>
+      <div style={{padding:"9px 11px"}}>
+        {/* title line — site + where, then the details stack below (wraps clean on mobile) */}
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
+          <Tag>{REACH_LABEL[w.site.reach]}</Tag>
+          {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
+          {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
+          {w.closed&&<Tag bg={C.line2} col={C.mute}>closed</Tag>}
+          {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
         </div>
-        <div style={{display:"flex",borderLeft:`1px solid ${C.line2}`}}>
-          <Fact label="$/hr ER"><Num e={w.money.erPerHr} money/></Fact>
-          <Fact label="$/hr away"><Num e={w.money.awayPerHr} money/></Fact>
-          <Fact label="kid-hrs"><span title={`${w.kidHrs.hours} kid-awake hours (7a–8p) away across this window · ${w.site.name} travel`}>{w.kidHrs.hours}h</span></Fact>
-          <Fact label="close"><span style={{color:w.closing>0.7?C.est:C.gray}}>{Math.round(w.closing*100)}%</span></Fact>
+        {w.site.note&&<div style={{fontSize:11.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.site.note}</div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:"5px 18px",marginTop:7}}>
+          <div><div style={stL}>$/hr ER</div><div style={stV}><Num e={w.money.erPerHr} money/></div></div>
+          <div><div style={stL}>$/hr away</div><div style={stV}><Num e={w.money.awayPerHr} money/></div></div>
+          <div><div style={stL}>kid-hrs</div><div style={{...stV,color:C.gray}} title={`${w.kidHrs.hours} kid-awake hours (7a–8p) away across this window`}>{w.kidHrs.hours}h</div></div>
+          <div><div style={stL}>close</div><div style={{...stV,color:w.closing>0.7?C.est:C.gray}}>{Math.round(w.closing*100)}%</div></div>
         </div>
+        {w.perKid.length>0&&<div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}>
+          {w.perKid.map(k=><span key={k.childId} title={`${k.name}: ${k.count} of ${k.of} weekdays out of school`}
+            style={{fontSize:9.5,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
+        </div>}
       </div>
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 11px",borderTop:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
         <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden",flexWrap:"wrap"}}>
@@ -1921,8 +1922,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       const dates=daysBetween(ns,ne);if(dates.length)updWindow(w.id,x=>({...x,dates}));},()=>{});
   }
   function cellDown(e,str,y,m){
-    e.preventDefault();
-    setDayInfo(str);                                       // touching a day (even to draw) opens its info box
+    e.preventDefault();                                    // edit gestures don't pop the day-info box (browse taps do)
     if(tool==="eraser"){                                   // drag to trim the drawn window
       const done=new Set();
       const erase=d=>{if(!d||done.has(d))return;done.add(d);const w=windowAt(d);if(!w)return;
@@ -2053,7 +2053,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
               : <Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit</Btn>}</span>
           </div>
           {editing&&<div style={{marginBottom:7}}>{toolPalette}</div>}
-          {editing&&editBars}
+          {(editing||sel)&&editBars}
           {dayInfoEl}
           {dow}
           <div style={{touchAction:editing?"none":"auto"}}>{grid(editing)}</div>
@@ -2077,7 +2077,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       </div>
     </div>
     <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
-    {editing&&editBars}
+    {(editing||sel)&&editBars}
     {dayInfoEl&&<div style={{padding:"8px 12px 0"}}>{dayInfoEl}</div>}
     {/* browse vs edit: tools are gated behind edit so dragging doesn't fight browsing */}
     <div ref={scrollRef} style={{maxHeight:380,overflow:"auto",padding:"8px 12px"}}>
