@@ -369,10 +369,10 @@ const reqMaxDate=r=>reqDates(r).reduce((m,d)=>d>m?d:m,reqDates(r)[0]||"");
 const isPastReq=r=>r.state==="confirmed"&&reqMaxDate(r)<ds(TODAY);
 const EDITABLE=["candidate"];          // only candidate drafts can be drawn/nudged/erased — the calendar is a drafting space
 
-/* calendar-drawing helpers (the main verb) */
-function weekdaysBetween(a,b){
+/* calendar-drawing helpers (the main verb) — every day in the span, weekends included */
+function daysBetween(a,b){
   let lo=a<b?a:b,hi=a<b?b:a,out=[],d=pd(lo),t=pd(hi);
-  while(d<=t){if(d.getDay()!==0&&d.getDay()!==6)out.push(ds(d));d=ad(d,1);}
+  while(d<=t){out.push(ds(d));d=ad(d,1);}
   return out;
 }
 const shiftDates=(dates,delta)=>dates.map(x=>ds(ad(pd(x),delta))).sort();
@@ -683,10 +683,10 @@ function buildWindows(state,monthIdx,types,tsp){
       const closed=TODAY>pd(dueBy)||!!closedTrip(trips,wk.dates);   // past due, or a closed (international) trip
       const notOpen=TODAY<pd(opens);
       const lockHit=wk.dates.filter(d=>locks.some(l=>l.date===ds(d)));
-      const weekdayStrs=wk.dates.filter(d=>d.getDay()!==0&&d.getDay()!==6).map(ds);
-      const perKid=kidDaysOut(weekdayStrs,layers);
-      const kidHrs=kidHoursCost(weekdayStrs,site);     // family-time cost if you worked this week here
-      raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,weekdayStrs,perKid,kidHrs,
+      const dayStrs=wk.dates.map(ds);                   // all days of the week — weekends are workable
+      const perKid=kidDaysOut(dayStrs,layers);
+      const kidHrs=kidHoursCost(dayStrs,site);         // family-time cost if you worked this week here
+      raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,dayStrs,perKid,kidHrs,
         closing,closed,notOpen,lockHit,
         existing:requests.find(r=>r.siteId===site.id&&r.footprint&&
           (r.footprint.kind==="pinned"?r.footprint.dates:r.footprint.candidates).some(d=>pd(d).getMonth()===monthIdx&&wk.dates.some(wd=>ds(wd)===d)))});
@@ -983,9 +983,9 @@ const Fact=({label,children})=> <div style={{padding:"9px 11px",textAlign:"right
 function CreateModal({w,state,tsp,onClose,onCreate}){
   const byWindow=w.site.submissionType==="by_window";
   const [type,setType]=useState(w.type);
-  const weekdays=w.week.dates.filter(d=>d.getDay()!==0&&d.getDay()!==6).map(ds);
+  const days=w.week.dates.map(ds);                      // weekends selectable too
   const [take,setTake]=useState(2);
-  const [picked,setPicked]=useState(byWindow?weekdays:[weekdays[0]]);
+  const [picked,setPicked]=useState(byWindow?days:[days[0]]);
   const toggle=d=>setPicked(p=>p.includes(d)?p.filter(x=>x!==d):[...p,d]);
   const [travelOn,setTravelOn]=useState(false);
   const [tv,setTv]=useState(()=>travelOf(w.site));     // per-trip travel override (else the site default)
@@ -1009,7 +1009,7 @@ function CreateModal({w,state,tsp,onClose,onCreate}){
         padding:"5px 14px",border:"none",cursor:"pointer",background:type===t?C.ink:"transparent",color:type===t?C.bg:C.gray}}>{t}</button>)}
     </div>
     <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
-      {weekdays.map(d=>{const on=picked.includes(d);return <button key={d} onClick={()=>toggle(d)}
+      {days.map(d=>{const on=picked.includes(d);return <button key={d} onClick={()=>toggle(d)}
         style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"6px 9px",borderRadius:5,cursor:"pointer",
           border:`1px solid ${on?C.ink:C.line}`,background:on?C.ink:C.panel,color:on?C.bg:C.gray}}>
         {MON[pd(d).getMonth()]} {pd(d).getDate()}</button>;})}
@@ -1603,7 +1603,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     e.preventDefault();const start=reqMinDate(r),end=reqMaxDate(r);
     listen(p=>{const d=nearestDate(p.clientX,p.clientY);if(!d)return;
       let ns=start,ne=end;if(which==="end")ne=d<start?start:d;else ns=d>end?end:d;
-      const dates=weekdaysBetween(ns,ne);if(dates.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates}}));},
+      const dates=daysBetween(ns,ne);if(dates.length)setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates}}));},
       ()=>setReqs(rs=>mergeCandidates(rs)));
   }
   function cellDown(e,str,y,m){
@@ -1631,10 +1631,10 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     if(dayClosed(str)){setSel(null);return;}
     setSel(null);setDraw({startStr:str,endStr:str,y,m});
     listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(dd){const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}},
-      ()=>setDraw(d=>{if(d){const dates=weekdaysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));const site=sites.find(s=>s.id===drawSiteId)||sites[0];
+      ()=>setDraw(d=>{if(d){const dates=daysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));const site=sites.find(s=>s.id===drawSiteId)||sites[0];
         if(dates.length&&site){const rr=makeWindow(site,drawType,dates);addReq(rr);setSel({kind:"req",id:rr.id});}}return null;}));
   }
-  const drawSet=draw?new Set(weekdaysBetween(draw.startStr,draw.endStr)):null;
+  const drawSet=draw?new Set(daysBetween(draw.startStr,draw.endStr)):null;
   const sr=sel&&sel.kind==="req"?state.requests.find(r=>r.id===sel.id):null;
   const stp=sel&&sel.kind==="trip"?state.trips.find(t=>t.id===sel.id):null;
   const srDates=sr?new Set(sr.footprint.dates):null;
@@ -1667,7 +1667,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,-1)}}))}>◀</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,1)}}))}>▶</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();if(ds2.length>1)ds2.pop();return {...x,footprint:{kind:"pinned",dates:ds2}};})}>− day</Btn>
-      <Btn small onClick={()=>{setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();let n=ad(pd(ds2[ds2.length-1]),1);while(n.getDay()===0||n.getDay()===6)n=ad(n,1);ds2.push(ds(n));return {...x,footprint:{kind:"pinned",dates:ds2}};});setReqs(rs=>mergeCandidates(rs));}}>+ day</Btn>
+      <Btn small onClick={()=>{setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();ds2.push(ds(ad(pd(ds2[ds2.length-1]),1)));return {...x,footprint:{kind:"pinned",dates:ds2}};});setReqs(rs=>mergeCandidates(rs));}}>+ day</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,shiftType:x.shiftType==="day"?"night":"day"}))}>{sr.shiftType==="day"?"→night":"→day"}</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>{const i=sites.findIndex(s=>s.id===x.siteId);return {...x,siteId:sites[(i+1)%sites.length].id};})}>site ⇄</Btn>
       {/* no submit here — the calendar is a drafting space; candidates are applied from the Pending list */}
