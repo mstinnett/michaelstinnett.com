@@ -1765,7 +1765,7 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandl
   return <div data-date={v.str} onPointerDown={tool&&tool!=="off"?e=>onCellDown(e,v.str,y,m):undefined}
     onClick={onTap?()=>onTap(v.str):undefined} title={v.title}
     style={{...base,background:v.bg,border:v.border,
-      cursor:v.closed?"not-allowed":(tool==="eraser"?"cell":"pointer"),touchAction:tool&&tool!=="off"?"none":"auto",
+      cursor:v.closed?"not-allowed":(tool==="erase"?"cell":"pointer"),touchAction:tool&&tool!=="off"?"none":"auto",
       outline:v.inSel||v.selWin?`2px solid ${C.ink}`:(v.inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:v.closed&&!v.conf&&!v.neg?0.82:1,
       display:num?"flex":"block",alignItems:"center",justifyContent:"center"}}>
     {num&&<span style={{fontSize:13,fontWeight:v.conf?800:500,color:v.conf?"var(--on-shift)":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
@@ -1885,10 +1885,9 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const [mode,setMode]=useState("cal");
   const [dayInfo,setDayInfo]=useState(null);                  // date string of the inspected day
   const [range,setRange]=useState({s:YEAR,e:YEAR+1});         // two years by default; "load more" extends
-  const [tool,setTool]=useState("edit");                      // edit (draw/move/select/resize windows) | eraser
+  const [act,setAct]=useState("select");                      // calendar interaction mode: select | draw | inspect | erase
   const [draw,setDraw]=useState(null);                        // {startStr,endStr,y,m}
   const [focusY,setFocusY]=useState(YEAR);                    // mobile focus year
-  const [editing,setEditing]=useState(false);                 // mobile edit mode (locks scroll, expands month)
   const cov=useMemo(()=>layerCoverage(layers,range.s,range.e+1),[layers,range.s,range.e]);
   const focusCov=useMemo(()=>layerCoverage(layers,focusY-1,focusY+1),[layers,focusY]);
   const onScroll=e=>{const el=e.target;if(el.scrollHeight-el.scrollTop-el.clientHeight<140)setRange(r=>({...r,e:r.e+1}));};
@@ -1908,8 +1907,13 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const windowAt=str=>(state.windows||[]).find(w=>w.dates.includes(str));
   const occupantAt=str=>state.requests.find(r=>OCCUPY.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));  // any draft or committed shift
   const tripAt=str=>state.trips.find(t=>placed(t)&&str>=t.from&&str<=t.to);
-  // the calendar's editable layer is now the WINDOW. requests are read-only here (managed from cards / Requests).
-  const tapSelect=str=>{setDayInfo(str);const w=windowAt(str);if(w){setSel({kind:"window",id:w.id});return;}const r=occupantAt(str);if(r){setSel({kind:"req",id:r.id});return;}const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);};
+  // tap behavior depends on the mode: inspect → day-info box; select → pick the window / request / trip under the day
+  const tapHandler=str=>{
+    if(act==="inspect"){setDayInfo(str);return;}
+    const w=windowAt(str);if(w){setSel({kind:"window",id:w.id});return;}
+    const occ=occupantAt(str);if(occ){setSel({kind:"req",id:occ.id});return;}
+    const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);
+  };
   const dayClosed=str=>state.trips.some(t=>placed(t)&&t.workFactor==="closed"&&str>=t.from&&str<=t.to);
   const pt=e=>e.touches?e.touches[0]:e;
   function listen(move,up){const m=e=>move(pt(e)),u=e=>{window.removeEventListener("pointermove",m);window.removeEventListener("pointerup",u);up(pt(e));};
@@ -1921,33 +1925,34 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       let ns=start,ne=end;if(which==="end")ne=d<start?start:d;else ns=d>end?end:d;
       const dates=daysBetween(ns,ne);if(dates.length)updWindow(w.id,x=>({...x,dates}));},()=>{});
   }
+  // pointer-drag gestures — wired only in draw / erase modes (select & inspect are taps; scrolling stays free)
   function cellDown(e,str,y,m){
-    e.preventDefault();                                    // edit gestures don't pop the day-info box (browse taps do)
-    if(tool==="eraser"){                                   // drag to trim the drawn window
+    e.preventDefault();
+    if(act==="erase"){                                     // drag to trim the drawn window
       const done=new Set();
       const erase=d=>{if(!d||done.has(d))return;done.add(d);const w=windowAt(d);if(!w)return;
         const left=w.dates.filter(x=>x!==d);if(left.length)updWindow(w.id,x=>({...x,dates:left}));else delWindow(w.id);};
       erase(str);listen(p=>erase(nearestDate(p.clientX,p.clientY)),()=>{});return;
     }
-    // direct manipulation (default): existing window → tap selects / drag moves; empty → draw a new window
+    // draw mode: existing window → drag moves it; trip → drag moves it; empty → draw a new window
     const w=windowAt(str);
-    if(w){setSel({kind:"window",id:w.id});const orig=w.dates.slice();let moved=false;
-      listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));if(delta!==0)moved=true;
+    if(w){setSel({kind:"window",id:w.id});const orig=w.dates.slice();
+      listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));
         updWindow(w.id,x=>({...x,dates:shiftDates(orig,delta)}));},()=>{});
       return;}
-    const occ=occupantAt(str);                          // a request with no window → read-only: select to inspect, no drag
-    if(occ){setSel({kind:"req",id:occ.id});return;}
     const t=tripAt(str);
     if(t){setSel({kind:"trip",id:t.id});const f0=t.from,t0=t.to;
       listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));
         setTrip(t.id,x=>({...x,from:ds(ad(pd(f0),delta)),to:ds(ad(pd(t0),delta)),placed:true}));},()=>{});
       return;}
-    if(dayClosed(str)){setSel(null);return;}
+    if(dayClosed(str))return;
     setSel(null);setDraw({startStr:str,endStr:str,y,m});
     listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(dd){const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}},
       ()=>setDraw(d=>{if(d){const dates=daysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));
         if(dates.length){const nw=makeBlankWindow(dates);addWindow(nw);setSel({kind:"window",id:nw.id});}}return null;}));
   }
+  const dragMode=act==="draw"||act==="erase";              // captures pointer drags (locks scroll on those cells)
+  const tapMode=act==="select"||act==="inspect";
   const drawSet=draw?new Set(daysBetween(draw.startStr,draw.endStr)):null;
   const sr=sel&&sel.kind==="req"?state.requests.find(r=>r.id===sel.id):null;
   const stp=sel&&sel.kind==="trip"?state.trips.find(t=>t.id===sel.id):null;
@@ -1961,13 +1966,15 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   else{for(let y=range.s;y<=range.e;y++){items.push({h:`${y}–${String((y+1)%100).padStart(2,"0")} school year`});
     for(const mm of [7,8,9,10,11])items.push({y,m:mm});for(const mm of [0,1,2,3,4,5,6])items.push({y:y+1,m:mm});}}
   const width=CAL_LBL+calMaxCols*(CAL_CELL+CAL_CG)+(calMaxCols/7)*CAL_WG;
-  const TOOLS=[["edit","✎ draw · move"],["eraser","⌫ erase"]];   // tap selects · drag moves · handles resize · drag empty draws
-  const toolPalette=<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-    <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
-      {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSel(null);}} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
-        padding:"4px 9px",border:"none",cursor:"pointer",background:tool===k?C.ink:"transparent",color:tool===k?C.bg:C.gray}}>{l}</button>)}
+  const MODES=[["select","☞ select"],["draw","✎ draw"],["inspect","◉ inspect"],["erase","⌫ erase"]];
+  const MODE_HINT={select:"tap a window to adjust, request or delete it",draw:"drag across days to add a window · drag a window to move it",
+    inspect:"tap a day to see what's on it",erase:"drag across a window to trim it"};
+  const modePalette=<div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+    <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:6,overflow:"hidden"}}>
+      {MODES.map(([k,l])=><button key={k} onClick={()=>{setAct(k);setSel(null);setDraw(null);}} style={{fontFamily:MONO,fontSize:11.5,fontWeight:800,
+        padding:"5px 12px",border:"none",cursor:"pointer",background:act===k?C.ink:"transparent",color:act===k?C.bg:C.gray,letterSpacing:"-0.01em"}}>{l}</button>)}
     </div>
-    {tool==="edit"&&<span style={{fontSize:9.5,color:C.mute}}>drag empty days to draw a window · site options surface below</span>}
+    <span style={{fontSize:9.5,color:C.mute}}>{MODE_HINT[act]}</span>
   </div>;
   const dayInfoEl=dayInfo?<DayInfoCard str={dayInfo} state={state} fp={footprint} onClose={()=>setDayInfo(null)}/>:null;
   const editBars=<>
@@ -2020,11 +2027,11 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     const fg=monthGrid(focusY,fM);
     const dow=<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
       {"MTWTFSS".split("").map((c,i)=><div key={i} style={{textAlign:"center",fontSize:9.5,fontWeight:700,color:C.mute}}>{c}</div>)}</div>;
-    const grid=big=><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+    const grid=()=><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
       {fg.cells.map((d,i)=>{const str=d&&ds(d);
         return <DayCell key={i} d={d} ctx={fctx} box={{width:"100%",aspectRatio:"1"}} num
-        tool={big?tool:null} onCellDown={cellDown} onTap={big?undefined:tapSelect} y={focusY} m={fM}
-        hStart={big&&str&&str===swinStart} hEnd={big&&str&&str===swinEnd} onHandle={(e,which)=>swin&&handleResize(e,which,swin)}/>;})}</div>;
+        tool={dragMode?act:null} onCellDown={cellDown} onTap={tapMode?tapHandler:undefined} y={focusY} m={fM}
+        hStart={str&&str===swinStart} hEnd={str&&str===swinEnd} onHandle={(e,which)=>swin&&handleResize(e,which,swin)}/>;})}</div>;
     return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
       <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
       <div style={{display:"flex",alignItems:"stretch"}}>
@@ -2048,15 +2055,12 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7,flexWrap:"wrap"}}>
             <span style={{fontSize:15.5,fontWeight:800}}>{MONL[fM]} {focusY}</span>
             <span style={{fontSize:10,color:fld.conf+fld.win>ceiling?C.pressHot:C.mute}}>{fld.conf}+{fld.win}/{ceiling}/mo</span>
-            <span style={{marginLeft:"auto"}}>{editing
-              ? <Btn small onClick={()=>{setEditing(false);setDraw(null);}}>done</Btn>
-              : <Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit</Btn>}</span>
           </div>
-          {editing&&<div style={{marginBottom:7}}>{toolPalette}</div>}
-          {(editing||sel)&&editBars}
+          <div style={{marginBottom:7}}>{modePalette}</div>
+          {sel&&editBars}
           {dayInfoEl}
           {dow}
-          <div style={{touchAction:editing?"none":"auto"}}>{grid(editing)}</div>
+          <div style={{touchAction:dragMode?"none":"auto"}}>{grid()}</div>
           <FootLegend/>
         </div>
       </div>
@@ -2065,9 +2069,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
 
   return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
     <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
-      {editing
-        ? <>{toolPalette}<Btn small onClick={()=>{setEditing(false);setDraw(null);}}>done</Btn></>
-        : <><span style={{fontSize:9.5,color:C.mute}}>browse · tap to select</span><Btn small kind="prim" onClick={()=>setEditing(true)}>✎ edit</Btn></>}
+      {modePalette}
       <div style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:6}}>
         <Btn small onClick={scrollToToday}>Today</Btn>
         <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
@@ -2077,7 +2079,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       </div>
     </div>
     <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
-    {(editing||sel)&&editBars}
+    {sel&&editBars}
     {dayInfoEl&&<div style={{padding:"8px 12px 0"}}>{dayInfoEl}</div>}
     {/* browse vs edit: tools are gated behind edit so dragging doesn't fight browsing */}
     <div ref={scrollRef} style={{maxHeight:380,overflow:"auto",padding:"8px 12px"}}>
@@ -2090,9 +2092,9 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
           ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:13,fontWeight:900,color:C.ink}}>{it.h}</div>
           : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
               selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}
-              tool={editing?tool:null} drawSet={editing&&draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selWinDates={swinDates} selTripDates={stpDates} preview={preview}
-              onCellDown={cellDown} onTap={editing?undefined:tapSelect}
-              selStart={editing?swinStart:null} selEnd={editing?swinEnd:null} onHandle={(e,which)=>swin&&handleResize(e,which,swin)}/>)}
+              tool={dragMode?act:null} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selWinDates={swinDates} selTripDates={stpDates} preview={preview}
+              onCellDown={cellDown} onTap={tapMode?tapHandler:undefined}
+              selStart={swinStart} selEnd={swinEnd} onHandle={(e,which)=>swin&&handleResize(e,which,swin)}/>)}
         <div style={{textAlign:"center",marginTop:6}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
           style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"4px 14px",border:`1px solid ${C.line}`,borderRadius:5,background:C.panel,color:C.gray,cursor:"pointer"}}>load more ▾</button></div>
       </div>
