@@ -433,7 +433,7 @@ function mergeCandidates(requests){
     let cur=null;
     for(const r of list){
       if(!cur){cur={...r,footprint:{kind:"pinned",dates:[...r.footprint.dates]}};continue;}
-      if(days(pd(reqMaxDate(cur)),pd(reqMinDate(r)))<=3){   // contiguous (weekend gap allowed)
+      if(days(pd(reqMaxDate(cur)),pd(reqMinDate(r)))<=1){   // truly adjacent — weekends are just another day, never bridged
         cur.footprint.dates=Array.from(new Set([...cur.footprint.dates,...r.footprint.dates])).sort();
         if(r.opens<cur.opens)cur.opens=r.opens; if(r.dueBy<cur.dueBy)cur.dueBy=r.dueBy;
       }else{out.push(cur);cur={...r,footprint:{kind:"pinned",dates:[...r.footprint.dates]}};}
