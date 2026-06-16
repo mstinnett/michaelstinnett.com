@@ -1033,6 +1033,7 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   const [drawer,setDrawer]=useState(true);
   const [sel,setSel]=useState(null);                 // {kind:"req"|"trip", id}
   const [tripDrag,setTripDrag]=useState(null);       // live drop preview while dragging a trip: {set:Set<dateStr>, color}
+  const [collapsed,setCollapsed]=useState({});       // per-month collapse of the windows list (keyed "Y-M")
   const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
   const footprint=useFootprint(state);
   const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
@@ -1119,6 +1120,48 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
       {isOpen&&<WhyBright w={w}/>}
     </div>;
   };
+  const windowBlock=win=>{
+    const cards=windowCards(win,state,types,tsp);
+    const dts=win.dates.map(pd);
+    const exp=weekExposure(dts,state.requests,siteById,tsp);
+    const wt=Number.isFinite(win.target)?win.target:win.dates.length;
+    const drafts=state.requests.filter(r=>r.windowId===win.id&&r.state==="candidate")
+      .sort((a,b)=>pd(a.dueBy)-pd(b.dueBy));
+    const range=`${md(win.dates[0])}–${md(win.dates[win.dates.length-1])}`;
+    return <div key={win.id} style={{marginBottom:12,border:`1px solid ${C.line2}`,borderRadius:9,padding:"10px 11px",background:C.panel2}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 1px 8px",flexWrap:"wrap"}}>
+        <span style={{fontSize:13,fontWeight:800,letterSpacing:"-0.01em"}}>{range}</span>
+        <span style={{fontSize:10.5,color:C.gray}}>{win.dates.length}d{wt<win.dates.length?` · work ${wt}`:""}</span>
+        <div style={{flex:1,minWidth:120,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
+          <div style={{flex:1,height:6,background:C.line2,borderRadius:3,position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,var(--faint),var(--faint) 4px,transparent 4px,transparent 7px)"}}/>
+            <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.floor$/8000*100)+"%",background:C.ink}}/>
+          </div>
+          <span style={{fontSize:9.5,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
+        </div>
+        {exp.collision&&<Tag bg={C.softWarn} col={C.red}>double-book</Tag>}
+        <span style={{marginLeft:"auto"}}/>
+        <Btn small onClick={()=>setSel({kind:"window",id:win.id})}>show ↑</Btn>
+        <Btn small kind="danger" onClick={()=>delWindow(win.id)}>delete</Btn>
+      </div>
+      {cards.map(w=>cardRow(win,w))}
+      {drafts.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"7px 9px",border:`1px dashed ${C.line}`,borderRadius:6,flexWrap:"wrap"}}>
+        <span style={{fontSize:10.5,fontWeight:700,color:C.gray}}>request in order:</span>
+        {drafts.map((r,i)=><span key={r.id} style={{fontSize:10,fontWeight:700,color:C.gray}}>
+          {i>0?"→ ":""}{(siteById[r.siteId]||{}).name} <span style={{color:C.mute}}>by {md(r.dueBy)}</span></span>)}
+        <span style={{marginLeft:"auto"}}/>
+        <Btn small kind="prim" onClick={()=>submitInOrder(win)}>submit all →</Btn>
+      </div>}
+    </div>;
+  };
+  // group windows by month; the calendar's selected month sits first, the rest run chronologically. each month collapses.
+  const selKey=`${YEAR}-${monthIdx}`;
+  const winGroups={};
+  for(const win of winSorted){const d=pd(win.dates[0]),k=`${d.getFullYear()}-${d.getMonth()}`;(winGroups[k]=winGroups[k]||[]).push(win);}
+  const winKeys=Object.keys(winGroups).sort((a,b)=>{
+    if(a===selKey)return -1;if(b===selKey)return 1;
+    const [ay,am]=a.split("-").map(Number),[by,bm]=b.split("-").map(Number);return ay-by||am-bm;});
+  const defOpen=winGroups[selKey]?selKey:winKeys[0];   // open the selected month, or the earliest if it has none
   const windowsEl=<>
     <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 2px 8px",flexWrap:"wrap"}}>
       <span style={{fontSize:15.5,fontWeight:800,letterSpacing:"-0.02em"}}>Your windows</span>
@@ -1130,39 +1173,18 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
       {BUCKETS.map(b=><span key={b} style={{display:"inline-flex",alignItems:"center",gap:4}}>
         <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{BUCKET_LABEL[b]}</span>)}
     </div>
-    {winSorted.length===0&&<div style={{fontSize:11.5,color:C.mute,fontStyle:"italic",padding:"6px 2px"}}>No windows yet — draw a span on the calendar above to surface site options.</div>}
-    {winSorted.map(win=>{
-      const cards=windowCards(win,state,types,tsp);
-      const dts=win.dates.map(pd);
-      const exp=weekExposure(dts,state.requests,siteById,tsp);
-      const wt=Number.isFinite(win.target)?win.target:win.dates.length;
-      const drafts=state.requests.filter(r=>r.windowId===win.id&&r.state==="candidate")
-        .sort((a,b)=>pd(a.dueBy)-pd(b.dueBy));
-      const range=`${md(win.dates[0])}–${md(win.dates[win.dates.length-1])}`;
-      return <div key={win.id} style={{marginBottom:18,border:`1px solid ${C.line2}`,borderRadius:9,padding:"10px 11px",background:C.panel2}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 1px 8px",flexWrap:"wrap"}}>
-          <span style={{fontSize:13,fontWeight:800,letterSpacing:"-0.01em"}}>{range}</span>
-          <span style={{fontSize:10.5,color:C.gray}}>{win.dates.length}d{wt<win.dates.length?` · work ${wt}`:""}</span>
-          <div style={{flex:1,minWidth:120,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
-            <div style={{flex:1,height:6,background:C.line2,borderRadius:3,position:"relative",overflow:"hidden"}}>
-              <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,var(--faint),var(--faint) 4px,transparent 4px,transparent 7px)"}}/>
-              <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.floor$/8000*100)+"%",background:C.ink}}/>
-            </div>
-            <span style={{fontSize:9.5,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
-          </div>
-          {exp.collision&&<Tag bg={C.softWarn} col={C.red}>double-book</Tag>}
-          <span style={{marginLeft:"auto"}}/>
-          <Btn small onClick={()=>setSel({kind:"window",id:win.id})}>show ↑</Btn>
-          <Btn small kind="danger" onClick={()=>delWindow(win.id)}>delete</Btn>
+    {winKeys.length===0&&<div style={{fontSize:11.5,color:C.mute,fontStyle:"italic",padding:"6px 2px"}}>No windows yet — draw a span on the calendar above to surface site options.</div>}
+    {winKeys.map(k=>{
+      const [ky,km]=k.split("-").map(Number),isSel=k===selKey;
+      const col=k in collapsed?collapsed[k]:k!==defOpen;   // default-open the selected (or earliest) month; others collapsed
+      return <div key={k} style={{marginBottom:12}}>
+        <div onClick={()=>setCollapsed(c=>({...c,[k]:!col}))} style={{display:"flex",alignItems:"center",gap:7,padding:"5px 3px",cursor:"pointer",borderBottom:`1px solid ${C.line2}`,marginBottom:8}}>
+          <span style={{fontSize:11,color:C.gray,width:10}}>{col?"▸":"▾"}</span>
+          <span style={{fontSize:12.5,fontWeight:800,letterSpacing:"-0.01em",color:isSel?C.ink:C.gray}}>{MONL[km]} {ky}</span>
+          {isSel&&<Tag bg={C.sel} col={C.ink}>selected</Tag>}
+          <span style={{fontSize:10.5,fontWeight:700,color:C.mute}}>{winGroups[k].length} window{winGroups[k].length>1?"s":""}</span>
         </div>
-        {cards.map(w=>cardRow(win,w))}
-        {drafts.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"7px 9px",border:`1px dashed ${C.line}`,borderRadius:6,flexWrap:"wrap"}}>
-          <span style={{fontSize:10.5,fontWeight:700,color:C.gray}}>request in order:</span>
-          {drafts.map((r,i)=><span key={r.id} style={{fontSize:10,fontWeight:700,color:C.gray}}>
-            {i>0?"→ ":""}{(siteById[r.siteId]||{}).name} <span style={{color:C.mute}}>by {md(r.dueBy)}</span></span>)}
-          <span style={{marginLeft:"auto"}}/>
-          <Btn small kind="prim" onClick={()=>submitInOrder(win)}>submit all →</Btn>
-        </div>}
+        {!col&&winGroups[k].map(windowBlock)}
       </div>;
     })}
   </>;
