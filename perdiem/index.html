@@ -261,14 +261,20 @@ function seedState(){
      state:"override",submittedOn:"2026-05-15",expectedResponseBy:"2026-06-18",rateOverride:185,
      footprint:{kind:"pinned",dates:["2026-07-21","2026-07-22","2026-07-28"]}},
     // selected to apply for → the Candidate section (a density window: work 2 of 5, dependency chain on ABQ)
-    {id:"s2",siteId:"santa_fe",shiftType:"day",opens:"2026-04-08",dueBy:"2026-06-25",
+    {id:"s2",siteId:"santa_fe",shiftType:"day",windowId:"w1",opens:"2026-04-08",dueBy:"2026-06-25",
      state:"candidate",
      footprint:{kind:"pinned",dates:["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"],target:2}},
-    {id:"s3",siteId:"gallup",shiftType:"day",opens:"2026-05-01",dueBy:"2026-07-01",
+    {id:"s3",siteId:"gallup",shiftType:"day",windowId:"w2",opens:"2026-05-01",dueBy:"2026-07-01",
      state:"candidate",
      footprint:{kind:"pinned",dates:["2026-08-04","2026-08-05"]}},
   ];
-  return {sites,trips,locks,layers,pace,requests};
+  // windows = drawn spans of intent. Candidates attach to a window; an empty window just surfaces cards.
+  const windows=[
+    {id:"w1",dates:["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"],target:2},
+    {id:"w2",dates:["2026-08-04","2026-08-05"]},
+    {id:"w3",dates:["2026-09-08","2026-09-09","2026-09-10"]},
+  ];
+  return {sites,trips,locks,layers,pace,requests,windows};
 }
 function cReq(id,siteId,shiftType,dates){
   return {id,siteId,shiftType,opens:ds(ad(pd(dates[0]),-70)),dueBy:ds(ad(pd(dates[0]),-25)),
@@ -360,11 +366,19 @@ function sanitizeState(obj){
         opens:DATE_RE.test(r.opens||"")?r.opens:ds(TODAY),dueBy:DATE_RE.test(r.dueBy||"")?r.dueBy:ds(TODAY)};
       if(Number.isFinite(+r.rateOverride))o.rateOverride=+r.rateOverride;
       if(Number.isFinite(+r.bonusOverride))o.bonusOverride=+r.bonusOverride;
+      if(r.windowId)o.windowId=String(r.windowId);
       if(r.travel&&typeof r.travel==="object"){const st=sites.find(x=>x.id===r.siteId);o.travel=travelOf({reach:st?st.reach:"local",travel:r.travel});}
       ["expectedResponseBy","submittedOn","resolvedOn"].forEach(k=>{if(DATE_RE.test(r[k]||""))o[k]=r[k];});
       return o;
     }).filter(Boolean);
-    return {sites,trips,locks,layers,pace,requests};
+    const windows=(Array.isArray(obj.windows)?obj.windows:[]).map(w=>{
+      if(!w||!w.id||!isDateArr(w.dates))return null;
+      const o={id:String(w.id),dates:Array.from(new Set(w.dates)).sort()};
+      if(Number.isFinite(+w.target))o.target=Math.max(1,Math.min(o.dates.length,Math.round(+w.target)));
+      if(w.label)o.label=String(w.label).slice(0,40);
+      return o;
+    }).filter(Boolean);
+    return {sites,trips,locks,layers,pace,requests,windows};
   }catch(e){console.warn("sanitizeState failed",e);return null;}
 }
 /* read a share-link payload from the URL hash (#s=…), LZ-decompress + validate */
@@ -457,6 +471,20 @@ function makeWindow(site,type,dates){                       // a drawn window �
   return {id:"r"+Date.now()+Math.floor(Math.random()*1e3),siteId:site.id,shiftType:type,
     opens:ds(ad(pd(first),-(site.cadence.opensDaysBefore||60))),dueBy:monthDueBy(first,site.cadence.dueByDaysBefore||21),
     state:"candidate",footprint:{kind:"pinned",dates:dates.slice().sort()}};
+}
+/* a drawn span of intent — siteless. Candidates attach to it; cards surface beneath it. */
+function makeBlankWindow(dates){
+  if(!dates||!dates.length)return null;
+  return {id:"w"+Date.now()+Math.floor(Math.random()*1e3),dates:Array.from(new Set(dates)).sort()};
+}
+/* a candidate request born from a window card (carries the windowId so it groups back under it) */
+function reqFromCard(win,site,type){
+  const first=win.dates[0];
+  const fp={kind:"pinned",dates:win.dates.slice().sort()};
+  if(Number.isFinite(win.target)&&win.target<fp.dates.length)fp.target=win.target;
+  return {id:"r"+Date.now()+Math.floor(Math.random()*1e3),siteId:site.id,shiftType:type,windowId:win.id,
+    opens:ds(ad(pd(first),-(site.cadence.opensDaysBefore||60))),dueBy:monthDueBy(first,site.cadence.dueByDaysBefore||21),
+    state:"candidate",footprint:fp};
 }
 
 /* typicalShiftPay — estimate; carries assumption (§4.4) */
@@ -800,6 +828,47 @@ function buildWindows(state,monthIdx,types,tsp){
   });
   return {weeks,windows:raw,qInfo,committed,remaining};
 }
+/* surface cards for ONE drawn window — a card per site over the window's own dates.
+   Brightness normalizes across this window's sites only (glow, never order — Inv 1/2a). */
+function windowCards(win,state,types,tsp){
+  const {sites,trips,layers,locks,requests}=state;
+  const dates=win.dates.map(pd),dayStrs=win.dates.slice();
+  const m0=dates.length?dates[0].getMonth():TODAY.getMonth();
+  const qInfo=monthQuota(state.pace,m0,tsp);
+  let committed=0;
+  for(const r of requests)if(OCCUPY.includes(r.state)){
+    const dts=r.footprint.dates;
+    committed+=reqIsDensity(r)?(dts.some(d=>pd(d).getMonth()===m0)?shiftCount(r):0):dts.filter(d=>pd(d).getMonth()===m0).length;
+  }
+  const remaining=qInfo.quota.value-committed;
+  const raw=sites.map(site=>{
+    const type=types[`${win.id}-${site.id}`]||"day";
+    const money=windowMoney(site,type,dates,trips);
+    const co=coLocation(site,dates,trips);
+    const dout=weekDaysOut(dates,layers);
+    const first=dates[0];
+    const opens=ds(ad(first,-site.cadence.opensDaysBefore));
+    const dueBy=monthDueBy(first,site.cadence.dueByDaysBefore);
+    const closing=closingTerm(opens,dueBy);
+    const closed=TODAY>pd(dueBy)||!!closedTrip(trips,dates);
+    const notOpen=TODAY<pd(opens);
+    const lockHit=dates.filter(d=>locks.some(l=>l.date===ds(d)));
+    const perKid=kidDaysOut(dayStrs,layers);
+    const kidHrs=kidHoursCost(dayStrs,site,null,type,layers);
+    const existing=requests.find(r=>r.windowId===win.id&&r.siteId===site.id);
+    return {id:`${win.id}-${site.id}`,winId:win.id,site,type,week:{start:first,dates},money,co,dout,opens,dueBy,dayStrs,perKid,kidHrs,closing,closed,notOpen,lockHit,existing};
+  });
+  const aw=raw.map(w=>w.money.awayPerHr.value),dt=raw.map(w=>w.dout);
+  const nrm=(v,a)=>{const lo=Math.min(...a),hi=Math.max(...a);return hi>lo?(v-lo)/(hi-lo):0.5;};
+  raw.forEach(w=>{
+    const c={familyEfficiency:nrm(w.money.awayPerHr.value,aw),coLocation:w.co.coLocated?1:0,
+      lowDaysOut:1-nrm(w.dout,dt),quotaFit:remaining>0?clamp01(0.45+0.55*Math.min(1,remaining/Math.max(1,qInfo.quota.value))):0.08,closing:w.closing};
+    let score=0;for(const k in BW)score+=BW[k]*c[k];
+    if(w.closed)score*=0.45;if(w.notOpen)score*=0.7;
+    w.components=c;w.score=score;w.bucket=coarseBucket(score);
+  });
+  return raw;
+}
 
 /* ════════ tiny UI atoms ════════ */
 function Num({e,money,k,dp,bold}){
@@ -966,8 +1035,6 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   const [tripDrag,setTripDrag]=useState(null);       // live drop preview while dragging a trip: {set:Set<dateStr>, color}
   const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
   const footprint=useFootprint(state);
-  const {weeks,windows,qInfo,committed,remaining}=useMemo(
-    ()=>buildWindows(state,monthIdx,types,tsp),[state,monthIdx,types,tsp]);
   const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
 
   const setType=(id,t)=>setTypes(p=>({...p,[id]:t}));
@@ -975,9 +1042,24 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   function createRequest(w,type,foot,travel){
     const r={id:"r"+Date.now(),siteId:w.site.id,shiftType:type,opens:w.opens,dueBy:w.dueBy,state:"candidate",footprint:foot};
     if(travel)r.travel=travel;
+    if(creating&&creating.win)r.windowId=creating.win.id;
     setState(s=>({...s,requests:[...s.requests,r]}));
     setCreating(null);
   }
+  // window-flow actions: surface a card → request it → submit the window's drafts in deadline order
+  const requestCard=(win,card)=>setState(s=>({...s,requests:[...s.requests,reqFromCard(win,card.site,card.type)]}));
+  const removeReq=id=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==id)}));
+  const delWindow=id=>setState(s=>({...s,windows:(s.windows||[]).filter(w=>w.id!==id),
+    requests:s.requests.filter(r=>!(r.windowId===id&&r.state==="candidate"))}));   // drop its un-submitted drafts; keep anything already sent
+  const submitInOrder=win=>setState(s=>{
+    const drafts=s.requests.filter(r=>r.windowId===win.id&&r.state==="candidate");
+    if(!drafts.length)return s;
+    return {...s,requests:s.requests.map(r=>{
+      if(!(r.windowId===win.id&&r.state==="candidate"))return r;
+      const cd=(siteById[r.siteId]&&siteById[r.siteId].cadence.expectedResponseDays)||10;
+      return {...r,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,cd))};
+    })};
+  });
   const sp=<div style={{height:10}}/>;
   const paceInner=<><PaceCurve pace={state.pace} setPace={setPace} tsp={tsp}/><div style={{marginTop:12}}><StatsReadout cool={cool}/></div></>;
   const paceDrawerEl=<div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel2,marginBottom:12,overflow:"hidden"}}>
@@ -992,10 +1074,54 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   const layersEl=<LayersPanel state={state} setState={setState}/>;
   const tripsEl=<TripsDrawer state={state} setState={setState}/>;
   const sitesEl=<SitesWorksheet state={state} setState={setState}/>;
-  const winEl=<>
+  const winSorted=(state.windows||[]).slice().sort((a,b)=>a.dates[0].localeCompare(b.dates[0]));
+  const cardRow=(win,w)=>{
+    const isOpen=open===w.id,key=`${win.id}-${w.site.id}`;
+    return <div key={w.id} style={{...glowStyle(w.bucket),borderRadius:7,marginBottom:6,transition:"box-shadow .2s"}}>
+      <div style={{display:"flex",alignItems:"stretch"}}>
+        <div style={{flex:"1 1 200px",minWidth:0,padding:"9px 11px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
+            <Tag>{REACH_LABEL[w.site.reach]}</Tag>
+            {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
+            {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
+            {w.closed&&<Tag bg={C.line2} col={C.mute}>closed</Tag>}
+            {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
+          </div>
+          <div style={{fontSize:11.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.site.note}</div>
+          <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+            {w.perKid.map(k=><span key={k.childId} title={`${k.name}: ${k.count} of ${k.of} weekdays out of school`}
+              style={{fontSize:9.5,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
+          </div>
+        </div>
+        <div style={{display:"flex",borderLeft:`1px solid ${C.line2}`}}>
+          <Fact label="$/hr ER"><Num e={w.money.erPerHr} money/></Fact>
+          <Fact label="$/hr away"><Num e={w.money.awayPerHr} money/></Fact>
+          <Fact label="kid-hrs"><span title={`${w.kidHrs.hours} kid-awake hours (7a–8p) away across this window · ${w.site.name} travel`}>{w.kidHrs.hours}h</span></Fact>
+          <Fact label="close"><span style={{color:w.closing>0.7?C.est:C.gray}}>{Math.round(w.closing*100)}%</span></Fact>
+        </div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 11px",borderTop:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
+        <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden",flexWrap:"wrap"}}>
+          {CATS.map(c=><button key={c.id} onClick={()=>setType(key,c.id)}
+            style={{fontFamily:MONO,fontSize:11,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
+              background:w.type===c.id?C.ink:"transparent",color:w.type===c.id?C.bg:C.gray}}>{c.label}</button>)}
+        </div>
+        {w.existing
+          ? <><Tag bg={C.softInfo} col={C.blue}>requested · {ST_LABEL[w.existing.state]||w.existing.state}</Tag>
+              {w.existing.state==="candidate"&&<Btn small kind="danger" onClick={()=>removeReq(w.existing.id)}>remove</Btn>}</>
+          : !w.closed&&<><Btn small kind="prim" onClick={()=>requestCard(win,w)}>request</Btn>
+              <Btn small onClick={()=>setCreating({w,win})}>compose…</Btn></>}
+        <span style={{marginLeft:"auto"}}/>
+        <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why"}</Btn>
+      </div>
+      {isOpen&&<WhyBright w={w}/>}
+    </div>;
+  };
+  const windowsEl=<>
     <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 2px 8px",flexWrap:"wrap"}}>
-      <span style={{fontSize:15.5,fontWeight:800,letterSpacing:"-0.02em"}}>{MONL[monthIdx]} options</span>
-      <span style={{fontSize:11,color:C.gray}}>Choose where to work each week.</span>
+      <span style={{fontSize:15.5,fontWeight:800,letterSpacing:"-0.02em"}}>Your windows</span>
+      <span style={{fontSize:11,color:C.gray}}>Draw a span on the calendar; site options surface beneath it.</span>
       <span style={{marginLeft:"auto",fontSize:9.5,color:C.est,fontStyle:"italic"}}>~ = estimate</span>
     </div>
     <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:10,color:C.mute,margin:"0 2px 10px"}}>
@@ -1003,15 +1129,20 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
       {BUCKETS.map(b=><span key={b} style={{display:"inline-flex",alignItems:"center",gap:4}}>
         <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{BUCKET_LABEL[b]}</span>)}
     </div>
-    {weeks.map((wk,wi)=>{
-      const wkWins=windows.filter(w=>w.wi===wi);
-      const exp=weekExposure(wk.dates,state.requests,siteById,tsp);
-      const inMonth=wk.dates.filter(d=>d.getMonth()===monthIdx);
-      const label=`${MON[inMonth[0].getMonth()]} ${inMonth[0].getDate()}–${inMonth[inMonth.length-1].getDate()}`;
-      return <div key={wi} style={{marginBottom:14}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 2px 6px"}}>
-          <span style={{fontSize:12,fontWeight:800,color:C.gray,letterSpacing:"0.02em"}}>{label}</span>
-          <div style={{flex:1,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
+    {winSorted.length===0&&<div style={{fontSize:11.5,color:C.mute,fontStyle:"italic",padding:"6px 2px"}}>No windows yet — draw a span on the calendar above to surface site options.</div>}
+    {winSorted.map(win=>{
+      const cards=windowCards(win,state,types,tsp);
+      const dts=win.dates.map(pd);
+      const exp=weekExposure(dts,state.requests,siteById,tsp);
+      const wt=Number.isFinite(win.target)?win.target:win.dates.length;
+      const drafts=state.requests.filter(r=>r.windowId===win.id&&r.state==="candidate")
+        .sort((a,b)=>pd(a.dueBy)-pd(b.dueBy));
+      const range=`${md(win.dates[0])}–${md(win.dates[win.dates.length-1])}`;
+      return <div key={win.id} style={{marginBottom:18,border:`1px solid ${C.line2}`,borderRadius:9,padding:"10px 11px",background:C.panel2}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 1px 8px",flexWrap:"wrap"}}>
+          <span style={{fontSize:13,fontWeight:800,letterSpacing:"-0.01em"}}>{range}</span>
+          <span style={{fontSize:10.5,color:C.gray}}>{win.dates.length}d{wt<win.dates.length?` · work ${wt}`:""}</span>
+          <div style={{flex:1,minWidth:120,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
             <div style={{flex:1,height:6,background:C.line2,borderRadius:3,position:"relative",overflow:"hidden"}}>
               <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,var(--faint),var(--faint) 4px,transparent 4px,transparent 7px)"}}/>
               <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.floor$/8000*100)+"%",background:C.ink}}/>
@@ -1019,49 +1150,18 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
             <span style={{fontSize:9.5,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
           </div>
           {exp.collision&&<Tag bg={C.softWarn} col={C.red}>double-book</Tag>}
-          {exp.hole&&<Tag bg={C.softWarn} col={C.est}>thin</Tag>}
+          <span style={{marginLeft:"auto"}}/>
+          <Btn small onClick={()=>setSel({kind:"window",id:win.id})}>show ↑</Btn>
+          <Btn small kind="danger" onClick={()=>delWindow(win.id)}>delete</Btn>
         </div>
-        {wkWins.map(w=>{
-          const gs=glowStyle(w.bucket);
-          const isOpen=open===w.id;
-          return <div key={w.id} style={{...gs,borderRadius:7,marginBottom:6,transition:"box-shadow .2s"}}>
-            <div style={{display:"flex",alignItems:"stretch"}}>
-              <div style={{flex:"1 1 200px",minWidth:0,padding:"9px 11px"}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                  <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
-                  <Tag>{REACH_LABEL[w.site.reach]}</Tag>
-                  {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
-                  {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
-                  {w.closed&&<Tag bg={C.line2} col={C.mute}>closed</Tag>}
-                  {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
-                </div>
-                <div style={{fontSize:11.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.note||w.site.note}</div>
-                <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
-                  {w.perKid.map(k=><span key={k.childId} title={`${k.name}: ${k.count} of ${k.of} weekdays out of school`}
-                    style={{fontSize:9.5,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
-                </div>
-              </div>
-              <div style={{display:"flex",borderLeft:`1px solid ${C.line2}`}}>
-                <Fact label="$/hr ER"><Num e={w.money.erPerHr} money/></Fact>
-                <Fact label="$/hr away"><Num e={w.money.awayPerHr} money/></Fact>
-                <Fact label="kid-hrs"><span title={`${w.kidHrs.hours} kid-awake hours (7a–8p) away if you work the full week · ${w.site.name} travel`}>{w.kidHrs.hours}h</span></Fact>
-                <Fact label="close"><span style={{color:w.closing>0.7?C.est:C.gray}}>{Math.round(w.closing*100)}%</span></Fact>
-              </div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 11px",borderTop:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
-              <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden",flexWrap:"wrap"}}>
-                {CATS.map(c=><button key={c.id} onClick={()=>setType(w.id,c.id)}
-                  style={{fontFamily:MONO,fontSize:11,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
-                    background:w.type===c.id?C.ink:"transparent",color:w.type===c.id?C.bg:C.gray}}>{c.label}</button>)}
-              </div>
-              {w.existing? <Tag bg={C.softInfo} col={C.blue}>request exists · {w.existing.state}</Tag>
-                : !w.closed&&<Btn small kind="prim" onClick={()=>setCreating({w})}>Add to calendar</Btn>}
-              <span style={{marginLeft:"auto",fontSize:9.5,color:C.mute}}>{w.site.submissionType==="by_window"?"by week":"by shift"}</span>
-              <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why"}</Btn>
-            </div>
-            {isOpen&&<WhyBright w={w}/>}
-          </div>;
-        })}
+        {cards.map(w=>cardRow(win,w))}
+        {drafts.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"7px 9px",border:`1px dashed ${C.line}`,borderRadius:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:10.5,fontWeight:700,color:C.gray}}>request in order:</span>
+          {drafts.map((r,i)=><span key={r.id} style={{fontSize:10,fontWeight:700,color:C.gray}}>
+            {i>0?"→ ":""}{(siteById[r.siteId]||{}).name} <span style={{color:C.mute}}>by {md(r.dueBy)}</span></span>)}
+          <span style={{marginLeft:"auto"}}/>
+          <Btn small kind="prim" onClick={()=>submitInOrder(win)}>submit all →</Btn>
+        </div>}
       </div>;
     })}
   </>;
@@ -1070,8 +1170,8 @@ function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
   let body;
   if(view==="pace")body=<><div style={{fontSize:15.5,fontWeight:800,marginBottom:10}}>Pace</div>{paceInner}</>;
   else if(view==="setup")body=<>{layersEl}{sp}{tripsEl}{sp}{sitesEl}</>;
-  // main workspace: calendar + windows together, with the trips palette as the third pillar
-  else body=<>{calEl}{sp}{tripsPaletteEl}{sp}{winEl}</>;
+  // main workspace: calendar (draw windows) + trips palette + the surfaced cards, grouped by window
+  else body=<>{calEl}{sp}{tripsPaletteEl}{sp}{windowsEl}</>;
 
   return <div style={{height:"100%",overflow:"auto"}}>
     <div style={{maxWidth:980,margin:"0 auto",padding:"12px 16px 60px"}}>{body}</div>
@@ -1579,7 +1679,9 @@ function useFootprint(state){
     }
     for(const sp of state.trips){if(!placed(sp))continue;let d=pd(sp.from);const t=pd(sp.to);while(d<=t){famBy[ds(d)]={loc:sp.loc,wf:sp.workFactor,name:sp.name};d=ad(d,1);}}
     for(const l of state.locks)lockBy[l.date]=l;
-    return {byDay,famBy,lockBy,perYM,loadYM:loadByYM(state)};
+    const winBy={};                                    // dateStr → windowId (the drawn intent band)
+    for(const w of (state.windows||[]))for(const d of w.dates)winBy[d]=w.id;
+    return {byDay,famBy,lockBy,perYM,winBy,loadYM:loadByYM(state)};
   },[state]);
 }
 /* does one layer cover a single date? mirrors layerCoverage's future-year inference.
@@ -1631,10 +1733,12 @@ function dayVisual(d,ctx){
   const marks=ctx.byDay[str]||[],fam=ctx.famBy[str],lk=ctx.lockBy[str],lays=ctx.layerCov[str]||[];
   const closed=fam&&fam.wf==="closed";
   const conf=marks.find(x=>x.state==="confirmed"),neg=marks.find(x=>x.state==="override"),pend=marks.find(x=>x.state==="pending"),cand=marks.find(x=>x.state==="candidate"),smear=marks.find(x=>x.state==="smeared");
+  const win=ctx.winBy?ctx.winBy[str]:null;                       // a drawn window covers this day (intent, pre-request)
   // layered channels: fill = shift (concrete) or a faint trip wash; family blockers ride the bottom bars;
   // pressure lives on the focused month; the cost (family-off ∩ work) reads as a hatch.
   let bg=we?C.weekend:C.panel,border=`1px solid ${C.line2}`,inner=null;
   if(fam){bg=LOC_TINT[fam.loc];border=`1px solid ${C.ocean}`;}   // trip → faint blue wash + ocean edge
+  if(win&&!conf&&!neg&&!pend&&!cand&&!smear){bg=C.sel;border=`1.5px dashed ${C.gray}`;}   // bare window day
   if(conf){bg=shiftCol(conf.type);border=`1px solid ${shiftCol(conf.type)}`;}
   else if(neg){bg=overrideCol(neg.type);border=`1.5px dashed ${shiftCol(neg.type)}`;}
   else if(pend){border=`1.5px solid ${C.ink}`;}
@@ -1642,11 +1746,12 @@ function dayVisual(d,ctx){
   else if(smear){inner="dotted";}
   const cost=lays.length>0&&!!(conf||neg||pend||cand||smear);   // working a family-off day → family-time cost
   const drawing=ctx.drawSet&&ctx.drawSet.has(str),inSel=ctx.selReqDates&&ctx.selReqDates.has(str),inTrip=ctx.selTripDates&&ctx.selTripDates.has(str);
+  const selWin=ctx.selWinDates&&ctx.selWinDates.has(str);
   const prev=!!(ctx.preview&&ctx.preview.set&&ctx.preview.set.has(str));   // a trip drag is hovering this day
   if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
   const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
   const title=`${str}${conf?` · ${conf.site.name} ${shiftLabel(conf.type)}`:""}${neg?` · negotiating ${neg.site.name}`:""}${pend?` · submitted ${pend.site.name}`:""}${cand?` · draft ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
-  return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,cost,bg,border,inner,drawing,inSel,inTrip,prev,prevColor:ctx.preview&&ctx.preview.color,title};
+  return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,win,selWin,cost,bg,border,inner,drawing,inSel,inTrip,prev,prevColor:ctx.preview&&ctx.preview.color,title};
 }
 function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandle}){
   const base={...box,marginLeft:ml||0,flexShrink:0,borderRadius:2,position:"relative",boxSizing:"border-box"};
@@ -1660,7 +1765,7 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandl
     onClick={onTap?()=>onTap(v.str):undefined} title={v.title}
     style={{...base,background:v.bg,border:v.border,
       cursor:v.closed?"not-allowed":(tool==="eraser"?"cell":"pointer"),touchAction:tool&&tool!=="off"?"none":"auto",
-      outline:v.inSel?`2px solid ${C.ink}`:(v.inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:v.closed&&!v.conf&&!v.neg?0.82:1,
+      outline:v.inSel||v.selWin?`2px solid ${C.ink}`:(v.inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:v.closed&&!v.conf&&!v.neg?0.82:1,
       display:num?"flex":"block",alignItems:"center",justifyContent:"center"}}>
     {num&&<span style={{fontSize:13,fontWeight:v.conf?800:500,color:v.conf?"var(--on-shift)":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
     {v.closed&&!v.conf&&!v.neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
@@ -1675,12 +1780,12 @@ function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandl
   </div>;
 }
 /* one month as a weekday-aligned by-row strip — cells are the drawing surface */
-function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,selTripDates,preview,onCellDown,onTap,selStart,selEnd,onHandle}){
-  const {byDay,famBy,lockBy,perYM,loadYM}=footprint;
+function MonthRow({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,selReqDates,selWinDates,selTripDates,preview,onCellDown,onTap,selStart,selEnd,onHandle}){
+  const {byDay,famBy,lockBy,perYM,winBy,loadYM}=footprint;
   const g=monthGrid(y,m),isNow=y===YEAR&&m===TODAY.getMonth();
   const pm=perYM[`${y}-${m}`],ld=loadYM[`${y}-${m}`]||{conf:0,win:0},load=ld.conf+ld.win;
   const tint=pressureTint(load,ceiling),hot=load>ceiling;
-  const ctx={byDay,famBy,lockBy,layerCov,tint,drawSet,selReqDates,selTripDates,preview};
+  const ctx={byDay,famBy,lockBy,winBy,layerCov,tint,drawSet,selReqDates,selWinDates,selTripDates,preview};
   const barW=44,confW=Math.min(barW,ld.conf/Math.max(1,ceil2(ceiling))*barW),winW=Math.min(barW-confW,ld.win/Math.max(1,ceil2(ceiling))*barW);
   function ceil2(c){return Math.max(c,load);}                 // bar scales to whichever is larger
   const GW=200,gsc=Math.max(ceiling,load)||1,gcw=ld.conf/gsc*GW,gww=Math.min(GW-gcw,ld.win/gsc*GW),gtick=Math.min(GW-1,ceiling/gsc*GW);  // focused-month pressure gauge
@@ -1779,11 +1884,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const [mode,setMode]=useState("cal");
   const [dayInfo,setDayInfo]=useState(null);                  // date string of the inspected day
   const [range,setRange]=useState({s:YEAR,e:YEAR+1});         // two years by default; "load more" extends
-  const [tool,setTool]=useState("edit");                      // edit (direct: draw/move/select/resize) | eraser
-  const [drawSiteId,setDrawSiteId]=useState(sites[0]&&sites[0].id);
-  const drawSite=sites.find(s=>s.id===drawSiteId)||sites[0];
-  const [drawShift,setDrawShift]=useState("day");             // candidate windows request coarse — day or night
-  const pickSite=id=>setDrawSiteId(id);
+  const [tool,setTool]=useState("edit");                      // edit (draw/move/select/resize windows) | eraser
   const [draw,setDraw]=useState(null);                        // {startStr,endStr,y,m}
   const [focusY,setFocusY]=useState(YEAR);                    // mobile focus year
   const [editing,setEditing]=useState(false);                 // mobile edit mode (locks scroll, expands month)
@@ -1798,39 +1899,43 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const setReq=(id,fn)=>setReqs(rs=>rs.map(x=>x.id===id?fn(x):x));
   const delReq=id=>setReqs(rs=>rs.filter(x=>x.id!==id));
   const setTrip=(id,fn)=>setState(s=>({...s,trips:s.trips.map(x=>x.id===id?fn(x):x)}));
-  const editableAt=str=>state.requests.find(r=>EDITABLE.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));
+  const setWindows=fn=>setState(s=>({...s,windows:fn(s.windows||[])}));
+  const addWindow=w=>setWindows(ws=>[...ws,w]);
+  const updWindow=(id,fn)=>setWindows(ws=>ws.map(w=>w.id===id?(()=>{const n=fn(w);if(Number.isFinite(n.target)&&n.target>=n.dates.length)delete n.target;return n;})():w));
+  const delWindow=id=>setState(s=>({...s,windows:(s.windows||[]).filter(w=>w.id!==id),
+    requests:s.requests.filter(r=>!(r.windowId===id&&r.state==="candidate"))}));
+  const windowAt=str=>(state.windows||[]).find(w=>w.dates.includes(str));
   const occupantAt=str=>state.requests.find(r=>OCCUPY.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));  // any draft or committed shift
   const tripAt=str=>state.trips.find(t=>placed(t)&&str>=t.from&&str<=t.to);
-  const tapSelect=str=>{setDayInfo(str);const r=occupantAt(str);if(r){setSel({kind:"req",id:r.id});return;}const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);};  // open the day box · candidates edit · pending/confirmed inspect
+  // the calendar's editable layer is now the WINDOW. requests are read-only here (managed from cards / Requests).
+  const tapSelect=str=>{setDayInfo(str);const w=windowAt(str);if(w){setSel({kind:"window",id:w.id});return;}const r=occupantAt(str);if(r){setSel({kind:"req",id:r.id});return;}const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);};
   const dayClosed=str=>state.trips.some(t=>placed(t)&&t.workFactor==="closed"&&str>=t.from&&str<=t.to);
   const pt=e=>e.touches?e.touches[0]:e;
   function listen(move,up){const m=e=>move(pt(e)),u=e=>{window.removeEventListener("pointermove",m);window.removeEventListener("pointerup",u);up(pt(e));};
     window.addEventListener("pointermove",m);window.addEventListener("pointerup",u);}
   // drag a window's end handle to extend / collapse on the run
-  function handleResize(e,which,r){
-    e.preventDefault();const start=reqMinDate(r),end=reqMaxDate(r);
+  function handleResize(e,which,w){
+    e.preventDefault();const start=w.dates[0],end=w.dates[w.dates.length-1];
     listen(p=>{const d=nearestDate(p.clientX,p.clientY);if(!d)return;
       let ns=start,ne=end;if(which==="end")ne=d<start?start:d;else ns=d>end?end:d;
-      const dates=daysBetween(ns,ne);if(dates.length)setReq(r.id,x=>({...x,footprint:{...x.footprint,kind:"pinned",dates}}));},
-      ()=>setReqs(rs=>mergeCandidates(rs)));
+      const dates=daysBetween(ns,ne);if(dates.length)updWindow(w.id,x=>({...x,dates}));},()=>{});
   }
   function cellDown(e,str,y,m){
     e.preventDefault();
     setDayInfo(str);                                       // touching a day (even to draw) opens its info box
-    if(tool==="eraser"){                                   // drag to erase
+    if(tool==="eraser"){                                   // drag to trim the drawn window
       const done=new Set();
-      const erase=d=>{if(!d||done.has(d))return;done.add(d);const r=editableAt(d);if(!r)return;
-        const left=r.footprint.dates.filter(x=>x!==d);if(left.length)setReq(r.id,x=>({...x,footprint:{...x.footprint,kind:"pinned",dates:left}}));else delReq(r.id);};
+      const erase=d=>{if(!d||done.has(d))return;done.add(d);const w=windowAt(d);if(!w)return;
+        const left=w.dates.filter(x=>x!==d);if(left.length)updWindow(w.id,x=>({...x,dates:left}));else delWindow(w.id);};
       erase(str);listen(p=>erase(nearestDate(p.clientX,p.clientY)),()=>{});return;
     }
     // direct manipulation (default): existing window → tap selects / drag moves; empty → draw a new window
-    const r=editableAt(str);
-    if(r){setSel({kind:"req",id:r.id});const orig=r.footprint.dates.slice();let moved=false;
+    const w=windowAt(str);
+    if(w){setSel({kind:"window",id:w.id});const orig=w.dates.slice();let moved=false;
       listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(!dd)return;const delta=days(pd(str),pd(dd));if(delta!==0)moved=true;
-        setReq(r.id,x=>({...x,footprint:{...x.footprint,kind:"pinned",dates:shiftDates(orig,delta)}}));},
-        ()=>{if(moved)setReqs(rs=>mergeCandidates(rs));});
+        updWindow(w.id,x=>({...x,dates:shiftDates(orig,delta)}));},()=>{});
       return;}
-    const occ=occupantAt(str);                          // pending / confirmed → read-only: select to inspect, no drag
+    const occ=occupantAt(str);                          // a request with no window → read-only: select to inspect, no drag
     if(occ){setSel({kind:"req",id:occ.id});return;}
     const t=tripAt(str);
     if(t){setSel({kind:"trip",id:t.id});const f0=t.from,t0=t.to;
@@ -1840,15 +1945,16 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     if(dayClosed(str)){setSel(null);return;}
     setSel(null);setDraw({startStr:str,endStr:str,y,m});
     listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(dd){const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&{...d,endStr:dd});}},
-      ()=>setDraw(d=>{if(d){const dates=daysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));const site=sites.find(s=>s.id===drawSiteId)||sites[0];
-        if(dates.length&&site){const rr=makeWindow(site,drawShift,dates);addReq(rr);setSel({kind:"req",id:rr.id});}}return null;}));
+      ()=>setDraw(d=>{if(d){const dates=daysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));
+        if(dates.length){const nw=makeBlankWindow(dates);addWindow(nw);setSel({kind:"window",id:nw.id});}}return null;}));
   }
   const drawSet=draw?new Set(daysBetween(draw.startStr,draw.endStr)):null;
   const sr=sel&&sel.kind==="req"?state.requests.find(r=>r.id===sel.id):null;
   const stp=sel&&sel.kind==="trip"?state.trips.find(t=>t.id===sel.id):null;
+  const swin=sel&&sel.kind==="window"?(state.windows||[]).find(w=>w.id===sel.id):null;
   const srDates=sr?new Set(sr.footprint.dates):null;
-  const srEditable=sr&&sr.state==="candidate";                          // only drafts resize/move on the calendar
-  const srStart=srEditable?reqMinDate(sr):null,srEnd=srEditable?reqMaxDate(sr):null;
+  const swinDates=swin?new Set(swin.dates):null;
+  const swinStart=swin?swin.dates[0]:null,swinEnd=swin?swin.dates[swin.dates.length-1]:null;   // windows resize on the calendar
   const stpDates=stp?(()=>{const s=new Set();let d=pd(stp.from);const t=pd(stp.to);while(d<=t){s.add(ds(d));d=ad(d,1);}return s;})():null;
   const items=[];
   if(mode==="cal"){for(let y=range.s;y<=range.e;y++){const ms=[];for(let mm=0;mm<12;mm++){if(y<YEAR||(y===YEAR&&mm<START_M))continue;ms.push(mm);}if(!ms.length)continue;items.push({h:`${y}`});for(const mm of ms)items.push({y,m:mm});}}
@@ -1861,34 +1967,27 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       {TOOLS.map(([k,l])=><button key={k} onClick={()=>{setTool(k);setSel(null);}} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
         padding:"4px 9px",border:"none",cursor:"pointer",background:tool===k?C.ink:"transparent",color:tool===k?C.bg:C.gray}}>{l}</button>)}
     </div>
-    {tool==="edit"&&<div style={{display:"inline-flex",alignItems:"center",gap:5}}>
-      <span style={{fontSize:9.5,color:C.mute}}>new:</span>
-      <select value={drawSiteId} onChange={e=>pickSite(e.target.value)} style={{...inp,width:120,padding:"3px 6px"}}>
-        {sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
-      <select value={drawShift} onChange={e=>setDrawShift(e.target.value)} style={{...inp,width:80,padding:"3px 6px"}}>
-        {CATS.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}</select>
-    </div>}
+    {tool==="edit"&&<span style={{fontSize:9.5,color:C.mute}}>drag empty days to draw a window · site options surface below</span>}
   </div>;
   const dayInfoEl=dayInfo?<DayInfoCard str={dayInfo} state={state} fp={footprint} onClose={()=>setDayInfo(null)}/>:null;
   const editBars=<>
-    {sr&&sr.state==="candidate"&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
-      <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{shiftLabel(sr.shiftType)} · {sr.footprint.dates.length}d · draft</span></div>
-      {/* one window, drawn directly — adjust it on the calendar (drag to move, handles to resize, eraser to trim).
-         the only attribute here is density: "work N of these M days." N = M is an exact window. */}
+    {swin&&(()=>{const wt=Number.isFinite(swin.target)?swin.target:swin.dates.length,nReq=state.requests.filter(r=>r.windowId===swin.id).length;
+      return <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+      <div style={{flex:"0 0 140px",fontSize:11,fontWeight:800,lineHeight:1.25}}>Window <span style={{color:C.mute,fontWeight:600}}>{md(swin.dates[0])}–{md(swin.dates[swin.dates.length-1])} · {swin.dates.length}d</span></div>
+      {/* density lives on the window now: "work N of these M days." N = M is an exact window. */}
       <div style={{display:"inline-flex",alignItems:"center",gap:6}}>
         <span style={{fontSize:11,color:C.gray}}>work</span>
-        <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{...x.footprint,target:Math.max(1,fpTarget(x.footprint)-1)}}))}>−</Btn>
-        <span style={{fontSize:13,fontWeight:800,minWidth:14,textAlign:"center"}}>{shiftCount(sr)}</span>
-        <Btn small onClick={()=>setReq(sr.id,x=>{const nt=Math.min(x.footprint.dates.length,fpTarget(x.footprint)+1);const fp={...x.footprint,target:nt};if(nt>=x.footprint.dates.length)delete fp.target;return {...x,footprint:fp};})}>+</Btn>
-        <span style={{fontSize:11,color:C.mute}}>of {sr.footprint.dates.length} {reqIsDensity(sr)?"— some will land":"— all of them"}</span>
+        <Btn small onClick={()=>updWindow(swin.id,x=>({...x,target:Math.max(1,wt-1)}))}>−</Btn>
+        <span style={{fontSize:13,fontWeight:800,minWidth:14,textAlign:"center"}}>{wt}</span>
+        <Btn small onClick={()=>updWindow(swin.id,x=>({...x,target:Math.min(x.dates.length,wt+1)}))}>+</Btn>
+        <span style={{fontSize:11,color:C.mute}}>of {swin.dates.length} {wt<swin.dates.length?"— some will land":"— all of them"}</span>
       </div>
-      {/* candidate windows are coarse — toggle day ⇄ night; the site assigns the exact shift later */}
-      <Btn small onClick={()=>setReq(sr.id,x=>({...x,shiftType:shiftIsNight(x.shiftType)?"day":"night"}))}>{shiftIsNight(sr.shiftType)?"→ day":"→ night"}</Btn>
-      {/* no submit here — the calendar is a drafting space; candidates are applied from the Pending list */}
-      <Btn small kind="danger" onClick={()=>{delReq(sr.id);setSel(null);}}>delete</Btn>
+      {nReq>0&&<Tag bg={C.softInfo} col={C.blue}>{nReq} candidate{nReq>1?"s":""}</Tag>}
+      <span style={{marginLeft:"auto"}}/>
+      <Btn small kind="danger" onClick={()=>{delWindow(swin.id);setSel(null);}}>delete</Btn>
       <Btn small kind="prim" onClick={()=>setSel(null)}>done</Btn>
-    </div>}
-    {sr&&sr.state!=="candidate"&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+    </div>;})()}
+    {sr&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
       <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{shiftLabel(sr.shiftType)} · {sr.footprint.dates.length}d · {ST_LABEL[sr.state]||sr.state}</span></div>
       <span style={{fontSize:9.5,color:C.mute}}>read-only here</span>
       <Btn small kind="prim" onClick={()=>goto&&goto("pending")}>manage in Requests →</Btn>
@@ -1916,8 +2015,8 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
 
   if(mobile){
     const fM=selected,fld=footprint.loadYM[`${focusY}-${fM}`]||{conf:0,win:0},ftint=pressureTint(fld.conf+fld.win,ceiling);
-    const fctx={byDay:footprint.byDay,famBy:footprint.famBy,lockBy:footprint.lockBy,layerCov:focusCov,tint:ftint,
-      drawSet:draw&&draw.y===focusY&&draw.m===fM?drawSet:null,selReqDates:srDates,selTripDates:stpDates,preview};
+    const fctx={byDay:footprint.byDay,famBy:footprint.famBy,lockBy:footprint.lockBy,winBy:footprint.winBy,layerCov:focusCov,tint:ftint,
+      drawSet:draw&&draw.y===focusY&&draw.m===fM?drawSet:null,selReqDates:srDates,selWinDates:swinDates,selTripDates:stpDates,preview};
     const fg=monthGrid(focusY,fM);
     const dow=<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
       {"MTWTFSS".split("").map((c,i)=><div key={i} style={{textAlign:"center",fontSize:9.5,fontWeight:700,color:C.mute}}>{c}</div>)}</div>;
@@ -1925,7 +2024,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       {fg.cells.map((d,i)=>{const str=d&&ds(d);
         return <DayCell key={i} d={d} ctx={fctx} box={{width:"100%",aspectRatio:"1"}} num
         tool={big?tool:null} onCellDown={cellDown} onTap={big?undefined:tapSelect} y={focusY} m={fM}
-        hStart={big&&str&&str===srStart} hEnd={big&&str&&str===srEnd} onHandle={(e,which)=>sr&&handleResize(e,which,sr)}/>;})}</div>;
+        hStart={big&&str&&str===swinStart} hEnd={big&&str&&str===swinEnd} onHandle={(e,which)=>swin&&handleResize(e,which,swin)}/>;})}</div>;
     return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
       <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
       <div style={{display:"flex",alignItems:"stretch"}}>
@@ -1991,9 +2090,9 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
           ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:13,fontWeight:900,color:C.ink}}>{it.h}</div>
           : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
               selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}
-              tool={editing?tool:null} drawSet={editing&&draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selTripDates={stpDates} preview={preview}
+              tool={editing?tool:null} drawSet={editing&&draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} selReqDates={srDates} selWinDates={swinDates} selTripDates={stpDates} preview={preview}
               onCellDown={cellDown} onTap={editing?undefined:tapSelect}
-              selStart={editing?srStart:null} selEnd={editing?srEnd:null} onHandle={(e,which)=>sr&&handleResize(e,which,sr)}/>)}
+              selStart={editing?swinStart:null} selEnd={editing?swinEnd:null} onHandle={(e,which)=>swin&&handleResize(e,which,swin)}/>)}
         <div style={{textAlign:"center",marginTop:6}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
           style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"4px 14px",border:`1px solid ${C.line}`,borderRadius:5,background:C.panel,color:C.gray,cursor:"pointer"}}>load more ▾</button></div>
       </div>
