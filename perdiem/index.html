@@ -1264,7 +1264,6 @@ function Pending({state,setState,tsp}){
       {confirmedUp.length===0&&<Empty t="No upcoming booked shifts."/>}
       {confirmedUp.map(r=><RowCard key={r.id} accent={C.juniper}>
         <Ident r={r}/><Dates r={r}/>
-        <div style={{fontSize:9.5,color:C.green,fontWeight:700,marginTop:6}}>→ hardened placement (home base, §7)</div>
       </RowCard>)}
 
       {/* ── SUBMITTED (awaiting + negotiating) ── */}
