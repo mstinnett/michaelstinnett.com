@@ -1685,7 +1685,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   </div>;
   const editBars=<>
     {sr&&sr.state==="candidate"&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
-      <span style={{fontSize:11,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · draft</span></span>
+      <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · draft</span></div>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,-1)}}))}>◀</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>({...x,footprint:{kind:"pinned",dates:shiftDates(x.footprint.dates,1)}}))}>▶</Btn>
       <Btn small onClick={()=>setReq(sr.id,x=>{const ds2=x.footprint.dates.slice();if(ds2.length>1)ds2.pop();return {...x,footprint:{kind:"pinned",dates:ds2}};})}>− day</Btn>
@@ -1697,7 +1697,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
       <Btn small kind="prim" onClick={()=>setSel(null)}>done</Btn>
     </div>}
     {sr&&sr.state!=="candidate"&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
-      <span style={{fontSize:11,fontWeight:800}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {ST_LABEL[sr.state]||sr.state}</span></span>
+      <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{sr.shiftType} · {sr.footprint.dates.length}d · {ST_LABEL[sr.state]||sr.state}</span></div>
       <span style={{fontSize:9.5,color:C.mute}}>read-only here</span>
       <Btn small kind="prim" onClick={()=>goto&&goto("pending")}>manage in Requests →</Btn>
       <Btn small onClick={()=>setSel(null)}>done</Btn>
