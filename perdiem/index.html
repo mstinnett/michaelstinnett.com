@@ -1164,6 +1164,13 @@ function Overlay({children,onClose}){
    One scrolling column: Candidates (apply, with deadline chain) → Confirmed →
    Pending (awaiting + in-negotiation overrides) → Past (worked, scrolling down). */
 const md=d=>`${MON[pd(d).getMonth()]} ${pd(d).getDate()}`;
+/* group sorted dates into contiguous (consecutive-day) runs → window ranges for display */
+const dateRuns=dates=>{const s=[...dates].sort();const runs=[];
+  for(const d of s){const last=runs[runs.length-1];
+    if(last&&days(pd(last.to),pd(d))===1)last.to=d;else runs.push({from:d,to:d});}
+  return runs;};
+const fmtRun=r=>r.from===r.to?md(r.from)
+  :`${md(r.from)}–${pd(r.from).getMonth()===pd(r.to).getMonth()?pd(r.to).getDate():md(r.to)}`;
 const ST_COL={candidate:C.gray,pending:C.blue,override:C.pressHot,confirmed:C.green,rejected:C.red,expired:C.mute};
 const ST_LABEL={candidate:"draft",pending:"submitted",override:"negotiating",confirmed:"booked",rejected:"rejected",expired:"expired"};
 function Pending({state,setState,tsp}){
@@ -1220,7 +1227,7 @@ function Pending({state,setState,tsp}){
   </div>;};
   const Dates=({r})=> <div style={{fontSize:10,color:C.gray,marginTop:4}}>
     {reqIsDensity(r)?`${md(r.footprint.dates[0])}–${md(r.footprint.dates.at(-1))} · ${shiftCount(r)} of ${r.footprint.dates.length} days`
-      :r.footprint.dates.map(md).join(" · ")}</div>;
+      :dateRuns(r.footprint.dates).map(fmtRun).join(" · ")}</div>;
 
   return <div style={{height:"100%",overflow:"auto"}}>
     <div style={{maxWidth:720,margin:"0 auto",padding:"14px 16px 80px"}}>
