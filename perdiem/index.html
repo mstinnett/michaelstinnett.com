@@ -93,6 +93,7 @@ const MONL=["January","February","March","April","May","June","July","August","S
 /* ─── today (spec context: 2026-06-14) ─── */
 const TODAY=new Date(2026,5,14);
 const YEAR=2026;
+const START_M=5;   // earliest month shown on the calendar (June 2026) — no data before, so 2025 + Jan–May are jettisoned
 
 /* ─── dates ─── */
 const ds=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -1572,7 +1573,7 @@ function LayerFilters({layers,setLayers,goto}){
 function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto,mobile,preview}){
   const sites=state.sites;
   const [mode,setMode]=useState("cal");
-  const [range,setRange]=useState({s:YEAR-1,e:YEAR+2});
+  const [range,setRange]=useState({s:YEAR,e:YEAR+2});
   const [tool,setTool]=useState("edit");                      // edit (direct: draw/move/select/resize) | eraser
   const [drawType,setDrawType]=useState("day");
   const [drawSiteId,setDrawSiteId]=useState(sites[0]&&sites[0].id);
@@ -1642,7 +1643,7 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
   const srStart=srEditable?reqMinDate(sr):null,srEnd=srEditable?reqMaxDate(sr):null;
   const stpDates=stp?(()=>{const s=new Set();let d=pd(stp.from);const t=pd(stp.to);while(d<=t){s.add(ds(d));d=ad(d,1);}return s;})():null;
   const items=[];
-  if(mode==="cal"){for(let y=range.s;y<=range.e;y++){items.push({h:`${y}`});for(let mm=0;mm<12;mm++)items.push({y,m:mm});}}
+  if(mode==="cal"){for(let y=range.s;y<=range.e;y++){const ms=[];for(let mm=0;mm<12;mm++){if(y<YEAR||(y===YEAR&&mm<START_M))continue;ms.push(mm);}if(!ms.length)continue;items.push({h:`${y}`});for(const mm of ms)items.push({y,m:mm});}}
   else{for(let y=range.s;y<=range.e;y++){items.push({h:`${y}–${String((y+1)%100).padStart(2,"0")} school year`});
     for(const mm of [7,8,9,10,11])items.push({y,m:mm});for(const mm of [0,1,2,3,4,5,6])items.push({y:y+1,m:mm});}}
   const width=CAL_LBL+calMaxCols*(CAL_CELL+CAL_CG)+(calMaxCols/7)*CAL_WG;
@@ -1718,11 +1719,11 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
         {/* month picker — vertical narrow scroll */}
         <div style={{flexShrink:0,width:54,borderRight:`1px solid ${C.line2}`,maxHeight:380,overflowY:"auto"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3,padding:"5px 0",position:"sticky",top:0,background:C.panel,borderBottom:`1px solid ${C.line2}`,zIndex:1}}>
-            <button onClick={()=>setFocusY(y=>y-1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:13}}>‹</button>
+            <button disabled={focusY<=YEAR} onClick={()=>setFocusY(y=>Math.max(YEAR,y-1))} style={{border:"none",background:"none",cursor:focusY<=YEAR?"default":"pointer",color:focusY<=YEAR?C.faint:C.gray,fontFamily:MONO,fontSize:13}}>‹</button>
             <span style={{fontSize:11,fontWeight:800}}>{focusY}</span>
             <button onClick={()=>setFocusY(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:13}}>›</button>
           </div>
-          {MON.map((mn,m)=>{const l=footprint.loadYM[`${focusY}-${m}`]||{conf:0,win:0},load=l.conf+l.win,t=pressureTint(load,ceiling),on=m===fM,hot=load>ceiling;
+          {MON.map((mn,m)=>{if(focusY<YEAR||(focusY===YEAR&&m<START_M))return null;const l=footprint.loadYM[`${focusY}-${m}`]||{conf:0,win:0},load=l.conf+l.win,t=pressureTint(load,ceiling),on=m===fM,hot=load>ceiling;
             return <button key={m} onClick={()=>onSelect(focusY,m)} style={{width:"100%",fontFamily:MONO,cursor:"pointer",border:"none",
               borderBottom:`1px solid ${C.line2}`,padding:"7px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:1,
               background:on?C.ink:(t||C.panel),color:on?C.bg:C.ink}}>
@@ -1767,8 +1768,6 @@ function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel
     {/* browse vs edit: tools are gated behind edit so dragging doesn't fight browsing */}
     <div ref={scrollRef} onScroll={onScroll} style={{maxHeight:380,overflow:"auto",padding:"8px 12px"}}>
       <div style={{minWidth:width}}>
-        <div style={{textAlign:"center",marginBottom:6}}><button onClick={()=>setRange(r=>({...r,s:r.s-1}))}
-          style={{fontFamily:MONO,fontSize:9.5,fontWeight:700,padding:"2px 10px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.gray,cursor:"pointer"}}>◤ earlier</button></div>
         <div style={{display:"flex",position:"sticky",top:0,background:C.panel,zIndex:2,paddingBottom:3}}>
           <div style={{width:CAL_LBL,flexShrink:0}}/>
           {Array.from({length:calMaxCols},(_,ci)=><div key={ci} style={{width:CAL_CELL,marginLeft:calMl(ci),textAlign:"center",fontSize:8,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
