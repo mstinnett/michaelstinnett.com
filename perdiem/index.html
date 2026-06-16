@@ -1360,6 +1360,26 @@ function Pending({state,setState,tsp}){
   const inflight=reqs.filter(r=>r.state==="pending"||r.state==="override").sort((a,b)=>pd(a.expectedResponseBy||a.dueBy)-pd(b.expectedResponseBy||b.dueBy));
   const resolved=reqs.filter(r=>r.state==="rejected"||r.state==="expired");
   const past=reqs.filter(isPastReq).sort((a,b)=>reqMaxDate(b).localeCompare(reqMaxDate(a)));
+  // confirmed shifts arrive as many one-date requests (imported calendar) — collapse consecutive same-site day/night ones into runs
+  const bookedRuns=list=>{
+    const items=[];
+    for(const r of list){const s=siteById[r.siteId];for(const d of r.footprint.dates)items.push({d,r,s});}
+    items.sort((a,b)=>a.d.localeCompare(b.d));
+    const runs=[];
+    for(const it of items){const last=runs[runs.length-1],night=shiftIsNight(it.r.shiftType),pay=it.s?reqShiftPay(it.r,it.s):0;
+      if(last&&last.siteId===it.r.siteId&&last.night===night&&days(pd(last.to),pd(it.d))===1){last.to=it.d;last.n++;last.$+=pay;}
+      else runs.push({siteId:it.r.siteId,name:it.s?it.s.name:"(removed site)",type:it.r.shiftType,night,from:it.d,to:it.d,n:1,$:pay});}
+    return runs;
+  };
+  const RunRow=({run,dim})=> <div style={{padding:"9px 11px",border:`1px solid ${dim?C.line:C.juniper}`,borderRadius:7,background:C.panel,marginBottom:6,opacity:dim?0.5:1}}>
+    <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+      <span style={{fontSize:13,fontWeight:800}}>{run.name}</span>
+      <Tag bg={C.line2} col={shiftCol(run.type)}>{shiftLabel(run.type)}</Tag>
+      {run.n>1&&<Tag bg={C.line2}>{run.n} shifts</Tag>}
+      <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:C.ink}}>{fmt$(run.$)}</span>
+    </div>
+    <div style={{fontSize:10,color:C.gray,marginTop:4}}>{run.from===run.to?md(run.from):`${md(run.from)}–${md(run.to)}`}</div>
+  </div>;
 
   const Head=({title,n,sub})=> <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"0 2px 8px"}}>
     <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em"}}>{title}</span>
@@ -1421,9 +1441,7 @@ function Pending({state,setState,tsp}){
       {/* ── CONFIRMED (upcoming) ── */}
       <div style={{marginTop:18}}><Head title="Booked" n={confirmedUp.length} sub="upcoming · on the calendar"/></div>
       {confirmedUp.length===0&&<Empty t="No upcoming booked shifts."/>}
-      {confirmedUp.map(r=><RowCard key={r.id} accent={C.juniper}>
-        <Ident r={r}/><Dates r={r}/>
-      </RowCard>)}
+      {bookedRuns(confirmedUp).map((run,i)=><RunRow key={i} run={run}/>)}
 
       {/* ── SUBMITTED (awaiting + negotiating) ── */}
       <div style={{marginTop:18}}><Head title="Submitted" n={inflight.length} sub="awaiting the site · accept / decline / negotiate"/></div>
@@ -1470,9 +1488,7 @@ function Pending({state,setState,tsp}){
       {/* ── PAST (worked) ── */}
       <div style={{marginTop:18}}><Head title="Past" n={past.length} sub="worked · scrolling down"/></div>
       {past.length===0&&<Empty t="No past shifts yet."/>}
-      {past.map(r=><RowCard key={r.id} dim>
-        <Ident r={r}/><Dates r={r}/>
-      </RowCard>)}
+      {bookedRuns(past).map((run,i)=><RunRow key={i} run={run} dim/>)}
 
       <p style={{fontSize:11,color:C.mute,textAlign:"center",marginTop:22,lineHeight:1.6}}>
         Booked and negotiating shifts land on the calendar and press the month.<br/>
