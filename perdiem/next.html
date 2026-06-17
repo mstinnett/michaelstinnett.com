@@ -537,6 +537,51 @@ function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,pr
     </div>
   </div>;
 }
+/* ─── desktop strip view: each month is one weekday-aligned row of small squares (Lydia's view) ─── */
+const CAL_CELL=18,CAL_CG=2,CAL_WG=6,CAL_LBL=58,CAL_RG=4,STRIP_COLS=37,WK="SMTWTFS";
+const calMl=ci=>(ci%7===0&&ci>0)?CAL_WG:(ci===0?0:CAL_CG);
+const StripHeader=()=> <div style={{display:"flex",alignItems:"center",position:"sticky",top:44,zIndex:1,background:C.panel,padding:"3px 0 4px",borderBottom:`1px solid ${C.line2}`,marginBottom:5}}>
+  <div style={{width:CAL_LBL,flexShrink:0}}/>
+  {Array.from({length:STRIP_COLS},(_,ci)=><div key={ci} style={{width:CAL_CELL,marginLeft:calMl(ci),textAlign:"center",fontSize:7.5,fontWeight:700,color:C.mute,flexShrink:0}}>{WK[ci%7]}</div>)}</div>;
+function StripCell({str,ml,state,sIdx,selected,win,travel,preview,onTap,onDown,onEnter}){
+  const base={width:CAL_CELL,height:CAL_CELL,marginLeft:ml,flexShrink:0,borderRadius:3,position:"relative",boxSizing:"border-box"};
+  if(!str)return <div style={base}/>;
+  const shift=state.shifts.find(s=>s.date===str);
+  const allDay=homeAllDay(str,state),trip=tripOn(str,state.trips),locked=monthLocked(state,str);
+  const cals=visCals(state).filter(c=>calCovers(c,str));
+  let bg=C.panel,border=`1px solid ${C.line2}`,op=1;
+  if(trip)bg=C.blockTrip;else if(allDay)bg=C.weekend;
+  if(win&&win.kind==="span")bg=C.sel;if(preview)bg=C.sel;
+  const warn=shift?warnOf(shift,state):null;
+  if(shift){const cat=shiftCat(sIdx[shift.siteId],shift.type),status=bucketOf(shift),col=cat==="night"?C.shiftNight:C.shiftDay;
+    if(status==="proposed")border=`1.5px dashed ${col}`;else{bg=col;border=`1px solid ${col}`;op=status==="worked"?0.6:1;}}
+  const showTravel=travel&&!shift,today=str===TODAY_S;
+  const ringCol=warn?C.warn:(win||showTravel)?C.ocean:null;
+  return <div data-date={str} title={str} onClick={()=>onTap(str)}
+    onPointerDown={onDown?e=>onDown(str,e):undefined} onPointerEnter={onEnter?()=>onEnter(str):undefined}
+    style={{...base,background:bg,border:(ringCol&&!shift)?`1.5px ${(showTravel||(win&&win.kind==="travel"))?"dashed":"solid"} ${ringCol}`:border,
+      outline:selected?`2px solid ${C.ink}`:"none",outlineOffset:-1,opacity:locked?0.4:op,touchAction:onDown?"none":"auto",cursor:"pointer"}}>
+    {showTravel&&<span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:C.ocean,lineHeight:1}}>✈</span>}
+    {today&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:5,background:C.danger,zIndex:2}}/>}
+    {cals.length>0&&<div style={{position:"absolute",left:0,right:0,bottom:0,height:3,display:"flex",borderRadius:"0 0 2px 2px",overflow:"hidden",pointerEvents:"none"}}>
+      {cals.slice(0,3).map((c,i)=><span key={i} style={{flex:1,background:c.color}}/>)}</div>}
+  </div>;
+}
+function MonthStrip({y,m,state,sIdx,selected,onTap,winBy,travelBy,previewSet,onDown,onEnter}){
+  const cells=monthCells(y,m);
+  return <div style={{display:"flex",alignItems:"center",marginBottom:CAL_RG}}>
+    <div style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
+      <span style={{fontSize:11,fontWeight:800,color:C.gray,letterSpacing:"0.03em"}}>{MON[m].toUpperCase()}</span>
+      <span style={{fontSize:8.5,color:C.mute,marginLeft:4}}>’{String(y).slice(2)}</span>
+    </div>
+    <div style={{display:"flex"}}>
+      {Array.from({length:STRIP_COLS},(_,ci)=>{const str=cells[ci]||null;
+        return <StripCell key={ci} str={str} ml={calMl(ci)} state={state} sIdx={sIdx}
+          selected={!!(str&&str===selected)} win={str&&winBy?winBy[str]:null} travel={str&&travelBy?travelBy[str]:null}
+          preview={!!(str&&previewSet&&previewSet.has(str))} onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
+    </div>
+  </div>;
+}
 function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,onCreateWindow}){
   const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
   const step=n=>{let m=viewM+n,y=viewY;if(m<0){m=11;y--;}if(m>11){m=0;y++;}setView(y,m);};
@@ -569,11 +614,11 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
       {tool==="window"&&<div style={{fontSize:10.5,color:C.ocean,padding:"0 12px 5px"}}>
         Drag across days to hold a window, then set “will work X of Y” in the readout.</div>}
     </div>
-    {/* months — desktop stacks every month as a row; phone shows one month + arrows */}
+    {/* desktop: each month a one-row strip (Lydia's dense view); phone: one month grid + arrows */}
     <div style={{padding:"8px 12px 40px"}}>
       {mobile
         ? <MonthGrid y={viewY} m={viewM} state={state} sIdx={sIdx} selected={selected} onTap={onTap} {...gridProps}/>
-        : CAL_MONTHS.map(([y,m])=><MonthGrid key={y+"-"+m} y={y} m={m} state={state} sIdx={sIdx} selected={selected} onTap={onTap} label {...gridProps}/>)}
+        : <><StripHeader/>{CAL_MONTHS.map(([y,m])=><MonthStrip key={y+"-"+m} y={y} m={m} state={state} sIdx={sIdx} selected={selected} onTap={onTap} {...gridProps}/>)}</>}
     </div>
   </div>;
 }
