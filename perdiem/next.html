@@ -968,6 +968,11 @@ function App(){
   const [lastSite,setLastSite]=useState("boston");
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}});
   const [mobile,setMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width:760px)").matches);
+  const calRef=useRef();const [dbg,setDbg]=useState({});
+  useEffect(()=>{const read=()=>{const el=calRef.current;setDbg({w:window.innerWidth,h:window.innerHeight,
+    ch:el?el.clientHeight:-1,sh:el?el.scrollHeight:-1});};
+    read();const id=setInterval(read,800);window.addEventListener("resize",read);
+    return ()=>{clearInterval(id);window.removeEventListener("resize",read);};},[mobile,tab,state]);
 
   useEffect(()=>{try{localStorage.setItem("perDiemNext",JSON.stringify(state));}catch(e){}},[state]);
   useEffect(()=>{const m=window.matchMedia&&window.matchMedia("(max-width:760px)");if(!m)return;
@@ -1023,6 +1028,9 @@ function App(){
   const cycle=()=>setTheme(t=>t==="system"?"light":t==="light"?"dark":"system");
 
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
+    <div style={{position:"fixed",bottom:6,left:6,zIndex:9999,background:"#c0392b",color:"#fff",fontSize:10,fontWeight:700,
+      padding:"3px 7px",borderRadius:4,fontFamily:MONO,pointerEvents:"none"}}>
+      {dbg.mob?"MOBILE":(mobile?"MOBILE":"DESKTOP")} · win {dbg.w}×{dbg.h} · pane {dbg.ch}/{dbg.sh} · months {mobile?1:CAL_MONTHS.length}</div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
       <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM <span style={{fontSize:10,color:C.mute,fontWeight:700}}>next · stage 1</span></span>
       <div style={{display:"flex",gap:5,alignItems:"center"}}>
@@ -1042,7 +1050,7 @@ function App(){
     <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       {tab==="calendar"&&<div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
         {/* phone: calendar over readout. tablet/desktop: calendar left, readout as a tall right panel. */}
-        <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
+        <div ref={calRef} style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
           <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} viewY={viewY} viewM={viewM} setView={setView}
             tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
             winBy={winBy} travelBy={travelBy} onCreateWindow={onCreateWindow}/>
