@@ -237,28 +237,29 @@ function scheduleWindow(state,sIdx,w){
   return {...state,shifts:[...keep,...made],windows:state.windows.filter(x=>x.id!==w.id)};
 }
 
-/* ─── travel days: real bookends around scheduled remote clusters, editable ─── */
-function scheduledClusters(state,sIdx){
-  const bySite={};
-  // co-located shifts don't incur travel days (the kids came along)
-  state.shifts.filter(s=>s.status==="scheduled"&&!s.coLocated).forEach(s=>{(bySite[s.siteId]=bySite[s.siteId]||[]).push(s.date);});
+/* ─── travel days: bookends around any remote shift cluster, editable ─── */
+function shiftClusters(state,sIdx){
+  const groups={};
+  // any non-co-located remote shift incurs travel; group by site + status (proposed vs scheduled)
+  state.shifts.filter(s=>!s.coLocated&&sIdx[s.siteId]&&sIdx[s.siteId].reach!=="local")
+    .forEach(s=>{const k=s.siteId+"|"+(s.status==="scheduled"?"scheduled":"proposed");(groups[k]=groups[k]||[]).push(s.date);});
   const out=[];
-  for(const siteId in bySite){
-    if(!sIdx[siteId]||sIdx[siteId].reach==="local")continue;       // only remote clusters travel
-    const dates=bySite[siteId].slice().sort();let run=null;
+  for(const k in groups){
+    const [siteId,status]=k.split("|"),dates=groups[k].slice().sort();let run=null;
     dates.forEach(dt=>{if(run&&Math.round((pd(dt)-pd(run.to))/864e5)===1)run.to=dt;
-      else {if(run)out.push(run);run={siteId,from:dt,to:dt};}});
+      else {if(run)out.push(run);run={siteId,status,from:dt,to:dt};}});
     if(run)out.push(run);
   }
   return out;
 }
-// date → {kind:"depart"|"return", time, siteId} for every scheduled travel day
+// date → {kind:"depart"|"return", time, siteId, status} for every travel day (skips real shift days)
 function travelBand(state,sIdx){
-  const map={};
-  scheduledClusters(state,sIdx).forEach(c=>{
+  const map={},shiftDates=new Set(state.shifts.map(s=>s.date));
+  shiftClusters(state,sIdx).forEach(c=>{
     const site=sIdx[c.siteId],tv=site.travel||TRAVEL_DEFAULT[site.reach]||TRAVEL_DEFAULT.local;
-    for(let i=(tv.beforeDays||0);i>=1;i--){const dt=ds(ad(pd(c.from),-i));if(!map[dt])map[dt]={kind:"depart",time:tv.departTime,siteId:c.siteId};}
-    for(let i=1;i<=(tv.afterDays||0);i++){const dt=ds(ad(pd(c.to),i));if(!map[dt])map[dt]={kind:"return",time:tv.returnTime,siteId:c.siteId};}
+    const put=(dt,o)=>{if(!map[dt]&&!shiftDates.has(dt))map[dt]={...o,siteId:c.siteId,status:c.status};};
+    for(let i=(tv.beforeDays||0);i>=1;i--)put(ds(ad(pd(c.from),-i)),{kind:"depart",time:tv.departTime});
+    for(let i=1;i<=(tv.afterDays||0);i++)put(ds(ad(pd(c.to),i)),{kind:"return",time:tv.returnTime});
   });
   return map;
 }
@@ -293,10 +294,10 @@ function aggregate(state,sIdx,viewYM){
   // proposed windows: money is pinned (X×rate); hours contribute their low end (a floor) for the window's month
   (state.windows||[]).forEach(w=>{if(!w.from.startsWith(yr))return;const b=windowBand(w,state,sIdx);
     proposed$+=b.money;if(mk(w.from)===viewYM)hrs.proposed+=b.min;});
-  // travel days (scheduled remote clusters) add their hours to worked/scheduled by date
+  // travel days add their hours to the bucket of their cluster (proposed → proposed; else worked/scheduled by date)
   const tb=travelBand(state,sIdx);
-  Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;
-    hrs[dt<TODAY_S?"worked":"scheduled"]+=travelMissed(dt,tb[dt],state,travelEditOf(state,dt));});
+  Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;const info=tb[dt],miss=travelMissed(dt,info,state,travelEditOf(state,dt));
+    hrs[info.status==="proposed"?"proposed":(dt<TODAY_S?"worked":"scheduled")]+=miss;});
   return {worked$,scheduled$,proposed$,hrs};
 }
 
@@ -434,7 +435,8 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
     </div>
     {shift?<ShiftPill site={sIdx[shift.siteId]} cat={cat} status={status} co={shift.coLocated}/>
       :showTravel?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:C.ocean,display:"flex",alignItems:"center",gap:2,
-        border:`1.5px solid ${C.ocean}`,borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>✈ {fmtH(tMissed)}</div>
+        border:`1.5px ${travel.status==="proposed"?"dashed":"solid"} ${C.ocean}`,opacity:travel.status==="proposed"?0.7:1,
+        borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>✈ {fmtH(tMissed)}</div>
       :spanFirst?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:C.ocean,border:`1.5px dashed ${C.ocean}`,
         borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>{siteCode(sIdx[win.w.siteId])} ×{win.w.x}</div>
       :win&&win.kind==="span"?<div style={{marginTop:"auto",height:3,borderRadius:2,background:C.ocean,opacity:0.4}}/>:null}
@@ -511,20 +513,17 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
   </div>;
 }
 
-/* shift picker keyed to lifecycle: proposed = Day/Night (specific optional), scheduled = specific only */
+/* shift picker keyed to lifecycle: proposed = Day/Night + the specific list; scheduled = specific only */
 function ShiftSelect({site,type,coarse,compact,onChange}){
-  const cat=shiftCat(site,type);
+  const style={...inp,...(compact?{flex:1,minWidth:0}:{maxWidth:240})};
+  const opts=site.menu.map(m=><option key={m.shift} value={m.shift}>{SHIFT_BY[m.shift].label} · {SHIFT_BY[m.shift].night?"Night":"Day"}</option>);
   if(coarse){
-    const spec=!isCat(type),catShifts=site.menu.filter(m=>(SHIFT_BY[m.shift].night?"night":"day")===cat);
-    return <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-      {["day","night"].map(t=><Btn key={t} small={compact} on={cat===t} onClick={()=>onChange(t)}>{t==="day"?"Day":"Night"}</Btn>)}
-      {!compact&&catShifts.length>0&&<select style={{...inp,width:"auto",padding:"4px 6px",fontSize:11.5}} value={spec?type:""} onChange={e=>onChange(e.target.value||cat)}>
-        <option value="">{cat} · any</option>
-        {catShifts.map(m=><option key={m.shift} value={m.shift}>{SHIFT_BY[m.shift].label}</option>)}</select>}
-    </div>;
+    const val=isCat(type)?type:(site.menu.some(m=>m.shift===type)?type:"day");
+    return <select style={style} value={val} onChange={e=>onChange(e.target.value)}>
+      <option value="day">Day (any)</option><option value="night">Night (any)</option>
+      {opts}</select>;
   }
-  return <select style={{...inp,...(compact?{flex:1,minWidth:0}:{maxWidth:220})}} value={resolveEntry(site,type).shift} onChange={e=>onChange(e.target.value)}>
-    {site.menu.map(m=><option key={m.shift} value={m.shift}>{SHIFT_BY[m.shift].label} · {SHIFT_BY[m.shift].night?"Night":"Day"}</option>)}</select>;
+  return <select style={style} value={resolveEntry(site,type).shift} onChange={e=>onChange(e.target.value)}>{opts}</select>;
 }
 
 /* ════════ READOUT — the per-day picker/editor ════════ */
