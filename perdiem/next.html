@@ -146,7 +146,7 @@ function seedState(){
 /* ════════ ENGINE ════════ */
 const siteIndex=sites=>Object.fromEntries(sites.map(s=>[s.id,s]));
 function resolveEntry(site,type){
-  const menu=site.menu||[];
+  const menu=(site&&site.menu)||[{shift:"d7",rate:0}];
   if(type==="day")  return menu.find(e=>!SHIFT_BY[e.shift].night)||menu[0];
   if(type==="night")return menu.find(e=> SHIFT_BY[e.shift].night)||menu[0];
   return menu.find(e=>e.shift===type)||menu[0];
@@ -292,9 +292,31 @@ function aggregate(state,sIdx,viewYM){
   return {worked$,scheduled$,proposed$,hrs};
 }
 
-/* ════════ persistence + sanitize (light) ════════ */
+/* ════════ persistence + sanitize ════════
+   Every load path normalises onto seed defaults and drops invalid
+   records, so a partial or old-shape saved state can never crash render. */
+const DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
+function sanitize(o){
+  if(!o||typeof o!=="object")return seedState();
+  const seed=seedState();
+  let sites=(Array.isArray(o.sites)?o.sites:[]).filter(s=>s&&s.id&&Array.isArray(s.menu)&&s.menu.length&&s.menu.every(m=>m&&SHIFT_BY[m.shift]));
+  if(!sites.length)sites=seed.sites;
+  const ids=new Set(sites.map(s=>s.id));
+  const arr=(v,fb)=>Array.isArray(v)?v:fb;
+  const settings={...seed.settings,...(o.settings&&typeof o.settings==="object"?o.settings:{})};
+  const obj=v=>(v&&typeof v==="object"&&!Array.isArray(v))?v:{};
+  const shifts=arr(o.shifts,[]).filter(s=>s&&DATE_RE.test(s.date)&&ids.has(s.siteId)).map(s=>{
+    const o2={id:String(s.id||("s"+Math.random().toString(36).slice(2))),date:s.date,siteId:s.siteId,
+      type:s.type||"day",status:s.status==="scheduled"?"scheduled":"proposed",coLocated:!!s.coLocated};
+    if(Number.isFinite(s.actualPay))o2.actualPay=s.actualPay;
+    if(Number.isFinite(s.actualMissed))o2.actualMissed=s.actualMissed;return o2;});
+  const windows=arr(o.windows,[]).filter(w=>w&&DATE_RE.test(w.from)&&DATE_RE.test(w.to)&&w.from<=w.to&&ids.has(w.siteId))
+    .map(w=>({id:String(w.id||("w"+Math.random().toString(36).slice(2))),siteId:w.siteId,type:w.type||"day",from:w.from,to:w.to,x:clamp(Math.round(+w.x||1),1,99)}));
+  return {sites,trips:arr(o.trips,seed.trips),calendars:arr(o.calendars,seed.calendars),
+    settings,monthOverrides:obj(o.monthOverrides),travelEdits:obj(o.travelEdits),shifts,windows};
+}
 function load(){
-  try{const s=localStorage.getItem("perDiemNext");if(s){const o=JSON.parse(s);if(o&&o.shifts&&o.sites&&o.settings){o.windows=o.windows||[];o.trips=o.trips||[];return o;}}}catch(e){}
+  try{const s=localStorage.getItem("perDiemNext");if(s)return sanitize(JSON.parse(s));}catch(e){}
   return seedState();
 }
 
@@ -628,7 +650,7 @@ function DrawerStrip({state,mutate}){
       <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute}}>
         {open?"▾":"▸"} Calendars & trips</span>
       {!open&&<span style={{fontSize:10.5,color:C.gray}}>
-        {state.calendars.filter(c=>c.visible!==false).length} cal · {state.trips.filter(t=>t.visible!==false).length} trips shown</span>}
+        {(state.calendars||[]).filter(c=>c.visible!==false).length} cal · {(state.trips||[]).filter(t=>t.visible!==false).length} trips shown</span>}
     </div>
     {open&&<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"2px 12px 9px"}}>
       {state.calendars.map(c=><Chip key={c.id} on={c.visible!==false} dot={c.color} onClick={()=>toggleCal(c.id)}>{c.name}</Chip>)}
