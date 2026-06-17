@@ -1139,7 +1139,9 @@ function App(){
       if(ex)mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===ex.id?{...x,status:"scheduled",type:specificType(sIdx[x.siteId],x.type)}:x)}));
       else mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:specificType(sIdx[lastSite],"day"),status:"scheduled",coLocated:false}]}));
     }else if(tool==="erase"){
-      if(ex&&ex.status==="proposed")mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));   // erase = proposed-only
+      // erase the sketch layer: a proposed shift, else a window covering this day (committed shifts need readout delete)
+      if(ex&&ex.status==="proposed")mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));
+      else {const w=(state.windows||[]).find(w=>str>=w.from&&str<=w.to);if(w)mutate(s=>({...s,windows:s.windows.filter(x=>x.id!==w.id)}));}
     }
     setSelected(str);setSelTid(null);
     setSelWid(winBy[str]?winBy[str].w.id:null);
@@ -1151,6 +1153,7 @@ function App(){
     const id="w"+Date.now(),span=Math.round((pd(to)-pd(from))/864e5)+1;
     mutate(s=>({...s,windows:[...(s.windows||[]),{id,siteId:lastSite,type:"day",from,to,x:clamp(Math.round(span/2),1,span)}]}));
     setSelWid(id);setSelTid(null);setSelected(from);const d=pd(from);setVY([d.getFullYear(),d.getMonth()]);
+    setTool("select");   // window is one-shot — revert to select so the next drag doesn't make another
   },[lastSite]);
   // grab a trip from the drawer and drop it on a day: sets its start, keeps its duration; edits sync with the tab
   const placeTrip=(id,from,dur)=>{mutate(s=>({...s,trips:s.trips.map(t=>t.id===id?{...t,from,to:ds(ad(pd(from),Math.max(0,dur))),visible:true}:t)}));
