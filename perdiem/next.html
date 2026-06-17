@@ -83,11 +83,13 @@ const clamp=(x,lo,hi)=>Math.max(lo,Math.min(hi,x));
 
 /* ─── shift catalog: a shift is (start, duration); night = overnight start ─── */
 const SHIFTS=[
-  {id:"d7", start:"07:00",hours:8, night:false,label:"7a · 8h"},
   {id:"d6", start:"06:00",hours:8, night:false,label:"6a · 8h"},
-  {id:"D7", start:"07:00",hours:12,night:false,label:"7a · 12h"},
+  {id:"d7", start:"07:00",hours:8, night:false,label:"7a · 8h"},
+  {id:"d10",start:"10:00",hours:8, night:false,label:"10a · 8h"},
+  {id:"d11",start:"11:00",hours:8, night:false,label:"11a · 8h"},
   {id:"n22",start:"22:00",hours:8, night:true, label:"10p · 8h"},
   {id:"n23",start:"23:00",hours:8, night:true, label:"11p · 8h"},
+  {id:"D7", start:"07:00",hours:12,night:false,label:"7a · 12h"},
   {id:"N19",start:"19:00",hours:12,night:true, label:"7p · 12h"},
 ];
 const SHIFT_BY=Object.fromEntries(SHIFTS.map(s=>[s.id,s]));
@@ -102,7 +104,7 @@ const TRAVEL_DEFAULT={
 /* ════════ SEED ════════ */
 function seedState(){
   const sites=[
-    {id:"boston",  name:"Boston ED",     reach:"local",   menu:[{shift:"d7",rate:245},{shift:"D7",rate:230},{shift:"n22",rate:290}], travel:TRAVEL_DEFAULT.local},
+    {id:"boston",  name:"BMC South",     reach:"local",   menu:[{shift:"d6",rate:245},{shift:"d7",rate:245},{shift:"d10",rate:245},{shift:"d11",rate:245},{shift:"n22",rate:290},{shift:"n23",rate:290}], travel:TRAVEL_DEFAULT.local},
     {id:"santa_fe",name:"Santa Fe ED",   reach:"nm",      menu:[{shift:"d7",rate:170},{shift:"N19",rate:210}], travel:{beforeDays:1,departTime:"16:00",afterDays:0,returnTime:"22:00"}},
     {id:"abq",     name:"Albuquerque ED",reach:"nm",      menu:[{shift:"d7",rate:285},{shift:"n23",rate:305}], travel:{beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"21:00"}},
     {id:"gallup",  name:"Silver City ED",reach:"rural_nm",menu:[{shift:"D7",rate:300},{shift:"N19",rate:335}], travel:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"}},
@@ -303,6 +305,10 @@ function sanitize(o){
   const seed=seedState();
   let sites=(Array.isArray(o.sites)?o.sites:[]).filter(s=>s&&s.id&&Array.isArray(s.menu)&&s.menu.length&&s.menu.every(m=>m&&SHIFT_BY[m.shift]));
   if(!sites.length)sites=seed.sites;
+  // one-time migration: old "Boston ED" → BMC South with the full 8-hour menu (runs once; name guard prevents re-trigger)
+  sites=sites.map(s=>s.name==="Boston ED"
+    ?{...s,name:"BMC South",menu:[{shift:"d6",rate:245},{shift:"d7",rate:245},{shift:"d10",rate:245},{shift:"d11",rate:245},{shift:"n22",rate:290},{shift:"n23",rate:290}]}
+    :s);
   const ids=new Set(sites.map(s=>s.id));
   const arr=(v,fb)=>Array.isArray(v)?v:fb;
   const settings={...seed.settings,...(o.settings&&typeof o.settings==="object"?o.settings:{})};
@@ -502,7 +508,7 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
 }
 
 /* ════════ READOUT — the per-day picker/editor ════════ */
-function Readout({state,sIdx,selected,mutate}){
+function Readout({state,sIdx,selected,mutate,mobile}){
   if(!selected)return <div style={{padding:"16px 14px",color:C.mute,fontSize:12.5}}>
     Tap a day to read or edit it. <b>Propose</b> adds a shift; <b>Schedule</b> commits it (or draws a fresh one); <b>Erase</b> removes a proposed one.</div>;
   const shift=state.shifts.find(s=>s.date===selected);
@@ -541,6 +547,38 @@ function Readout({state,sIdx,selected,mutate}){
   const status=bucketOf(shift);
   const showPay=worked?payOf(shift,sIdx):plannedPay,showMissed=worked?missedOf(shift,state,sIdx):plannedMissed;
   const edited=worked&&(Number.isFinite(shift.actualPay)||Number.isFinite(shift.actualMissed));
+  const curShift=resolveEntry(site,shift.type).shift;
+  // compact phone layout: title+status+delete / site+shift / readout — fits without scrolling
+  if(mobile)return <div style={{padding:"9px 12px"}}>
+    <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
+      <b style={{fontSize:14}}>{MON[d.getMonth()]} {d.getDate()}</b>
+      <span style={{fontSize:9.5,color:out?C.juniper:C.mute}}>{out?"home":"school"}</span>
+      {warn&&<span title={warn} style={{fontSize:11,color:C.warn}}>⚠</span>}
+      <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+        <Btn small on={status==="proposed"} onClick={()=>setShift({status:"proposed"})}>Prop</Btn>
+        <Btn small on={status!=="proposed"} onClick={()=>setShift({status:"scheduled"})}>{worked?"Worked":"Sched"}</Btn>
+        <Btn small onClick={del}>✕</Btn>
+      </div>
+    </div>
+    <div style={{display:"flex",gap:6,marginBottom:7}}>
+      <select style={{...inp,flex:1,minWidth:0}} value={shift.siteId} onChange={e=>setShift({siteId:e.target.value})}>
+        {state.sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
+      <select style={{...inp,flex:1,minWidth:0}} value={curShift} onChange={e=>setShift({type:e.target.value})}>
+        {site.menu.map(m=><option key={m.shift} value={m.shift}>{SHIFT_BY[m.shift].label} {SHIFT_BY[m.shift].night?"N":"D"}</option>)}</select>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:14,fontSize:12,fontVariantNumeric:"tabular-nums"}}>
+      <span><b style={{color:C.juniper,fontSize:14}}>{fmt$(showPay)}</b></span>
+      <span>miss <b style={{color:showMissed>0?C.danger:C.gray,fontSize:14}}>{fmtH(showMissed)}</b></span>
+      <span style={{color:C.mute,fontSize:10.5}}>awake {fmtH(awake)}</span>
+      {remote&&<label style={{marginLeft:"auto",fontSize:10.5,display:"flex",gap:4,alignItems:"center"}}>
+        <input type="checkbox" checked={!!shift.coLocated} onChange={e=>setShift({coLocated:e.target.checked})}/>co-loc</label>}
+    </div>
+    {worked&&<div style={{display:"flex",gap:8,marginTop:7,fontSize:10.5,color:C.gray,alignItems:"center"}}>
+      <span>actual</span>
+      <input type="number" style={{...inp,width:80,padding:"3px 6px"}} value={Math.round(showPay)} onChange={e=>setShift({actualPay:e.target.value===""?undefined:+e.target.value})}/>
+      <input type="number" step="0.5" style={{...inp,width:64,padding:"3px 6px"}} value={showMissed} onChange={e=>setShift({actualMissed:e.target.value===""?undefined:+e.target.value})}/>
+      {edited&&<Btn small onClick={()=>setShift({actualPay:undefined,actualMissed:undefined})}>reset</Btn>}</div>}
+  </div>;
   return <div style={{padding:"14px"}}>{head}
     {warn&&<div style={{fontSize:11.5,fontWeight:700,color:C.warn,marginBottom:9,display:"flex",alignItems:"center",gap:5}}>⚠ {warn}</div>}
     <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
@@ -803,6 +841,8 @@ function App(){
     const d=pd(str);setVY([d.getFullYear(),d.getMonth()]);   // focus the banner's month on the tapped day
   };
   const onCreateWindow=React.useCallback((from,to)=>{
+    if(to<TODAY_S)return;                         // windows are future intent — ignore an all-past drag
+    if(from<TODAY_S)from=TODAY_S;                 // trim a window that starts in the past
     const id="w"+Date.now(),span=Math.round((pd(to)-pd(from))/864e5)+1;
     mutate(s=>({...s,windows:[...(s.windows||[]),{id,siteId:lastSite,type:"day",from,to,x:clamp(Math.round(span/2),1,span)}]}));
     setSelWid(id);setSelected(from);const d=pd(from);setVY([d.getFullYear(),d.getMonth()]);
@@ -846,7 +886,7 @@ function App(){
           :{flex:"0 0 380px",overflow:"auto",borderLeft:`1px solid ${C.line}`,background:C.panel}}>
           {selWid&&state.windows.find(w=>w.id===selWid)
             ? <WindowReadout state={state} sIdx={sIdx} wid={selWid} mutate={mutate} onScheduled={()=>setSelWid(null)}/>
-            : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate}/>}
+            : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate} mobile={mobile}/>}
         </div>
       </div>}
       {tab==="setup"&&<TripsCalsTab state={state} mutate={mutate}/>}
