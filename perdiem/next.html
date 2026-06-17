@@ -104,7 +104,7 @@ const TRAVEL_DEFAULT={
 /* ════════ SEED ════════ */
 function seedState(){
   const sites=[
-    {id:"boston",  name:"BMC South",     reach:"local",   menu:[{shift:"d6",rate:245},{shift:"d7",rate:245},{shift:"d10",rate:245},{shift:"d11",rate:245},{shift:"n22",rate:290},{shift:"n23",rate:290}], travel:TRAVEL_DEFAULT.local},
+    {id:"boston",  name:"BMC South",     reach:"local",   menu:[{shift:"d7",rate:245},{shift:"d6",rate:245},{shift:"d10",rate:245},{shift:"d11",rate:245},{shift:"n22",rate:290},{shift:"n23",rate:290}], travel:TRAVEL_DEFAULT.local},
     {id:"santa_fe",name:"Santa Fe ED",   reach:"nm",      menu:[{shift:"d7",rate:170},{shift:"N19",rate:210}], travel:{beforeDays:1,departTime:"16:00",afterDays:0,returnTime:"22:00"}},
     {id:"abq",     name:"Albuquerque ED",reach:"nm",      menu:[{shift:"d7",rate:285},{shift:"n23",rate:305}], travel:{beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"21:00"}},
     {id:"gallup",  name:"Silver City ED",reach:"rural_nm",menu:[{shift:"D7",rate:300},{shift:"N19",rate:335}], travel:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"}},
@@ -153,7 +153,9 @@ function resolveEntry(site,type){
   if(type==="night")return menu.find(e=> SHIFT_BY[e.shift].night)||menu[0];
   return menu.find(e=>e.shift===type)||menu[0];
 }
+const isCat=t=>t==="day"||t==="night";              // coarse type vs a specific catalog id
 const shiftCat=(site,type)=>SHIFT_BY[resolveEntry(site,type).shift].night?"night":"day";
+const specificType=(site,type)=>isCat(type)?resolveEntry(site,type).shift:type;   // coarse → representative specific shift
 function shiftInterval(site,type){            // [startHour, endHour] within the day
   const e=resolveEntry(site,type),sh=SHIFT_BY[e.shift]||SHIFT_BY.d7,start=parseHM(sh.start);
   return [start,start+sh.hours];
@@ -175,11 +177,13 @@ function homeAwake(str,state){
   return [[wake,ss],[se,bed]].filter(([a,b])=>b>a);
 }
 const dayAwakeHours=(str,state)=>homeAwake(str,state).reduce((t,[a,b])=>t+(b-a),0);
-// hours a single shift misses: its interval ∩ the kid-home-awake band.
-// co-location removes TRAVEL cost (handled in travelBand), not the shift itself —
-// you're still at work during kid-awake hours even when the kids came along.
+// hours a single shift's DAY misses kid-home-awake time:
+//  · remote & not co-located → you're in another city all day → the full home-awake hours
+//  · local, or co-located (kids came along) → only the shift's clock-hours overlap; home before/after
+// (travel days are counted separately in travelBand.)
 function shiftMissed(shift,state,sIdx){
   const site=sIdx[shift.siteId];if(!site)return 0;
+  if(site.reach!=="local"&&!shift.coLocated)return dayAwakeHours(shift.date,state);
   const [a,b]=shiftInterval(site,shift.type),aw=homeAwake(shift.date,state);
   let t=0;for(const [x,y] of aw)t+=ovl(a,Math.min(b,24),x,y);
   return Math.round(t*10)/10;
@@ -229,7 +233,7 @@ function scheduleWindow(state,sIdx,w){
   const dates=winDates(w).map(dt=>({dt,m:shiftMissed({date:dt,siteId:w.siteId,type:w.type,coLocated:false},state,sIdx)}))
     .sort((a,b)=>a.m-b.m).slice(0,clamp(w.x||1,1,winDates(w).length)).map(o=>o.dt);
   const keep=state.shifts.filter(s=>!dates.includes(s.date));
-  const made=dates.map((dt,i)=>({id:"w"+w.id+"_"+i,date:dt,siteId:w.siteId,type:w.type,status:"scheduled",coLocated:false}));
+  const made=dates.map((dt,i)=>({id:"w"+w.id+"_"+i,date:dt,siteId:w.siteId,type:specificType(sIdx[w.siteId],w.type),status:"scheduled",coLocated:false}));
   return {...state,shifts:[...keep,...made],windows:state.windows.filter(x=>x.id!==w.id)};
 }
 
@@ -307,7 +311,7 @@ function sanitize(o){
   if(!sites.length)sites=seed.sites;
   // one-time migration: old "Boston ED" → BMC South with the full 8-hour menu (runs once; name guard prevents re-trigger)
   sites=sites.map(s=>s.name==="Boston ED"
-    ?{...s,name:"BMC South",menu:[{shift:"d6",rate:245},{shift:"d7",rate:245},{shift:"d10",rate:245},{shift:"d11",rate:245},{shift:"n22",rate:290},{shift:"n23",rate:290}]}
+    ?{...s,name:"BMC South",menu:[{shift:"d7",rate:245},{shift:"d6",rate:245},{shift:"d10",rate:245},{shift:"d11",rate:245},{shift:"n22",rate:290},{shift:"n23",rate:290}]}
     :s);
   const ids=new Set(sites.map(s=>s.id));
   const arr=(v,fb)=>Array.isArray(v)?v:fb;
@@ -507,6 +511,22 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
   </div>;
 }
 
+/* shift picker keyed to lifecycle: proposed = Day/Night (specific optional), scheduled = specific only */
+function ShiftSelect({site,type,coarse,compact,onChange}){
+  const cat=shiftCat(site,type);
+  if(coarse){
+    const spec=!isCat(type),catShifts=site.menu.filter(m=>(SHIFT_BY[m.shift].night?"night":"day")===cat);
+    return <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+      {["day","night"].map(t=><Btn key={t} small={compact} on={cat===t} onClick={()=>onChange(t)}>{t==="day"?"Day":"Night"}</Btn>)}
+      {!compact&&catShifts.length>0&&<select style={{...inp,width:"auto",padding:"4px 6px",fontSize:11.5}} value={spec?type:""} onChange={e=>onChange(e.target.value||cat)}>
+        <option value="">{cat} · any</option>
+        {catShifts.map(m=><option key={m.shift} value={m.shift}>{SHIFT_BY[m.shift].label}</option>)}</select>}
+    </div>;
+  }
+  return <select style={{...inp,...(compact?{flex:1,minWidth:0}:{maxWidth:220})}} value={resolveEntry(site,type).shift} onChange={e=>onChange(e.target.value)}>
+    {site.menu.map(m=><option key={m.shift} value={m.shift}>{SHIFT_BY[m.shift].label} · {SHIFT_BY[m.shift].night?"Night":"Day"}</option>)}</select>;
+}
+
 /* ════════ READOUT — the per-day picker/editor ════════ */
 function Readout({state,sIdx,selected,mutate,mobile}){
   if(!selected)return <div style={{padding:"16px 14px",color:C.mute,fontSize:12.5}}>
@@ -547,7 +567,9 @@ function Readout({state,sIdx,selected,mutate,mobile}){
   const status=bucketOf(shift);
   const showPay=worked?payOf(shift,sIdx):plannedPay,showMissed=worked?missedOf(shift,state,sIdx):plannedMissed;
   const edited=worked&&(Number.isFinite(shift.actualPay)||Number.isFinite(shift.actualMissed));
-  const curShift=resolveEntry(site,shift.type).shift;
+  // scheduling resolves a coarse day/night proposal to a specific shift (full granularity)
+  const toSched=()=>setShift({status:"scheduled",type:specificType(site,shift.type)});
+  const toProp=()=>setShift({status:"proposed"});
   // compact phone layout: title+status+delete / site+shift / readout — fits without scrolling
   if(mobile)return <div style={{padding:"9px 12px"}}>
     <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
@@ -555,16 +577,15 @@ function Readout({state,sIdx,selected,mutate,mobile}){
       <span style={{fontSize:9.5,color:out?C.juniper:C.mute}}>{out?"home":"school"}</span>
       {warn&&<span title={warn} style={{fontSize:11,color:C.warn}}>⚠</span>}
       <div style={{marginLeft:"auto",display:"flex",gap:5}}>
-        <Btn small on={status==="proposed"} onClick={()=>setShift({status:"proposed"})}>Prop</Btn>
-        <Btn small on={status!=="proposed"} onClick={()=>setShift({status:"scheduled"})}>{worked?"Worked":"Sched"}</Btn>
+        <Btn small on={status==="proposed"} onClick={toProp}>Prop</Btn>
+        <Btn small on={status!=="proposed"} onClick={toSched}>{worked?"Worked":"Sched"}</Btn>
         <Btn small onClick={del}>✕</Btn>
       </div>
     </div>
-    <div style={{display:"flex",gap:6,marginBottom:7}}>
+    <div style={{display:"flex",gap:6,marginBottom:7,alignItems:"center"}}>
       <select style={{...inp,flex:1,minWidth:0}} value={shift.siteId} onChange={e=>setShift({siteId:e.target.value})}>
         {state.sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
-      <select style={{...inp,flex:1,minWidth:0}} value={curShift} onChange={e=>setShift({type:e.target.value})}>
-        {site.menu.map(m=><option key={m.shift} value={m.shift}>{SHIFT_BY[m.shift].label} {SHIFT_BY[m.shift].night?"N":"D"}</option>)}</select>
+      <div style={{flex:1,minWidth:0}}><ShiftSelect site={site} type={shift.type} coarse={status==="proposed"} compact onChange={t=>setShift({type:t})}/></div>
     </div>
     <div style={{display:"flex",alignItems:"center",gap:14,fontSize:12,fontVariantNumeric:"tabular-nums"}}>
       <span><b style={{color:C.juniper,fontSize:14}}>{fmt$(showPay)}</b></span>
@@ -585,14 +606,11 @@ function Readout({state,sIdx,selected,mutate,mobile}){
       <div style={{flex:"1 1 280px"}}>
         <Field label="Site"><select style={inp} value={shift.siteId} onChange={e=>setShift({siteId:e.target.value})}>
           {state.sites.map(s=><option key={s.id} value={s.id}>{s.name} · {REACH_LABEL[s.reach]}</option>)}</select></Field>
-        <Field label="Shift"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-          {site.menu.map(m=>{const sh=SHIFT_BY[m.shift],on=resolveEntry(site,shift.type).shift===m.shift;
-            return <Btn key={m.shift} on={on} onClick={()=>setShift({type:m.shift})}>{sh.label} · {sh.night?"Night":"Day"}</Btn>;})}
-          {site.menu.length<2&&<span style={{alignSelf:"center",fontSize:10.5,color:C.mute}}>add more in Sites →</span>}
-        </div></Field>
+        <Field label={status==="proposed"?"Shift (day/night, or pick specific)":"Shift"}>
+          <ShiftSelect site={site} type={shift.type} coarse={status==="proposed"} onChange={t=>setShift({type:t})}/></Field>
         <Field label="Status"><div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <Btn on={status==="proposed"} onClick={()=>setShift({status:"proposed"})}>Proposed</Btn>
-          <Btn on={status!=="proposed"} onClick={()=>setShift({status:"scheduled"})}>Scheduled</Btn>
+          <Btn on={status==="proposed"} onClick={toProp}>Proposed</Btn>
+          <Btn on={status!=="proposed"} onClick={toSched}>Scheduled</Btn>
           {worked&&<span style={{fontSize:10.5,fontWeight:800,color:C.gray}}>✓ worked (past)</span>}
         </div></Field>
         {remote&&<label style={{display:"flex",alignItems:"flex-start",gap:7,fontSize:12,marginTop:2,cursor:"pointer"}}>
@@ -831,8 +849,8 @@ function App(){
       if(!ex)mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"proposed",coLocated:false}]}));
     }else if(tool==="schedule"){
       // draw-to-schedule: replaces a proposed shift in place, or drops a fresh scheduled one
-      if(ex)mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===ex.id?{...x,status:"scheduled"}:x)}));
-      else mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"scheduled",coLocated:false}]}));
+      if(ex)mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===ex.id?{...x,status:"scheduled",type:specificType(sIdx[x.siteId],x.type)}:x)}));
+      else mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:specificType(sIdx[lastSite],"day"),status:"scheduled",coLocated:false}]}));
     }else if(tool==="erase"){
       if(ex&&ex.status==="proposed")mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));   // erase = proposed-only
     }
