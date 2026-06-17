@@ -97,7 +97,7 @@ const REACH_LABEL={local:"local",nm:"NM",rural_nm:"rural NM"};
 // per-reach default travel bracket: days out before / back after the shift block
 const TRAVEL_DEFAULT={
   local:   {beforeDays:0,departTime:"06:00",afterDays:0,returnTime:"20:00"},
-  nm:      {beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"22:00"},
+  nm:      {beforeDays:1,departTime:"15:00",afterDays:1,returnTime:"13:00"},
   rural_nm:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"},
 };
 
@@ -105,8 +105,8 @@ const TRAVEL_DEFAULT={
 function seedState(){
   const sites=[
     {id:"boston",  name:"BMC South",     reach:"local",   menu:[{shift:"d7",rate:245},{shift:"d6",rate:245},{shift:"d10",rate:245},{shift:"d11",rate:245},{shift:"n22",rate:290},{shift:"n23",rate:290}], travel:TRAVEL_DEFAULT.local},
-    {id:"santa_fe",name:"Santa Fe ED",   reach:"nm",      menu:[{shift:"d7",rate:170},{shift:"N19",rate:210}], travel:{beforeDays:1,departTime:"16:00",afterDays:0,returnTime:"22:00"}},
-    {id:"abq",     name:"Albuquerque ED",reach:"nm",      menu:[{shift:"d7",rate:285},{shift:"n23",rate:305}], travel:{beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"21:00"}},
+    {id:"santa_fe",name:"Santa Fe ED",   reach:"nm",      menu:[{shift:"d7",rate:170},{shift:"N19",rate:210}], travel:{beforeDays:1,departTime:"16:00",afterDays:1,returnTime:"13:00"}},
+    {id:"abq",     name:"Albuquerque ED",reach:"nm",      menu:[{shift:"d7",rate:285},{shift:"n23",rate:305}], travel:{beforeDays:1,departTime:"15:00",afterDays:1,returnTime:"13:00"}},
     {id:"gallup",  name:"Silver City ED",reach:"rural_nm",menu:[{shift:"D7",rate:300},{shift:"N19",rate:335}], travel:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"}},
   ];
   const trips=[
@@ -142,7 +142,7 @@ function seedState(){
   const settings={wake:"07:00",bed:"20:00",schoolStart:"08:00",schoolEnd:"15:00",goal:220000};
   // a proposed window at a travel site: hold 7 days (incl. a weekend), work 2; a travel day bookends it
   const windows=[{id:"w1",siteId:"santa_fe",type:"day",from:"2026-10-17",to:"2026-10-23",x:2}];
-  return {sites,trips,calendars,shifts,monthOverrides,settings,windows};
+  return {sites,trips,calendars,shifts,monthOverrides,settings,windows,travelMigrated:true};
 }
 
 /* ════════ ENGINE ════════ */
@@ -314,6 +314,11 @@ function sanitize(o){
   sites=sites.map(s=>s.name==="Boston ED"
     ?{...s,name:"BMC South",menu:[{shift:"d7",rate:245},{shift:"d6",rate:245},{shift:"d10",rate:245},{shift:"d11",rate:245},{shift:"n22",rate:290},{shift:"n23",rate:290}]}
     :s);
+  // one-time travel migration: remote sites get a return travel day (afterDays ≥ 1); runs once
+  if(o.travelMigrated!==true)sites=sites.map(s=>{
+    if(s.reach==="local")return s;const tv=s.travel||TRAVEL_DEFAULT[s.reach]||{};
+    return {...s,travel:{beforeDays:Math.max(1,Number.isFinite(tv.beforeDays)?tv.beforeDays:1),departTime:tv.departTime||"15:00",
+      afterDays:Math.max(1,Number.isFinite(tv.afterDays)?tv.afterDays:0),returnTime:tv.returnTime||"13:00"}};});
   const ids=new Set(sites.map(s=>s.id));
   const arr=(v,fb)=>Array.isArray(v)?v:fb;
   const settings={...seed.settings,...(o.settings&&typeof o.settings==="object"?o.settings:{})};
@@ -326,7 +331,7 @@ function sanitize(o){
   const windows=arr(o.windows,[]).filter(w=>w&&DATE_RE.test(w.from)&&DATE_RE.test(w.to)&&w.from<=w.to&&ids.has(w.siteId))
     .map(w=>({id:String(w.id||("w"+Math.random().toString(36).slice(2))),siteId:w.siteId,type:w.type||"day",from:w.from,to:w.to,x:clamp(Math.round(+w.x||1),1,99)}));
   return {sites,trips:arr(o.trips,seed.trips),calendars:arr(o.calendars,seed.calendars),
-    settings,monthOverrides:obj(o.monthOverrides),travelEdits:obj(o.travelEdits),shifts,windows};
+    settings,monthOverrides:obj(o.monthOverrides),travelEdits:obj(o.travelEdits),shifts,windows,travelMigrated:true};
 }
 function load(){
   try{const s=localStorage.getItem("perDiemNext");if(s)return sanitize(JSON.parse(s));}catch(e){}
@@ -777,6 +782,7 @@ function SitesTab({state,mutate}){
   const setRate=(sid,shift,rate)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,menu:x.menu.map(m=>m.shift===shift?{...m,rate}:m)})}));
   const addShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.some(m=>m.shift===shiftId)?x:{...x,menu:[...x.menu,{shift:shiftId,rate:200}]})}));
   const rmShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.length<=1?x:{...x,menu:x.menu.filter(m=>m.shift!==shiftId)})}));
+  const setTravel=(sid,patch)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,travel:Object.assign({},x.travel||TRAVEL_DEFAULT[x.reach]||TRAVEL_DEFAULT.local,patch)})}));
   return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:760}}>
     <div style={{fontSize:11,color:C.gray,marginBottom:12}}>Each site's <b>menu</b> is the specific shifts it offers — pick from these on a day. Edit rates, add or remove shifts.</div>
     {state.sites.map(s=>{const have=new Set(s.menu.map(m=>m.shift)),avail=SHIFTS.filter(sh=>!have.has(sh.id));
@@ -793,6 +799,14 @@ function SitesTab({state,mutate}){
             style={{fontFamily:MONO,fontSize:12,border:`1px solid ${C.line}`,background:C.panel,color:C.gray,borderRadius:5,cursor:"pointer",padding:"2px 7px"}}>✕</button>}
         </div>;})}</div>
       {avail.length>0&&<AddShift key={avail.map(a=>a.id).join()} avail={avail} onAdd={id=>addShift(s.id,id)}/>}
+      {s.reach!=="local"&&(()=>{const tv=s.travel||TRAVEL_DEFAULT[s.reach]||TRAVEL_DEFAULT.local;
+        return <div style={{marginTop:10,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>Travel</span>
+          <label style={{fontSize:10.5,color:C.gray}}>days out<br/><input type="number" min="0" max="3" value={tv.beforeDays} onChange={e=>setTravel(s.id,{beforeDays:Math.max(0,+e.target.value||0)})} style={{...inp,width:54,padding:"3px 6px"}}/></label>
+          <label style={{fontSize:10.5,color:C.gray}}>depart<br/><input type="time" value={tv.departTime} onChange={e=>setTravel(s.id,{departTime:e.target.value})} style={{...inp,width:110,padding:"3px 6px"}}/></label>
+          <label style={{fontSize:10.5,color:C.gray}}>days back<br/><input type="number" min="0" max="3" value={tv.afterDays} onChange={e=>setTravel(s.id,{afterDays:Math.max(0,+e.target.value||0)})} style={{...inp,width:54,padding:"3px 6px"}}/></label>
+          <label style={{fontSize:10.5,color:C.gray}}>return<br/><input type="time" value={tv.returnTime} onChange={e=>setTravel(s.id,{returnTime:e.target.value})} style={{...inp,width:110,padding:"3px 6px"}}/></label>
+        </div>;})()}
     </div>;})}
   </div>;
 }
