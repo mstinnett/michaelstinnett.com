@@ -517,15 +517,18 @@ function App(){
     </div>
     {tab==="calendar"&&<Banner agg={agg} goal={state.settings.goal} viewYM={viewYM} mobile={mobile}/>}
     <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-      {tab==="calendar"&&<>
-        <div style={{flex:"1 1 60%",minHeight:0,overflow:"auto"}}>
+      {tab==="calendar"&&<div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
+        {/* phone: calendar over readout. tablet/desktop: calendar left, readout as a tall right panel. */}
+        <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
           <CalendarSurface state={state} sIdx={sIdx} viewY={viewY} viewM={viewM} setView={setView}
             tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}/>
         </div>
-        <div style={{flex:"0 0 auto",maxHeight:"42%",overflow:"auto",borderTop:`1px solid ${C.line}`,background:C.panel}}>
+        <div style={mobile
+          ?{flex:"0 0 auto",maxHeight:"42%",overflow:"auto",borderTop:`1px solid ${C.line}`,background:C.panel}
+          :{flex:"0 0 380px",overflow:"auto",borderLeft:`1px solid ${C.line}`,background:C.panel}}>
           <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate}/>
         </div>
-      </>}
+      </div>}
       {tab==="setup"&&<TripsCalsTab state={state} mutate={mutate}/>}
       {tab==="sites"&&<SitesTab state={state} mutate={mutate}/>}
     </div>
