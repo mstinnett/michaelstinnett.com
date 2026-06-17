@@ -462,8 +462,8 @@ function monthCells(y,m){
 function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to);}
 
 const siteCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
-function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,onTap,onDown,onEnter}){
-  if(!str)return <div style={{aspectRatio:"1"}}/>;
+function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,box,onTap,onDown,onEnter}){
+  if(!str)return <div style={box}/>;
   const allDay=homeAllDay(str,state),trip=tripOn(str,state.trips);
   const cals=visCals(state).filter(c=>calCovers(c,str)).slice(0,3);
   let bg=C.panel;
@@ -481,7 +481,7 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
   const spanFirst=win&&win.kind==="span"&&win.w.from===str;
   return <div onClick={()=>onTap(str)} data-date={str}
     onPointerDown={onDown?e=>onDown(str,e):undefined} onPointerEnter={onEnter?()=>onEnter(str):undefined}
-    style={{aspectRatio:"1",border:`${selected||warn||win||showTravel?2:1}px ${(win&&win.kind==="travel")?"dashed":"solid"} ${ringCol}`,
+    style={{...box,border:`${selected||warn||win||showTravel?2:1}px ${(win&&win.kind==="travel")?"dashed":"solid"} ${ringCol}`,
     borderRadius:8,background:bg,backgroundImage:hatch?`repeating-linear-gradient(45deg,${C.line2} 0,${C.line2} 1px,transparent 1px,transparent 6px)`:undefined,
     padding:"4px 5px",cursor:"pointer",position:"relative",opacity:locked?0.5:1,
     display:"flex",flexDirection:"column",overflow:"hidden",touchAction:onDown?"none":"auto"}}>
@@ -520,15 +520,16 @@ function ShiftPill({site,cat,status,co}){
 const CAL_MONTHS=Array.from({length:19},(_,i)=>{const m=5+i;return [2026+Math.floor(m/12),m%12];});
 const DowHeader=()=> <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
   {DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}</div>;
-function MonthGrid({y,m,state,sIdx,selected,onTap,label,winBy,travelBy,previewSet,onDown,onEnter}){
+function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,previewSet,onDown,onEnter}){
   const cells=monthCells(y,m);
+  const box=mobile?{aspectRatio:"1"}:{height:90};   // square on phones; compact fixed rows on desktop
   return <div style={{marginBottom:16}}>
     {label&&<div style={{position:"sticky",top:44,zIndex:1,background:C.panel,fontSize:12.5,fontWeight:800,
       letterSpacing:"-0.01em",padding:"6px 2px 5px",borderBottom:`1px solid ${C.line2}`,marginBottom:6}}>{MONL[m]} {y}</div>}
     <DowHeader/>
     <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
       {cells.map((str,i)=>{const shift=str?state.shifts.find(s=>s.date===str):null;
-        return <DayCell key={i} str={str} shift={shift} state={state} sIdx={sIdx}
+        return <DayCell key={i} str={str} shift={shift} state={state} sIdx={sIdx} box={box}
           selected={str&&str===selected} today={str===TODAY_S}
           win={str&&winBy?winBy[str]:null} travel={str&&travelBy?travelBy[str]:null} locked={str?monthLocked(state,str):false}
           preview={!!(str&&previewSet&&previewSet.has(str))}
@@ -551,7 +552,7 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
     return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[drag,onCreateWindow]);
   const onDown=tool==="window"?(str)=>setDrag({anchor:str,over:str}):undefined;
   const onEnter=tool==="window"?(str)=>setDrag(d=>d?{...d,over:str}:d):undefined;
-  const gridProps={winBy,travelBy,previewSet,onDown,onEnter};
+  const gridProps={mobile,winBy,travelBy,previewSet,onDown,onEnter};
   // the parent pane is the scroll container; the tools header sticks to its top
   return <div>
     <div style={{position:"sticky",top:0,zIndex:3,background:C.panel2,borderBottom:`1px solid ${C.line2}`}}>
@@ -968,11 +969,6 @@ function App(){
   const [lastSite,setLastSite]=useState("boston");
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}});
   const [mobile,setMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width:760px)").matches);
-  const calRef=useRef();const [dbg,setDbg]=useState({});
-  useEffect(()=>{const read=()=>{const el=calRef.current;setDbg({w:window.innerWidth,h:window.innerHeight,
-    ch:el?el.clientHeight:-1,sh:el?el.scrollHeight:-1});};
-    read();const id=setInterval(read,800);window.addEventListener("resize",read);
-    return ()=>{clearInterval(id);window.removeEventListener("resize",read);};},[mobile,tab,state]);
 
   useEffect(()=>{try{localStorage.setItem("perDiemNext",JSON.stringify(state));}catch(e){}},[state]);
   useEffect(()=>{const m=window.matchMedia&&window.matchMedia("(max-width:760px)");if(!m)return;
@@ -1028,9 +1024,6 @@ function App(){
   const cycle=()=>setTheme(t=>t==="system"?"light":t==="light"?"dark":"system");
 
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
-    <div style={{position:"fixed",bottom:6,left:6,zIndex:9999,background:"#c0392b",color:"#fff",fontSize:10,fontWeight:700,
-      padding:"3px 7px",borderRadius:4,fontFamily:MONO,pointerEvents:"none"}}>
-      {dbg.mob?"MOBILE":(mobile?"MOBILE":"DESKTOP")} · win {dbg.w}×{dbg.h} · pane {dbg.ch}/{dbg.sh} · months {mobile?1:CAL_MONTHS.length}</div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
       <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM <span style={{fontSize:10,color:C.mute,fontWeight:700}}>next · stage 1</span></span>
       <div style={{display:"flex",gap:5,alignItems:"center"}}>
@@ -1050,7 +1043,7 @@ function App(){
     <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       {tab==="calendar"&&<div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
         {/* phone: calendar over readout. tablet/desktop: calendar left, readout as a tall right panel. */}
-        <div ref={calRef} style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
+        <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
           <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} viewY={viewY} viewM={viewM} setView={setView}
             tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
             winBy={winBy} travelBy={travelBy} onCreateWindow={onCreateWindow}/>
