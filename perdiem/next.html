@@ -102,7 +102,7 @@ const TRAVEL_DEFAULT={
 /* ════════ SEED ════════ */
 function seedState(){
   const sites=[
-    {id:"boston",  name:"Boston ED",     reach:"local",   menu:[{shift:"d7",rate:245},{shift:"n22",rate:290}], travel:TRAVEL_DEFAULT.local},
+    {id:"boston",  name:"Boston ED",     reach:"local",   menu:[{shift:"d7",rate:245},{shift:"D7",rate:230},{shift:"n22",rate:290}], travel:TRAVEL_DEFAULT.local},
     {id:"santa_fe",name:"Santa Fe ED",   reach:"nm",      menu:[{shift:"d7",rate:170},{shift:"N19",rate:210}], travel:{beforeDays:1,departTime:"16:00",afterDays:0,returnTime:"22:00"}},
     {id:"abq",     name:"Albuquerque ED",reach:"nm",      menu:[{shift:"d7",rate:285},{shift:"n23",rate:305}], travel:{beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"21:00"}},
     {id:"gallup",  name:"Silver City ED",reach:"rural_nm",menu:[{shift:"D7",rate:300},{shift:"N19",rate:335}], travel:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"}},
@@ -173,10 +173,11 @@ function homeAwake(str,state){
   return [[wake,ss],[se,bed]].filter(([a,b])=>b>a);
 }
 const dayAwakeHours=(str,state)=>homeAwake(str,state).reduce((t,[a,b])=>t+(b-a),0);
-// hours a single shift misses: its interval ∩ the kid-home-awake band (0 if co-located)
+// hours a single shift misses: its interval ∩ the kid-home-awake band.
+// co-location removes TRAVEL cost (handled in travelBand), not the shift itself —
+// you're still at work during kid-awake hours even when the kids came along.
 function shiftMissed(shift,state,sIdx){
   const site=sIdx[shift.siteId];if(!site)return 0;
-  if(shift.coLocated)return 0;
   const [a,b]=shiftInterval(site,shift.type),aw=homeAwake(shift.date,state);
   let t=0;for(const [x,y] of aw)t+=ovl(a,Math.min(b,24),x,y);
   return Math.round(t*10)/10;
@@ -233,7 +234,8 @@ function scheduleWindow(state,sIdx,w){
 /* ─── travel days: real bookends around scheduled remote clusters, editable ─── */
 function scheduledClusters(state,sIdx){
   const bySite={};
-  state.shifts.filter(s=>s.status==="scheduled").forEach(s=>{(bySite[s.siteId]=bySite[s.siteId]||[]).push(s.date);});
+  // co-located shifts don't incur travel days (the kids came along)
+  state.shifts.filter(s=>s.status==="scheduled"&&!s.coLocated).forEach(s=>{(bySite[s.siteId]=bySite[s.siteId]||[]).push(s.date);});
   const out=[];
   for(const siteId in bySite){
     if(!sIdx[siteId]||sIdx[siteId].reach==="local")continue;       // only remote clusters travel
@@ -545,18 +547,19 @@ function Readout({state,sIdx,selected,mutate}){
       <div style={{flex:"1 1 280px"}}>
         <Field label="Site"><select style={inp} value={shift.siteId} onChange={e=>setShift({siteId:e.target.value})}>
           {state.sites.map(s=><option key={s.id} value={s.id}>{s.name} · {REACH_LABEL[s.reach]}</option>)}</select></Field>
-        <Field label="Shift"><div style={{display:"flex",gap:6}}>
-          {["day","night"].map(t=><Btn key={t} on={cat===t} onClick={()=>setShift({type:t})}>{t==="day"?"Day":"Night"}</Btn>)}
-          <span style={{alignSelf:"center",fontSize:11,color:C.mute}}>{SHIFT_BY[resolveEntry(site,shift.type).shift].label}</span>
+        <Field label="Shift"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {site.menu.map(m=>{const sh=SHIFT_BY[m.shift],on=resolveEntry(site,shift.type).shift===m.shift;
+            return <Btn key={m.shift} on={on} onClick={()=>setShift({type:m.shift})}>{sh.label} · {sh.night?"Night":"Day"}</Btn>;})}
+          {site.menu.length<2&&<span style={{alignSelf:"center",fontSize:10.5,color:C.mute}}>add more in Sites →</span>}
         </div></Field>
         <Field label="Status"><div style={{display:"flex",gap:6,alignItems:"center"}}>
           <Btn on={status==="proposed"} onClick={()=>setShift({status:"proposed"})}>Proposed</Btn>
           <Btn on={status!=="proposed"} onClick={()=>setShift({status:"scheduled"})}>Scheduled</Btn>
           {worked&&<span style={{fontSize:10.5,fontWeight:800,color:C.gray}}>✓ worked (past)</span>}
         </div></Field>
-        {remote&&<label style={{display:"flex",alignItems:"center",gap:7,fontSize:12,marginTop:2,cursor:"pointer"}}>
-          <input type="checkbox" checked={!!shift.coLocated} onChange={e=>setShift({coLocated:e.target.checked})}/>
-          Co-located — kids are here, no hours missed</label>}
+        {remote&&<label style={{display:"flex",alignItems:"flex-start",gap:7,fontSize:12,marginTop:2,cursor:"pointer"}}>
+          <input type="checkbox" checked={!!shift.coLocated} onChange={e=>setShift({coLocated:e.target.checked})} style={{marginTop:2}}/>
+          <span>Co-located — kids came along. No travel days; the shift hours still count.</span></label>}
         {worked&&<div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.line2}`}}>
           <div style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:6}}>Actuals — what really happened</div>
           <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
@@ -569,7 +572,7 @@ function Readout({state,sIdx,selected,mutate}){
       </div>
       <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
         <Stat label={worked?"Earned":"Earns"} value={fmt$(showPay)} sub={edited&&Number.isFinite(shift.actualPay)?"actual":null} accent={C.juniper}/>
-        <Stat label="Hours missed" value={shift.coLocated?"0h":fmtH(showMissed)} sub={edited&&Number.isFinite(shift.actualMissed)?"actual":null} accent={showMissed>0&&!shift.coLocated?C.danger:C.gray}/>
+        <Stat label="Hours missed" value={fmtH(showMissed)} sub={edited&&Number.isFinite(shift.actualMissed)?"actual":shift.coLocated?"no travel":null} accent={showMissed>0?C.danger:C.gray}/>
         <Btn small onClick={del}>Delete</Btn>
       </div>
     </div>
@@ -717,18 +720,34 @@ function TripsCalsTab({state,mutate}){
 }
 function SitesTab({state,mutate}){
   const setRate=(sid,shift,rate)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,menu:x.menu.map(m=>m.shift===shift?{...m,rate}:m)})}));
-  return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:720}}>
-    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>Site setup is mostly unchanged from today — rates shown here; full editor comes back later.</div>
-    {state.sites.map(s=><div key={s.id} style={{padding:"10px 0",borderBottom:`1px solid ${C.line2}`}}>
-      <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6}}>
+  const addShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.some(m=>m.shift===shiftId)?x:{...x,menu:[...x.menu,{shift:shiftId,rate:200}]})}));
+  const rmShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.length<=1?x:{...x,menu:x.menu.filter(m=>m.shift!==shiftId)})}));
+  return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:760}}>
+    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>Each site's <b>menu</b> is the specific shifts it offers — pick from these on a day. Edit rates, add or remove shifts.</div>
+    {state.sites.map(s=>{const have=new Set(s.menu.map(m=>m.shift)),avail=SHIFTS.filter(sh=>!have.has(sh.id));
+      return <div key={s.id} style={{padding:"12px 0",borderBottom:`1px solid ${C.line2}`}}>
+      <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:8}}>
         <b style={{fontSize:13.5}}>{s.name}</b><span style={{fontSize:10.5,color:C.mute}}>{REACH_LABEL[s.reach]}</span></div>
-      <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>{s.menu.map(m=>{const sh=SHIFT_BY[m.shift];
-        return <label key={m.shift} style={{fontSize:11.5}}>
-          <span style={{color:C.gray}}>{sh.night?"Night":"Day"} ({sh.label}) $/hr </span>
-          <input type="number" value={m.rate} onChange={e=>setRate(s.id,m.shift,+e.target.value||0)}
-            style={{...inp,width:76,display:"inline-block",padding:"3px 6px"}}/>
-          <span style={{color:C.mute}}> = {fmt$(m.rate*sh.hours)}/shift</span></label>;})}</div>
-    </div>)}
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>{s.menu.map(m=>{const sh=SHIFT_BY[m.shift];
+        return <div key={m.shift} style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,flexWrap:"wrap"}}>
+          <span style={{minWidth:128}}><b>{sh.label}</b> <span style={{color:C.mute}}>· {sh.night?"Night":"Day"}</span></span>
+          <span style={{color:C.gray}}>$/hr</span>
+          <input type="number" value={m.rate} onChange={e=>setRate(s.id,m.shift,+e.target.value||0)} style={{...inp,width:76,padding:"3px 6px"}}/>
+          <span style={{color:C.mute}}>= {fmt$(m.rate*sh.hours)}/shift</span>
+          {s.menu.length>1&&<button onClick={()=>rmShift(s.id,m.shift)} title="remove shift"
+            style={{fontFamily:MONO,fontSize:12,border:`1px solid ${C.line}`,background:C.panel,color:C.gray,borderRadius:5,cursor:"pointer",padding:"2px 7px"}}>✕</button>}
+        </div>;})}</div>
+      {avail.length>0&&<AddShift key={avail.map(a=>a.id).join()} avail={avail} onAdd={id=>addShift(s.id,id)}/>}
+    </div>;})}
+  </div>;
+}
+function AddShift({avail,onAdd}){
+  const [sel,setSel]=useState(avail[0]?avail[0].id:"");
+  if(!avail.length)return null;
+  return <div style={{display:"flex",alignItems:"center",gap:6,marginTop:8}}>
+    <select style={{...inp,width:"auto",padding:"4px 6px",fontSize:11.5}} value={sel} onChange={e=>setSel(e.target.value)}>
+      {avail.map(sh=><option key={sh.id} value={sh.id}>{sh.label} · {sh.night?"Night":"Day"}</option>)}</select>
+    <Btn small onClick={()=>onAdd(sel)}>+ Add shift</Btn>
   </div>;
 }
 
