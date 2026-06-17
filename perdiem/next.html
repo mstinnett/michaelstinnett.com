@@ -523,7 +523,7 @@ const DowHeader=()=> <div style={{display:"grid",gridTemplateColumns:"repeat(7,1
 function MonthGrid({y,m,state,sIdx,selected,onTap,label,winBy,travelBy,previewSet,onDown,onEnter}){
   const cells=monthCells(y,m);
   return <div style={{marginBottom:16}}>
-    {label&&<div style={{position:"sticky",top:0,zIndex:1,background:C.panel,fontSize:12.5,fontWeight:800,
+    {label&&<div style={{position:"sticky",top:44,zIndex:1,background:C.panel,fontSize:12.5,fontWeight:800,
       letterSpacing:"-0.01em",padding:"6px 2px 5px",borderBottom:`1px solid ${C.line2}`,marginBottom:6}}>{MONL[m]} {y}</div>}
     <DowHeader/>
     <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
@@ -552,22 +552,24 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
   const onDown=tool==="window"?(str)=>setDrag({anchor:str,over:str}):undefined;
   const onEnter=tool==="window"?(str)=>setDrag(d=>d?{...d,over:str}:d):undefined;
   const gridProps={winBy,travelBy,previewSet,onDown,onEnter};
-  return <div style={{display:"flex",flexDirection:"column",minHeight:0,minWidth:0,flex:1}}>
-    {/* tools band */}
-    <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap",flexShrink:0}}>
-      {tools.map(([id,ic,lab])=><Btn key={id} small on={tool===id} onClick={()=>setTool(id)}>{ic} {lab}</Btn>)}
-      <span style={{width:1,height:18,background:C.line}}/>
-      <Btn small disabled={!canUndo} onClick={onUndo}>↶ Undo</Btn>
-      {mobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
-        <Btn small onClick={()=>step(-1)}>‹</Btn>
-        <span style={{fontSize:13,fontWeight:800,minWidth:108,textAlign:"center"}}>{MONL[viewM]} {viewY}</span>
-        <Btn small onClick={()=>step(1)}>›</Btn>
-      </div>}
+  // the parent pane is the scroll container; the tools header sticks to its top
+  return <div>
+    <div style={{position:"sticky",top:0,zIndex:3,background:C.panel2,borderBottom:`1px solid ${C.line2}`}}>
+      <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",flexWrap:"wrap"}}>
+        {tools.map(([id,ic,lab])=><Btn key={id} small on={tool===id} onClick={()=>setTool(id)}>{ic} {lab}</Btn>)}
+        <span style={{width:1,height:18,background:C.line}}/>
+        <Btn small disabled={!canUndo} onClick={onUndo}>↶ Undo</Btn>
+        {mobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+          <Btn small onClick={()=>step(-1)}>‹</Btn>
+          <span style={{fontSize:13,fontWeight:800,minWidth:108,textAlign:"center"}}>{MONL[viewM]} {viewY}</span>
+          <Btn small onClick={()=>step(1)}>›</Btn>
+        </div>}
+      </div>
+      {tool==="window"&&<div style={{fontSize:10.5,color:C.ocean,padding:"0 12px 5px"}}>
+        Drag across days to hold a window, then set “will work X of Y” in the readout.</div>}
     </div>
-    {tool==="window"&&<div style={{fontSize:10.5,color:C.ocean,padding:"4px 12px",background:C.panel2,borderBottom:`1px solid ${C.line2}`}}>
-      Drag across days to hold a window, then set “will work X of Y” in the readout.</div>}
-    {/* grid — desktop scrolls every month as a row; phone shows one month + arrows */}
-    <div style={{padding:"8px 12px",overflow:"auto",flex:1,minHeight:0}}>
+    {/* months — desktop stacks every month as a row; phone shows one month + arrows */}
+    <div style={{padding:"8px 12px 40px"}}>
       {mobile
         ? <MonthGrid y={viewY} m={viewM} state={state} sIdx={sIdx} selected={selected} onTap={onTap} {...gridProps}/>
         : CAL_MONTHS.map(([y,m])=><MonthGrid key={y+"-"+m} y={y} m={m} state={state} sIdx={sIdx} selected={selected} onTap={onTap} label {...gridProps}/>)}
@@ -1040,7 +1042,7 @@ function App(){
     <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       {tab==="calendar"&&<div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
         {/* phone: calendar over readout. tablet/desktop: calendar left, readout as a tall right panel. */}
-        <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
           <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} viewY={viewY} viewM={viewM} setView={setView}
             tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
             winBy={winBy} travelBy={travelBy} onCreateWindow={onCreateWindow}/>
