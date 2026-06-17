@@ -1,0 +1,2442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1C1917">
+<meta name="description" content="Per Diem — decide how many per-diem ED shifts to request this month, and where.">
+<title>Per Diem</title>
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js" as="script">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none;}
+  input,textarea,select{user-select:text;-webkit-user-select:text;font-family:inherit;}
+  html,body,#root{height:100%;}
+  /* ── theme tokens: grayscale + Juniper Green / Ocean Blue ── */
+  :root{
+    --bg:#F7F6F4;--panel:#FFFFFF;--panel2:#FBFAF8;--ink:#1C1A18;--gray:#6B6660;--mute:#A6A09A;
+    --line:#E6E3E0;--line2:#EFEDEA;--faint:#D5D1CD;
+    --juniper:#3E7D63;--ocean:#356C88;--danger:#7A645E;
+    --est:#7C766F;--est-line:#B8B2AB;--on-shift:#F7F6F4;
+    --shift-day:#6E6A64;--shift-night:#2C2A27;--ov-day:#B7B2AB;--ov-night:#8A857E;
+    --tint-fam:#EEEAE3;--tint-out:#ECE7E0;--weekend:#F1EFEC;--sel:#EFEAE1;
+    --block-fam:#E6F0E9;--block-trip:#E6EEF3;   /* family-calendar = green · trip = blue */
+    --good-soft:#E6F0E9;--info-soft:#E6EEF3;--warn-soft:#EFE9E5;--press-hot:#9E5C46;
+    --bar:#C7C1B9;--glow-bd:#BDB7AF;--glow-bd2:#9A948C;
+    --press-1:#F2ECE6;--press-2:#E1CDC2;--press-3:#D1AF9E;--press-4:#C0907A;   /* pressure = clay ramp */
+    --shadow:rgba(28,26,24,.14);--shadow-sm:rgba(28,26,24,.08);
+  }
+  :root[data-theme="dark"]{
+    --bg:#141310;--panel:#221F1B;--panel2:#1A1714;--ink:#F0ECE6;--gray:#B2ABA1;--mute:#7E776C;
+    --line:#4A4239;--line2:#373028;--faint:#5A5147;
+    --juniper:#7CC79C;--ocean:#6FB6D6;--danger:#CDA59B;
+    --est:#B0A89D;--est-line:#5E574E;--on-shift:#16140F;
+    --shift-day:#C6BAA6;--shift-night:#8E877C;--ov-day:#6E685E;--ov-night:#938C81;
+    --tint-fam:#2B2722;--tint-out:#2F2A25;--weekend:#1B1916;--sel:#332D25;
+    --block-fam:#21342B;--block-trip:#1F3039;   /* family-calendar = green · trip = blue */
+    --good-soft:#21342B;--info-soft:#1F3039;--warn-soft:#33291F;--press-hot:#E0AFA3;
+    --bar:#6C6358;--glow-bd:#514A41;--glow-bd2:#7A7165;
+    --press-1:#241C18;--press-2:#3D2B23;--press-3:#553B2F;--press-4:#6E4A3A;   /* pressure = clay ramp */
+    --shadow:rgba(0,0,0,.5);--shadow-sm:rgba(0,0,0,.34);
+  }
+  body{overflow:hidden;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;transition:background .2s ease,color .2s ease;}
+  #loader{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;background:var(--bg);font-family:'SF Mono','JetBrains Mono',monospace;}
+  #loader span{font-size:13px;font-weight:600;color:var(--gray);letter-spacing:-0.02em;}
+  #loader .bar{width:120px;height:3px;background:var(--line);border-radius:2px;overflow:hidden;}
+  #loader .bar::after{content:'';display:block;width:40%;height:100%;background:var(--ink);border-radius:2px;animation:load 1s ease infinite;}
+  @keyframes load{0%{transform:translateX(-100%)}50%{transform:translateX(200%)}100%{transform:translateX(-100%)}}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--faint);border-radius:4px;}
+  @media (prefers-color-scheme:dark){:root:not([data-theme]){color-scheme:dark;}}
+</style>
+<script>
+  /* set theme before paint to avoid a flash */
+  (function(){try{var t=localStorage.getItem('perDiemTheme')||'system';
+    var d=t==='dark'||(t==='system'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme',d?'dark':'light');}catch(e){}})();
+</script>
+</head>
+<body>
+<div id="root"><div id="loader"><span>PER DIEM</span><div class="bar"></div></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
+<script type="text/babel">
+const {useState,useMemo,useCallback,useRef,useEffect}=React;
+
+/* ════════════════════════════════════════════════════════════
+   PER DIEM — a pressure-display grammar prototype.
+   Implements per-diem-build-spec.md: typed entities (§3), exact
+   formulas (§4), three surfaces (§6), the request lifecycle (§5),
+   and the hard invariants (§8). It computes brightness for
+   SURFACING and shows raw facts separately for CHOOSING. It never
+   ranks, recommends, or acts.
+   ════════════════════════════════════════════════════════════ */
+
+/* ─── palette → CSS variables (grayscale + Juniper Green / Ocean Blue; dark-mode aware).
+   Call sites keep using C.x; the value is now a var() the browser resolves per theme.
+   Semantic accents remap: blue→ocean, green→juniper, red→danger (muted). ─── */
+const V=k=>`var(--${k})`;
+const C={ink:V("ink"),bg:V("bg"),panel:V("panel"),panel2:V("panel2"),line:V("line"),line2:V("line2"),
+  gray:V("gray"),mute:V("mute"),faint:V("faint"),blue:V("ocean"),red:V("danger"),
+  est:V("est"),estLine:V("est-line"),green:V("juniper"),juniper:V("juniper"),ocean:V("ocean"),
+  softGood:V("good-soft"),softInfo:V("info-soft"),softWarn:V("warn-soft"),sel:V("sel"),
+  weekend:V("weekend"),tintOut:V("tint-out"),pressHot:V("press-hot"),bar:V("bar"),
+  blockFam:V("block-fam"),blockTrip:V("block-trip")};
+const MONO="'SF Mono','JetBrains Mono','Fira Code',ui-monospace,monospace";
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONL=["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+/* ─── today (spec context: 2026-06-14) ─── */
+const TODAY=new Date(2026,5,14);
+const YEAR=2026;
+const START_M=5;   // earliest month shown on the calendar (June 2026) — no data before, so 2025 + Jan–May are jettisoned
+
+/* ─── dates ─── */
+const ds=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const pd=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
+const ad=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r;};
+const days=(a,b)=>Math.round((b-a)/864e5);
+const dim=(y,m)=>new Date(y,m+1,0).getDate();
+const firstOfMonth=d=>new Date(d.getFullYear(),d.getMonth(),1);
+// deadlines are per site + per month: every shift in a month shares one due date = month start − the site's lead.
+const monthDueBy=(d,leadDays)=>ds(ad(firstOfMonth(typeof d==="string"?pd(d):d),-(leadDays||0)));
+const fmtDT=d=>`${MON[d.getMonth()]} ${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+const clamp01=x=>Math.max(0,Math.min(1,x));
+const fmt$=v=>"$"+Math.round(v).toLocaleString();
+const fmtK=v=>"$"+(Math.round(v/100)/10).toLocaleString()+"k";
+
+/* ─── Estimate provenance (§3.5) ─── */
+const known=v=>({value:v,basis:"known"});
+const est=(v,assumptions)=>({value:v,basis:"estimate",assumptions});
+
+/* ─── reach adjacency: LocationId × Reach → travel hours (§4.2) ───
+   Family-presence location → hours to reach a site of each tier.
+   Table-driven, not hardcoded conditionals. Montana→nm reads cheap. */
+const REACH_ADJ={
+  boston:  {local:1,  nm:8,   rural_nm:11},
+  santa_fe:{local:8,  nm:1.5, rural_nm:3.5},
+  abq:     {local:8,  nm:1.5, rural_nm:3},
+  montana: {local:9,  nm:2.5, rural_nm:4.5},   // Montana→nm reads cheap
+  portland:{local:8,  nm:7,   rural_nm:9},
+};
+const CHEAP_HRS=4;                                   // <= ⇒ co-located
+const ROUNDTRIP={local:1.5,nm:8,rural_nm:12};        // roundTripTravelHrs by reach
+/* ─── shift catalog — a shift is (start, duration); "night" = an overnight start ─── */
+const SHIFTS=[
+  {id:"d6", start:"06:00",hours:8, night:false,label:"6a · 8h"},
+  {id:"d7", start:"07:00",hours:8, night:false,label:"7a · 8h"},
+  {id:"d10",start:"10:00",hours:8, night:false,label:"10a · 8h"},
+  {id:"d11",start:"11:00",hours:8, night:false,label:"11a · 8h"},
+  {id:"n22",start:"22:00",hours:8, night:true, label:"10p · 8h"},
+  {id:"n23",start:"23:00",hours:8, night:true, label:"11p · 8h"},
+  {id:"D7", start:"07:00",hours:12,night:false,label:"7a · 12h"},
+  {id:"N19",start:"19:00",hours:12,night:true, label:"7p · 12h"},
+];
+const SHIFT_BY=Object.fromEntries(SHIFTS.map(s=>[s.id,s]));
+const REST_BY_DUR={8:10,12:12};                      // default rest after a shift, by duration (estimate)
+/* a request's shiftType is either a coarse CATEGORY ("day"/"night") or a specific catalog id.
+   candidates request coarse; the site's answer (negotiation/booking) can be a specific shift. */
+const isCat=t=>t==="day"||t==="night";
+const CATS=[{id:"day",label:"Day"},{id:"night",label:"Night"}];
+const shiftOf=id=>SHIFT_BY[id]||SHIFT_BY.d7;          // unknown ids fall back to a 7a/8h day
+const shiftHours=id=>shiftOf(id).hours;
+const shiftStart=id=>shiftOf(id).start;
+const shiftIsNight=t=>t==="night"?true:t==="day"?false:shiftOf(t).night;
+const shiftLabel=t=>t==="day"?"Day":t==="night"?"Night":shiftOf(t).label;
+const shiftRestDefault=id=>REST_BY_DUR[shiftHours(id)]||10;
+// per-reach default travel schedule — when you leave home & when you get back, relative to the shift block.
+// Lydia edits these per site (real flight timing); a request can override with its own (incl. multi-day) window.
+const TRAVEL_DEFAULT={
+  local:   {beforeDays:0,departTime:"06:00",afterDays:0,returnTime:"20:00"},   // drive in, home that evening
+  nm:      {beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"22:00"},   // fly out the day before, home late after the last shift
+  rural_nm:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"},   // long haul out & back
+};
+const defaultTravel=reach=>({...(TRAVEL_DEFAULT[reach]||TRAVEL_DEFAULT.local)});
+const KID_AWAKE_START=7,KID_AWAKE_END=20;            // kid-awake band (7a–8p) — the only hours a trip can cost
+const LOC_NAME={boston:"Boston",santa_fe:"Santa Fe",abq:"Albuquerque",montana:"Montana",portland:"Portland"};
+const REACH_LABEL={local:"local",nm:"NM",rural_nm:"rural NM"};
+
+/* ─── pace tag weights (§3.4) ─── */
+const TAG_W={summer:0,light:0.55,normal:1,heavy:1.5,travel:0.5};
+const TAGS=["summer","light","normal","heavy","travel"];
+
+/* ─── brightness weights — FIXED v1 defaults, NOT user knobs (§4.3, Inv 1) ─── */
+/* work quality ($/hr ER) is NOT a brightness factor — it stays a raw choosing
+   column. familyEfficiency is the only money-derived term, so glow leans on fit. */
+const BW={familyEfficiency:0.28,coLocation:0.19,lowDaysOut:0.17,quotaFit:0.23,closing:0.13};
+const BW_EST={familyEfficiency:true,coLocation:false,lowDaysOut:false,quotaFit:true,closing:false};
+const BW_LABEL={familyEfficiency:"family efficiency",coLocation:"co-location",lowDaysOut:"low days-out",quotaFit:"quota fit",closing:"closing"};
+const BUCKETS=["dim","normal","bright","brightest"];
+const BUCKET_LABEL={dim:"low",normal:"fair",bright:"good",brightest:"best"};   // plain "fit" wording for the same buckets
+function coarseBucket(s){return s<0.34?"dim":s<0.55?"normal":s<0.74?"bright":"brightest";}
+
+/* ════════ SEED STATE ════════ */
+function seedState(){
+  const sites=[
+    {id:"boston",  name:"Boston ED",   note:"home rink. easy charting, know the nurses.",
+     reach:"local",   homeBaseLoc:"boston",  menu:[{shift:"d7",rate:245,rest:10},{shift:"n22",rate:290,rest:12}],
+     submissionType:"by_shift",  cadence:{opensDaysBefore:75,dueByDaysBefore:21,expectedResponseDays:14},
+     travel:{beforeDays:0,departTime:"06:00",afterDays:0,returnTime:"20:00"}},
+    {id:"santa_fe",name:"Santa Fe ED", note:"good people. depends on hearing from ABQ first.",
+     reach:"nm",      homeBaseLoc:"santa_fe",menu:[{shift:"d7",rate:170,rest:10},{shift:"N19",rate:210,rest:12}],
+     submissionType:"by_window", cadence:{opensDaysBefore:90,dueByDaysBefore:30,expectedResponseDays:10},
+     travel:{beforeDays:1,departTime:"16:00",afterDays:0,returnTime:"22:00"}},
+    {id:"abq",     name:"Albuquerque ED",note:"high volume, fast. anchors the NM trip.",
+     reach:"nm",      homeBaseLoc:"abq",     menu:[{shift:"d7",rate:285,rest:10},{shift:"n23",rate:305,rest:12}],
+     submissionType:"by_shift",  cadence:{opensDaysBefore:80,dueByDaysBefore:25,expectedResponseDays:7},
+     travel:{beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"21:00"}},
+    {id:"gallup",  name:"Silver City ED",note:"rural, long days, pays for it. tiring.",
+     reach:"rural_nm",homeBaseLoc:"abq",     menu:[{shift:"D7",rate:300,rest:12},{shift:"N19",rate:335,rest:14}],
+     submissionType:"by_window", cadence:{opensDaysBefore:70,dueByDaysBefore:14,expectedResponseDays:21},
+     travel:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"}},
+  ];
+  // trips — family travel; workFactor: colocate (work locally), commute (leave to work), closed (no work)
+  const trips=[
+    {id:"t1",name:"Santa Fe summer",from:"2026-08-01",to:"2026-08-21",loc:"santa_fe",workFactor:"colocate"},
+    {id:"t2",name:"Montana cabin",from:"2026-07-04",to:"2026-07-12",loc:"montana",workFactor:"commute"},
+    {id:"t3",name:"Japan",from:"2026-03-14",to:"2026-03-28",loc:"boston",workFactor:"closed"},   // international → windows closed
+    {id:"t4",name:"Holidays home",from:"2026-12-22",to:"2027-01-02",loc:"boston",workFactor:"colocate"},
+  ];
+  const locks=[
+    {date:"2026-08-15",kind:"hard",label:"anniversary"},
+    {date:"2026-08-08",kind:"soft",recoveryBufferHrs:24,label:"recital"},
+  ];
+  // presence layers — Juni's days come from BISB's 2026–27 calendar; Ocean's from SolBe's summer.
+  const layers=[
+    {id:"jun",name:"Juni (BISB)",kind:"school",childId:"juniper",color:"var(--juniper)",visible:true,daysOutWeight:1,
+     ranges:[{from:"2026-06-18",to:"2026-08-23",label:"Summer (BISB resumes 8/24)"},
+       {from:"2026-09-07",to:"2026-09-07",label:"Labor Day"},{from:"2026-10-12",to:"2026-10-16",label:"Mid-term Break / Columbus Day"},
+       {from:"2026-10-19",to:"2026-10-19",label:"Staff Training (no school)"},{from:"2026-11-11",to:"2026-11-11",label:"Veterans Day"},
+       {from:"2026-11-17",to:"2026-11-17",label:"Parent-Teacher Conferences"},{from:"2026-11-25",to:"2026-11-27",label:"Thanksgiving"},
+       {from:"2026-12-18",to:"2026-12-18",label:"End of Fall Term (half day)"},{from:"2026-12-21",to:"2027-01-03",label:"Winter Break (resumes 1/4)"},
+       {from:"2027-01-18",to:"2027-01-18",label:"MLK Day"},{from:"2027-02-11",to:"2027-02-11",label:"Staff Training (no school)"},
+       {from:"2027-02-12",to:"2027-02-15",label:"Mid-term Break / Presidents Day"},{from:"2027-03-09",to:"2027-03-09",label:"Parent-Teacher Conferences"},
+       {from:"2027-03-12",to:"2027-03-12",label:"End of Winter Term (half day)"},{from:"2027-03-15",to:"2027-03-26",label:"Spring Break"},
+       {from:"2027-04-19",to:"2027-04-19",label:"Patriots Day"},{from:"2027-05-27",to:"2027-05-31",label:"Mid-term Break / Memorial Day"},
+       {from:"2027-06-18",to:"2027-06-18",label:"Juneteenth"},{from:"2027-06-23",to:"2027-06-23",label:"Last Day (half day)"},
+       {from:"2027-06-24",to:"2027-08-20",label:"Summer 2027"}]},
+    {id:"oce",name:"Ocean (SolBe)",kind:"school",childId:"ocean",color:"var(--ocean)",visible:true,daysOutWeight:1,
+     ranges:[{from:"2026-06-19",to:"2026-06-19",label:"SolBe closed (Juneteenth)"},{from:"2026-06-26",to:"2026-06-26",label:"Family event"},
+       {from:"2026-07-04",to:"2026-07-04",label:"SolBe closed (July 4)"},{from:"2026-08-22",to:"2026-08-31",label:"SolBe ends → new school 9/1"}]},
+    {id:"hol",name:"Holidays",kind:"holiday",color:"var(--ink)",visible:true,
+     ranges:[{from:"2026-01-01",to:"2026-01-01",label:"New Year"},{from:"2026-05-25",to:"2026-05-25",label:"Memorial"},
+       {from:"2026-07-04",to:"2026-07-04",label:"July 4"},{from:"2026-09-07",to:"2026-09-07",label:"Labor"},
+       {from:"2026-11-26",to:"2026-11-26",label:"Thanksgiving"},{from:"2026-12-25",to:"2026-12-25",label:"Christmas"}]},
+    {id:"evt",name:"Events",kind:"event",color:"var(--est)",visible:true,
+     ranges:[{from:"2026-08-08",to:"2026-08-08",label:"Recital"},{from:"2026-10-10",to:"2026-10-11",label:"Soccer tourney"}]},
+  ];
+  const pace={
+    pressureCeiling:7,   // soft comfortable max shifts / month
+    // shifts per month — back-loaded: lighter through spring/summer, ramps into the fall
+    curve:[
+      {month:1,shifts:2},{month:2,shifts:2},{month:3,shifts:4},{month:4,shifts:4},
+      {month:5,shifts:2},{month:6,shifts:2},{month:7,shifts:4},{month:8,shifts:6},
+      {month:9,shifts:6},{month:10,shifts:6},{month:11,shifts:2},{month:12,shifts:4},
+    ],
+    curves:{},   // per-year overrides; absent years fall back to the curve above
+  };
+  // Lydia's confirmed S-PHY shifts, imported from her work calendar → Boston home site.
+  // night = overnight starts (10p/11p); everything else = day. Past dates feed booked/floor.
+  const LYDIA=[
+    ["2026-06-03","day"],["2026-06-05","day"],["2026-06-06","day"],["2026-06-09","day"],
+    ["2026-06-13","day"],["2026-06-15","day"],["2026-06-16","day"],["2026-06-17","day"],
+    ["2026-06-18","day"],["2026-06-19","night"],["2026-06-23","night"],["2026-06-24","night"],
+    ["2026-06-25","night"],["2026-06-27","day"],["2026-06-28","day"],["2026-06-30","day"],
+    ["2026-07-07","day"],["2026-07-08","day"],["2026-07-09","day"],["2026-07-30","day"],["2026-07-31","day"],
+  ];
+  const requests=[
+    // confirmed work (real) → Past (worked) + Confirmed (upcoming), both on the calendar
+    ...LYDIA.map((s,i)=>cReq("L"+String(i+1).padStart(2,"0"),"boston",s[1]==="night"?"n22":"d7",[s[0]])),
+    // ── per-diem requests in flight (illustrative — the sources carry no per-diem asks) ──
+    // submitted, awaiting the site's response → Pending (its earlier due date anchors the emergent chain)
+    {id:"s1",siteId:"abq",shiftType:"day",opens:"2026-04-13",dueBy:"2026-05-08",
+     state:"pending",submittedOn:"2026-05-02",expectedResponseBy:"2026-06-20",
+     footprint:{kind:"pinned",dates:["2026-07-23","2026-07-24","2026-07-27"]}},
+    // negotiating — site countered with different dates + a rate; shows on the calendar
+    {id:"ov1",siteId:"santa_fe",shiftType:"d7",opens:"2026-04-20",dueBy:"2026-06-10",
+     state:"override",submittedOn:"2026-05-15",expectedResponseBy:"2026-06-18",rateOverride:185,
+     footprint:{kind:"pinned",dates:["2026-07-21","2026-07-22","2026-07-28"]}},
+    // selected to apply for → the Candidate section (a density window: work 2 of 5, dependency chain on ABQ)
+    {id:"s2",siteId:"santa_fe",shiftType:"day",windowId:"w1",opens:"2026-04-08",dueBy:"2026-06-25",
+     state:"candidate",
+     footprint:{kind:"pinned",dates:["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"],target:2}},
+    {id:"s3",siteId:"gallup",shiftType:"day",windowId:"w2",opens:"2026-05-01",dueBy:"2026-07-01",
+     state:"candidate",
+     footprint:{kind:"pinned",dates:["2026-08-04","2026-08-05"]}},
+  ];
+  // windows = drawn spans of intent. Candidates attach to a window; an empty window just surfaces cards.
+  const windows=[
+    {id:"w1",dates:["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"],target:2},
+    {id:"w2",dates:["2026-08-04","2026-08-05"]},
+    {id:"w3",dates:["2026-09-08","2026-09-09","2026-09-10"]},
+  ];
+  return {sites,trips,locks,layers,pace,requests,windows};
+}
+function cReq(id,siteId,shiftType,dates){
+  return {id,siteId,shiftType,opens:ds(ad(pd(dates[0]),-70)),dueBy:ds(ad(pd(dates[0]),-25)),
+    state:"confirmed",submittedOn:ds(ad(pd(dates[0]),-40)),resolvedOn:ds(ad(pd(dates[0]),-30)),
+    expectedResponseBy:ds(ad(pd(dates[0]),-26)),footprint:{kind:"pinned",dates}};
+}
+
+/* ════════ STATE SANITY (keep the page from crashing on bad input) ════════
+   Every load path — localStorage, file import, or a share-link in the URL —
+   passes through sanitizeState. Unknown/garbage fields fall back to seed
+   defaults; malformed requests are dropped; old schemas migrate forward. */
+const DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
+const isDateArr=a=>Array.isArray(a)&&a.length>0&&a.every(d=>typeof d==="string"&&DATE_RE.test(d));
+const numOr=(v,d)=>Number.isFinite(+v)?+v:d;
+function sanitizePace(p,def){
+  if(!p||typeof p!=="object")return def;
+  const cleanCurve=(src,fb)=>Array.from({length:12},(_,m)=>{
+    const sh=+(((Array.isArray(src)?src:[])[m]||{}).shifts);
+    return {month:m+1,shifts:Number.isFinite(sh)?Math.max(0,Math.min(30,Math.round(sh))):(fb?fb[m].shifts:0)};
+  });
+  const curve=cleanCurve(p.curve,def.curve);
+  const curves={};                                    // per-year overrides (year → 12-month curve)
+  if(p.curves&&typeof p.curves==="object")for(const y of Object.keys(p.curves))if(/^\d{4}$/.test(y))curves[y]=cleanCurve(p.curves[y],curve);
+  const pc=+p.pressureCeiling;
+  return {pressureCeiling:Number.isFinite(pc)&&pc>=1?Math.min(30,Math.round(pc)):def.pressureCeiling,curve,curves};
+}
+function sanitizeState(obj){
+  try{
+    if(!obj||typeof obj!=="object")return null;
+    const seed=seedState(),reach=["local","nm","rural_nm"];
+    let sites=(Array.isArray(obj.sites)?obj.sites:[]).map(s=>{
+      if(!s||typeof s!=="object"||!s.id)return null;
+      const c=s.cadence||{};
+      const rch=reach.includes(s.reach)?s.reach:"local";
+      let menu=(Array.isArray(s.menu)?s.menu:[]).filter(m=>m&&SHIFT_BY[m.shift]).map(m=>{
+        const e={shift:m.shift,rate:numOr(m.rate,200),rest:Number.isFinite(+m.rest)?Math.max(0,+m.rest):shiftRestDefault(m.shift)};
+        if(Number.isFinite(+m.kidHours))e.kidHours=Math.max(0,+m.kidHours);return e;});
+      if(!menu.length)   // migrate the old day/night rate model → a two-line menu
+        menu=[{shift:"d7",rate:numOr(s.dayRate,200),rest:10},{shift:"N19",rate:numOr(s.nightRate,240),rest:12}];
+      const out={id:String(s.id),name:String(s.name||"Unnamed"),note:String(s.note||""),
+        reach:rch,
+        homeBaseLoc:LOC_NAME[s.homeBaseLoc]?s.homeBaseLoc:"boston",
+        menu,
+        travel:travelOf({reach:rch,travel:s.travel}),
+        submissionType:s.submissionType==="by_window"?"by_window":"by_shift",
+        cadence:{opensDaysBefore:numOr(c.opensDaysBefore,60),dueByDaysBefore:numOr(c.dueByDaysBefore,21),expectedResponseDays:numOr(c.expectedResponseDays,14)}};
+      return out;
+    }).filter(Boolean);
+    if(!sites.length)sites=seed.sites;
+    const ids=new Set(sites.map(s=>s.id));
+    const pace=sanitizePace(obj.pace,seed.pace);
+    const cleanRanges=a=>(Array.isArray(a)?a:[]).filter(r=>r&&DATE_RE.test(r.from||"")).map(r=>({from:r.from,to:DATE_RE.test(r.to||"")?r.to:r.from,label:String(r.label||"")}));
+    const LK=["school","holiday","event","custom"];
+    let layers;
+    if(Array.isArray(obj.layers)&&obj.layers.length){
+      layers=obj.layers.filter(l=>l&&l.id).map(l=>{
+        const o={id:String(l.id),name:String(l.name||"Layer"),kind:LK.includes(l.kind)?l.kind:"custom",
+          color:typeof l.color==="string"?l.color:"var(--gray)",visible:l.visible!==false,ranges:cleanRanges(l.ranges)};
+        if(o.kind==="school"){o.childId=String(l.childId||o.id);o.daysOutWeight=numOr(l.daysOutWeight,1);}
+        return o;});
+    }else if(Array.isArray(obj.kidCalendars)){          // migrate the old kid-calendar schema → school layers
+      layers=obj.kidCalendars.filter(kc=>kc&&kc.childId).map(kc=>({
+        id:String(kc.childId),name:(kc.childId==="juniper"?"Juni":kc.childId[0].toUpperCase()+kc.childId.slice(1))+" Off",kind:"school",
+        childId:String(kc.childId),color:kc.childId==="ocean"?"var(--ocean)":"var(--juniper)",visible:true,
+        daysOutWeight:numOr(kc.schoolDaysOutWeight,1),ranges:cleanRanges(kc.closedRanges)}));
+      const seedExtra=seed.layers.filter(l=>l.kind!=="school");
+      layers=layers.concat(seedExtra);
+    }else layers=seed.layers;
+    const WF=["colocate","commute","closed"];
+    const tripSrc=Array.isArray(obj.trips)?obj.trips:(Array.isArray(obj.familySpans)?obj.familySpans:seed.trips);
+    const trips=tripSrc.filter(s=>s&&DATE_RE.test(s.from||"")&&DATE_RE.test(s.to||"")&&s.loc).map((s,i)=>({
+      id:String(s.id||("t"+i)),name:String(s.name||LOC_NAME[s.loc]||"Trip"),from:s.from,to:s.to,loc:s.loc,
+      workFactor:WF.includes(s.workFactor)?s.workFactor:"colocate",placed:s.placed!==false}));
+    const locks=(Array.isArray(obj.locks)?obj.locks:seed.locks).filter(l=>l&&DATE_RE.test(l.date||"")).map(l=>{
+      const o={date:l.date,kind:l.kind==="hard"?"hard":"soft",label:String(l.label||"lock")};
+      if(Number.isFinite(+l.recoveryBufferHrs))o.recoveryBufferHrs=+l.recoveryBufferHrs;return o;});
+    const MIGRATE={draft:"candidate",submitted:"pending",denied:"rejected"};   // old schema → new
+    const requests=(Array.isArray(obj.requests)?obj.requests:[]).map(r=>{
+      if(!r||!r.id||!ids.has(r.siteId))return null;
+      const ft=r.footprint||{};let footprint=null;
+      if(ft.kind==="pinned"&&isDateArr(ft.dates)){footprint={kind:"pinned",dates:ft.dates};
+        if(Number.isFinite(+ft.target))footprint.target=Math.max(1,Math.min(ft.dates.length,Math.round(+ft.target)));}
+      else if(ft.kind==="smeared"&&isDateArr(ft.candidates))footprint={kind:"pinned",dates:ft.candidates,target:Math.max(1,Math.min(ft.candidates.length,numOr(ft.take,1)))};   // migrate old smeared → density window
+      else return null;
+      const st=MIGRATE[r.state]||r.state;
+      const shiftId=(isCat(r.shiftType)||SHIFT_BY[r.shiftType])?r.shiftType:"day";   // category or specific catalog id; junk → coarse day
+      const o={id:String(r.id),siteId:r.siteId,shiftType:shiftId,
+        state:REQ_STATES.includes(st)?st:"candidate",footprint,
+        opens:DATE_RE.test(r.opens||"")?r.opens:ds(TODAY),dueBy:DATE_RE.test(r.dueBy||"")?r.dueBy:ds(TODAY)};
+      if(Number.isFinite(+r.rateOverride))o.rateOverride=+r.rateOverride;
+      if(Number.isFinite(+r.bonusOverride))o.bonusOverride=+r.bonusOverride;
+      if(r.windowId)o.windowId=String(r.windowId);
+      if(r.travel&&typeof r.travel==="object"){const st=sites.find(x=>x.id===r.siteId);o.travel=travelOf({reach:st?st.reach:"local",travel:r.travel});}
+      ["expectedResponseBy","submittedOn","resolvedOn"].forEach(k=>{if(DATE_RE.test(r[k]||""))o[k]=r[k];});
+      return o;
+    }).filter(Boolean);
+    const windows=(Array.isArray(obj.windows)?obj.windows:[]).map(w=>{
+      if(!w||!w.id||!isDateArr(w.dates))return null;
+      const o={id:String(w.id),dates:Array.from(new Set(w.dates)).sort()};
+      if(Number.isFinite(+w.target))o.target=Math.max(1,Math.min(o.dates.length,Math.round(+w.target)));
+      if(w.label)o.label=String(w.label).slice(0,40);
+      return o;
+    }).filter(Boolean);
+    return {sites,trips,locks,layers,pace,requests,windows};
+  }catch(e){console.warn("sanitizeState failed",e);return null;}
+}
+/* read a share-link payload from the URL hash (#s=…), LZ-decompress + validate */
+function readHashState(){
+  try{
+    const m=(location.hash||"").match(/[#&]s=([^&]+)/);
+    if(!m||typeof LZString==="undefined")return null;
+    const json=LZString.decompressFromEncodedURIComponent(m[1]);
+    if(!json)return null;
+    return sanitizeState(JSON.parse(json));
+  }catch(e){console.warn("bad share link",e);return null;}
+}
+function shareLink(state){
+  if(typeof LZString==="undefined")return null;
+  try{return location.origin+location.pathname+"#s="+LZString.compressToEncodedURIComponent(JSON.stringify(state));}
+  catch(e){return null;}
+}
+
+/* ════════ DERIVED VALUES & FORMULAS (§4) — all readouts (Inv 5) ════════ */
+
+const siteMenu=s=>s&&Array.isArray(s.menu)&&s.menu.length?s.menu             // a site's offered shifts …
+  :[{shift:"d7",rate:numOr(s&&s.dayRate,200),rest:10},{shift:"N19",rate:numOr(s&&s.nightRate,240),rest:12}];  // … legacy fallback
+const repShiftId=(site,cat)=>{const night=cat==="night";const m=siteMenu(site).find(e=>shiftIsNight(e.shift)===night);return m?m.shift:(night?"N19":"d7");};
+const resolveShiftId=(site,t)=>isCat(t)?repShiftId(site,t):t;               // category → a concrete representative shift
+const menuEntry=(s,id)=>siteMenu(s).find(m=>m.shift===id);
+const siteRate=(s,t)=>{const id=resolveShiftId(s,t),m=menuEntry(s,id);return m&&Number.isFinite(m.rate)?m.rate:(shiftIsNight(id)?numOr(s&&s.nightRate,240):numOr(s&&s.dayRate,200));};  // $/hr
+const siteHours=(s,t)=>shiftHours(resolveShiftId(s,t));  // clinical hours come from the catalog (8 or 12)
+const siteRest=(s,t)=>{const id=resolveShiftId(s,t),m=menuEntry(s,id);return m&&Number.isFinite(m.rest)?m.rest:shiftRestDefault(id);};
+/* one window type: a drawn day-set + an optional density target ("work N of these M").
+   target omitted (or === dates.length) → an exact window; target < length → a density window. */
+const fpTarget=fp=>Number.isFinite(fp.target)?Math.max(1,Math.min(fp.dates.length,fp.target)):fp.dates.length;
+const shiftCount=r=>fpTarget(r.footprint);
+const reqIsDensity=r=>Number.isFinite(r.footprint.target)&&r.footprint.target<r.footprint.dates.length;
+
+/* lifecycle: candidate → pending → (override) → confirmed; rejected/expired persist.
+   reqRate honors a negotiated rateOverride. OCCUPY = shows on calendar + presses the
+   month; TENTATIVE = occupies but not yet booked money. */
+const REQ_STATES=["candidate","pending","override","confirmed","rejected","expired"];
+const OCCUPY=["candidate","pending","override","confirmed"];
+const reqRate=(r,s)=>Number.isFinite(r.rateOverride)?r.rateOverride:siteRate(s,r.shiftType);   // effective $/hr
+const reqBonus=r=>Number.isFinite(r.bonusOverride)?r.bonusOverride:0;                          // flat $ per shift (negotiated)
+const reqShiftPay=(r,s)=>reqRate(r,s)*siteHours(s,r.shiftType)+reqBonus(r);                     // $/hr × clinical hours + flat bonus = per-shift pay
+const reqDates=r=>r.footprint.dates;
+const reqMinDate=r=>reqDates(r).reduce((m,d)=>d<m?d:m,reqDates(r)[0]||"");
+const reqMaxDate=r=>reqDates(r).reduce((m,d)=>d>m?d:m,reqDates(r)[0]||"");
+const isPastReq=r=>r.state==="confirmed"&&reqMaxDate(r)<ds(TODAY);
+const EDITABLE=["candidate"];          // only candidate drafts can be drawn/nudged/erased — the calendar is a drafting space
+
+/* calendar-drawing helpers (the main verb) — every day in the span, weekends included */
+function daysBetween(a,b){
+  let lo=a<b?a:b,hi=a<b?b:a,out=[],d=pd(lo),t=pd(hi);
+  while(d<=t){out.push(ds(d));d=ad(d,1);}
+  return out;
+}
+const shiftDates=(dates,delta)=>dates.map(x=>ds(ad(pd(x),delta))).sort();
+/* forgiving hit-test: the date under (x,y), or the nearest cell within ~60px */
+function nearestDate(x,y){
+  const el=document.elementFromPoint(x,y),c=el&&el.closest&&el.closest("[data-date]");
+  if(c)return c.dataset.date;
+  let best=null,bd=1e9;
+  document.querySelectorAll("[data-date]").forEach(n=>{const r=n.getBoundingClientRect();
+    const dx=Math.max(r.left-x,0,x-r.right),dy=Math.max(r.top-y,0,y-r.bottom);const d=Math.hypot(dx,dy);
+    if(d<bd){bd=d;best=n.dataset.date;}});
+  return bd<60?best:null;
+}
+/* automerge: contiguous candidate work-windows of the same site+type → one coherent block */
+function mergeCandidates(requests){
+  const cands=requests.filter(r=>r.state==="candidate"&&!reqIsDensity(r));   // density windows stand alone — never auto-merged
+  const rest=requests.filter(r=>!(r.state==="candidate"&&!reqIsDensity(r)));
+  const groups={};
+  for(const r of cands)(groups[r.siteId+"|"+r.shiftType]=groups[r.siteId+"|"+r.shiftType]||[]).push(r);
+  const out=[];
+  for(const k in groups){
+    const list=groups[k].slice().sort((a,b)=>reqMinDate(a).localeCompare(reqMinDate(b)));
+    let cur=null;
+    for(const r of list){
+      if(!cur){cur={...r,footprint:{kind:"pinned",dates:[...r.footprint.dates]}};continue;}
+      if(days(pd(reqMaxDate(cur)),pd(reqMinDate(r)))<=1){   // truly adjacent — weekends are just another day, never bridged
+        cur.footprint.dates=Array.from(new Set([...cur.footprint.dates,...r.footprint.dates])).sort();
+        if(r.opens<cur.opens)cur.opens=r.opens; if(r.dueBy<cur.dueBy)cur.dueBy=r.dueBy;
+      }else{out.push(cur);cur={...r,footprint:{kind:"pinned",dates:[...r.footprint.dates]}};}
+    }
+    if(cur)out.push(cur);
+  }
+  return [...rest,...out];
+}
+function makeWindow(site,type,dates){                       // a drawn window → a candidate request
+  if(!dates.length)return null;
+  const first=dates[0];
+  return {id:"r"+Date.now()+Math.floor(Math.random()*1e3),siteId:site.id,shiftType:type,
+    opens:ds(ad(pd(first),-(site.cadence.opensDaysBefore||60))),dueBy:monthDueBy(first,site.cadence.dueByDaysBefore||21),
+    state:"candidate",footprint:{kind:"pinned",dates:dates.slice().sort()}};
+}
+/* a drawn span of intent — siteless. Candidates attach to it; cards surface beneath it. */
+function makeBlankWindow(dates){
+  if(!dates||!dates.length)return null;
+  return {id:"w"+Date.now()+Math.floor(Math.random()*1e3),dates:Array.from(new Set(dates)).sort()};
+}
+/* a candidate request born from a window card (carries the windowId so it groups back under it) */
+function reqFromCard(win,site,type){
+  const first=win.dates[0];
+  const fp={kind:"pinned",dates:win.dates.slice().sort()};
+  if(Number.isFinite(win.target)&&win.target<fp.dates.length)fp.target=win.target;
+  return {id:"r"+Date.now()+Math.floor(Math.random()*1e3),siteId:site.id,shiftType:type,windowId:win.id,
+    opens:ds(ad(pd(first),-(site.cadence.opensDaysBefore||60))),dueBy:monthDueBy(first,site.cadence.dueByDaysBefore||21),
+    state:"candidate",footprint:fp};
+}
+
+/* typicalShiftPay — estimate; carries assumption (§4.4) */
+function typicalShiftPay(sites){
+  const v=sites.reduce((a,s)=>{const m=siteMenu(s);return a+(m.length?m.reduce((x,e)=>x+e.rate*shiftHours(e.shift),0)/m.length:0);},0)/Math.max(1,sites.length);
+  return est(Math.round(v/10)*10,["typicalShiftPay = mean of site day/night ($/hr × hours)"]);
+}
+
+/* §4.2 co-location + travel — trips with workFactor: colocate / commute / closed */
+const placed=t=>t.placed!==false&&DATE_RE.test(t.from||"")&&DATE_RE.test(t.to||"");
+const tripOverlaps=(trip,weekDates)=>{const f=pd(trip.from),t=pd(trip.to);return weekDates.some(d=>d>=f&&d<=t);};
+const closedTrip=(trips,weekDates)=>trips.find(tp=>placed(tp)&&tp.workFactor==="closed"&&tripOverlaps(tp,weekDates));
+function coLocation(site,weekDates,trips){
+  for(const sp of trips){
+    if(!placed(sp)||sp.workFactor!=="colocate")continue;   // only a placed, co-locating trip makes a site cheap
+    if(!tripOverlaps(sp,weekDates))continue;
+    const hrs=(REACH_ADJ[sp.loc]||{})[site.reach];
+    if(hrs!=null&&hrs<=CHEAP_HRS)return {coLocated:true,loc:sp.loc,hrs};
+  }
+  return {coLocated:false,loc:null,hrs:null};
+}
+function travelHours(site,weekDates,trips){
+  const co=coLocation(site,weekDates,trips);
+  return co.coLocated?co.hrs:ROUNDTRIP[site.reach];
+}
+
+/* §4.1 per-window money — facts for choosing */
+function windowMoney(site,type,weekDates,trips){
+  const hourly=siteRate(site,type);                  // $/hr (type is a catalog shift id)
+  const clinicalHours=siteHours(site,type);
+  const shiftPay=hourly*clinicalHours;
+  const erPerHr=known(hourly);
+  const travel=travelHours(site,weekDates,trips);
+  const rest=siteRest(site,type);
+  const awayHours=travel+clinicalHours+rest;
+  const awayPerHr=est(shiftPay/awayHours,
+    [`restHours(${shiftLabel(type)})=${rest}`,`travelHours=${travel}`]);
+  return {shiftPay,clinicalHours,erPerHr,awayPerHr,awayHours,travel};
+}
+
+/* ─── kid-awake hours: the family-time cost of a trip ───
+   A trip's away window runs from departure (beforeDays before the first shift, at departTime)
+   to return (afterDays after the last shift, at returnTime). Its cost is the kid-awake hours
+   (7a–8p) it overlaps, summed per day — so night shifts and late travel land precisely. */
+const parseHM=t=>{const m=/^(\d{1,2}):(\d{2})$/.exec(String(t||""));return m?Math.min(24,(+m[1])+(+m[2])/60):0;};
+const atHM=(d,h)=>{const x=new Date(d);x.setHours(0,0,0,0);return new Date(x.getTime()+h*36e5);};
+function awakeHoursLost(start,end){
+  if(!start||!end||end<=start)return 0;let total=0;
+  for(let day=atHM(start,0);day<=end;day=ad(day,1)){
+    const lo=Math.max(atHM(day,KID_AWAKE_START).getTime(),start.getTime());
+    const hi=Math.min(atHM(day,KID_AWAKE_END).getTime(),end.getTime());
+    if(hi>lo)total+=(hi-lo)/36e5;
+  }
+  return Math.round(total*10)/10;
+}
+// resolve a site's travel (or a per-request override) into clean {beforeDays,departTime,afterDays,returnTime}
+const travelOf=(site,ov)=>{const d=defaultTravel(site&&site.reach),t=(ov&&typeof ov==="object")?ov:((site&&site.travel)||{});
+  return {beforeDays:Math.max(0,numOr(t.beforeDays,d.beforeDays)),departTime:/^\d{1,2}:\d{2}$/.test(t.departTime||"")?t.departTime:d.departTime,
+    afterDays:Math.max(0,numOr(t.afterDays,d.afterDays)),returnTime:/^\d{1,2}:\d{2}$/.test(t.returnTime||"")?t.returnTime:d.returnTime};};
+const COMMUTE_H=1.5;                                 // local door-to-door buffer on each side of a shift
+/* away intervals for a set of shift dates at a given shift type.
+   flight/overnight trips (beforeDays/afterDays > 0) → one continuous window in the destination city.
+   local shifts → each shift its own interval (start−commute … end+commute), so a night shift
+   that runs while the kids sleep costs ~0 kid-awake hours instead of a full day. */
+function awayIntervals(dates,site,ov,shiftId){
+  const s=dates.slice().sort(),t=travelOf(site,ov),sh=shiftOf(shiftId||"d7");
+  if(t.beforeDays>0||t.afterDays>0){
+    const start=atHM(ad(pd(s[0]),-t.beforeDays),parseHM(t.departTime));
+    const lastEnd=atHM(pd(s[s.length-1]),parseHM(sh.start)+sh.hours);
+    const ret=atHM(ad(pd(s[s.length-1]),t.afterDays),parseHM(t.returnTime));
+    return {t,intervals:[{start,end:ret>lastEnd?ret:lastEnd}]};
+  }
+  return {t,intervals:s.map(d=>({start:atHM(pd(d),parseHM(sh.start)-COMMUTE_H),end:atHM(pd(d),parseHM(sh.start)+sh.hours+COMMUTE_H)}))};
+}
+/* default kid-awake hours for one shift, kids home all day — the local shift interval ∩ the 7a–8p band.
+   Lydia can override this per menu line; school days are then excluded at the day level (kidDaysOut). */
+function defaultKidHours(shiftId){const sh=shiftOf(shiftId),base=new Date(2026,0,5);   // reference day; band overlap is date-independent
+  return awakeHoursLost(atHM(base,parseHM(sh.start)-COMMUTE_H),atHM(base,parseHM(sh.start)+sh.hours+COMMUTE_H));}
+const siteKidHours=(s,t)=>{const id=resolveShiftId(s,t),m=menuEntry(s,id);return m&&Number.isFinite(m.kidHours)?m.kidHours:defaultKidHours(id);};
+/* family-time cost: the per-shift kid-awake hours (typed or default) × the days each kid is home
+   (weekend / school-break). School days drop out — the kid is out anyway. */
+function kidHoursCost(dates,site,ov,shiftType,layers){
+  if(!dates||!dates.length)return {hours:0,perShift:0,perKid:[],window:null,t:travelOf(site,ov)};
+  const id=resolveShiftId(site,shiftType),perShift=siteKidHours(site,shiftType);
+  const {t,intervals}=awayIntervals(dates,site,ov,id);
+  const perKid=(layers?kidDaysOut(dates,layers):[]).map(k=>({...k,hours:Math.round(perShift*k.count*10)/10}));
+  const hours=perKid.length?Math.max(0,...perKid.map(k=>k.hours)):Math.round(perShift*dates.length*10)/10;
+  return {hours,perShift,perKid,window:{start:intervals[0].start,end:intervals[intervals.length-1].end},t};
+}
+/* a shift's clinical wall-clock interval on a date (no commute) — for booking exclusivity.
+   handles the midnight straddle: a 10p/8h on the 6th runs 6th 22:00 → 7th 06:00. */
+function shiftInterval(dateStr,shiftId){const sh=shiftOf(shiftId);const start=atHM(pd(dateStr),parseHM(sh.start));
+  return {start,end:new Date(start.getTime()+sh.hours*36e5)};}
+const intervalsOverlap=(a,b)=>a.start<b.end&&b.start<a.end;
+/* confirmed shifts as wall-clock instances; a new booking can't overlap one in time. */
+function confirmedInstances(requests,ignoreId){
+  const out=[];
+  for(const r of requests){if(r.state!=="confirmed"||r.id===ignoreId)continue;
+    for(const d of r.footprint.dates)out.push({id:r.id,date:d,shift:r.shiftType,...shiftInterval(d,r.shiftType)});}
+  return out;
+}
+function bookingConflict(dates,shiftId,requests,ignoreId){
+  const inst=confirmedInstances(requests,ignoreId);
+  for(const d of dates){const iv=shiftInterval(d,shiftId);
+    for(const c of inst)if(intervalsOverlap(iv,c))return {date:d,other:c};}
+  return null;
+}
+
+const schoolLayers=layers=>layers.filter(l=>l.kind==="school");
+const layerCovers=(l,d)=>(l.ranges||[]).some(r=>d>=pd(r.from)&&d<=pd(r.to));
+
+/* weighted days-out for a week (school-layer presence; Inv 9 — presence only) */
+function weekDaysOut(weekDates,layers){
+  const sch=schoolLayers(layers);let out=0;
+  for(const d of weekDates){
+    const dow=d.getDay();let w=0;
+    if(dow===0||dow===6)w=1;                     // weekend → kids home
+    for(const l of sch)if(layerCovers(l,d)){w=Math.max(w,l.daysOutWeight||1);break;}
+    out+=w;
+  }
+  return out;                                     // 0..7
+}
+
+/* per-kid days-out: candidate shift dates landing on a kid's out-of-school day
+   (weekend or break). The family-time cost of a window, recorded per child. */
+function kidDaysOut(dateStrs,layers){
+  return schoolLayers(layers).map(l=>{
+    let count=0;
+    for(const s of dateStrs){const d=pd(s),we=d.getDay()===0||d.getDay()===6;
+      if(we||layerCovers(l,d))count++;}
+    const nm=l.childId?l.childId[0].toUpperCase()+l.childId.slice(1):l.name;
+    return {childId:l.childId||l.id,name:nm,count,of:dateStrs.length};
+  });
+}
+
+/* shift-days committed/pending per year-month ("Y-M"), split confirmed vs window (§ two-layer pressure) */
+function loadByYM(state){
+  const by={};const add=(k,n,conf)=>{by[k]=by[k]||{conf:0,win:0};by[k][conf?"conf":"win"]+=n;};
+  for(const r of state.requests){
+    if(!OCCUPY.includes(r.state))continue;
+    const conf=r.state==="confirmed"||r.state==="override";   // locked/near-locked load vs speculative window load
+    if(reqIsDensity(r)){
+      const dt=pd(r.footprint.dates[0]);add(`${dt.getFullYear()}-${dt.getMonth()}`,shiftCount(r),conf);   // density → target shifts, anchored at the window's start
+    }else{
+      for(const d of r.footprint.dates){const dt=pd(d);add(`${dt.getFullYear()}-${dt.getMonth()}`,1,conf);}
+    }
+  }
+  return by;
+}
+function pressureTint(load,ceil){
+  if(load<=0)return null;
+  const p=load/Math.max(1,ceil);
+  if(p<0.5)return "var(--press-1)";
+  if(p<0.85)return "var(--press-2)";
+  if(p<1.05)return "var(--press-3)";   // at the comfortable ceiling
+  return "var(--press-4)";             // over the ceiling
+}
+const PRESS_RAMP=["var(--press-1)","var(--press-2)","var(--press-3)","var(--press-4)"];
+
+/* §4.4 the curve is now SHIFTS per month; dollars extrapolate as shifts × typicalShiftPay.
+   annualTarget$ is derived (no longer a stored dial). Shares = each month's slice of the year.
+   Per-year: pace.curves[year] overrides the default pace.curve; for YEAR the pre-floor
+   months (Jan–May 2026) are zeroed — no data there, so they don't skew the projection. */
+const curveFor=(pace,year)=>{const b=(pace.curves&&pace.curves[year])||pace.curve;
+  return (year===YEAR&&START_M>0)?b.map((m,i)=>i<START_M?{...m,shifts:0}:m):b;};
+const monthShifts=(pace,m,year=YEAR)=>curveFor(pace,year)[m].shifts||0;
+const totalShifts=(pace,year=YEAR)=>curveFor(pace,year).reduce((a,m)=>a+(m.shifts||0),0);
+const annualTargetOf=(pace,tsp,year=YEAR)=>totalShifts(pace,year)*tsp.value;
+function curveShares(pace,year=YEAR){
+  const tot=totalShifts(pace,year);
+  return curveFor(pace,year).map(m=>tot>0?(m.shifts||0)/tot:1/12);
+}
+function monthQuota(pace,monthIdx,tsp,year=YEAR){
+  const q=monthShifts(pace,monthIdx,year);            // the curve IS the quota now (exact count)
+  const monthTarget$=q*tsp.value;                     // $ extrapolated → estimate
+  return {monthTarget$,quota:known(q),quota$:est(monthTarget$,tsp.assumptions),shares:curveShares(pace,year)};
+}
+/* fraction of annual pace expected to have elapsed by `date` */
+function curveCumulativeFraction(pace,date){
+  const year=date.getFullYear();
+  const shares=curveShares(pace,year);
+  const m=date.getMonth();
+  let f=0;
+  for(let i=0;i<12;i++){
+    if(i<m)f+=shares[i];
+    else if(i===m)f+=shares[i]*(date.getDate()/dim(date.getFullYear(),i));
+  }
+  return f;
+}
+
+/* §4.5 the cooling aggregate */
+function coolingAggregate(state,tsp){
+  const {pace,requests,sites}=state;
+  const siteById=Object.fromEntries(sites.map(s=>[s.id,s]));
+  const annualTarget=annualTargetOf(pace,tsp);          // extrapolated from the shift curve
+  const fracYearElapsed=days(new Date(YEAR,0,1),TODAY)/365;
+  const expectedToDate$=annualTarget*curveCumulativeFraction(pace,TODAY);
+  let bookedToDate$=0,bookedFuture$=0,requested$=0;
+  for(const r of requests){
+    const s=siteById[r.siteId];if(!s)continue;
+    if(r.state==="confirmed"){
+      const yr=r.footprint.dates.filter(d=>pd(d).getFullYear()===YEAR);
+      const worked=yr.filter(d=>pd(d)<=TODAY).length;
+      bookedToDate$+=worked*reqShiftPay(r,s);                 // already worked
+      bookedFuture$+=(yr.length-worked)*reqShiftPay(r,s);     // confirmed, not yet worked
+    }else if(r.state==="candidate"||r.state==="pending"||r.state==="override"){
+      const inYr=r.footprint.dates.filter(d=>pd(d).getFullYear()===YEAR);
+      const n=reqIsDensity(r)?(inYr.length?shiftCount(r):0):inYr.length;
+      requested$+=n*(reqIsDensity(r)?tsp.value:reqShiftPay(r,s));   // density → typicalShiftPay estimate; exact → its own rate
+    }
+  }
+  const flatRunRate$=fracYearElapsed>0?bookedToDate$/fracYearElapsed:0;
+  const onCurveProjection$=expectedToDate$>0?annualTarget*(bookedToDate$/expectedToDate$):bookedToDate$;
+  const coolingGap$=onCurveProjection$-flatRunRate$;
+  // infeasibility: can the gap still be closed at a sane pace? (§6.1)
+  const monthsLeft=12-TODAY.getMonth()-(TODAY.getDate()/dim(YEAR,TODAY.getMonth()));
+  const maxReachable$=bookedToDate$+pace.pressureCeiling*monthsLeft*tsp.value;
+  const feasible=maxReachable$>=annualTarget;
+  const shortfall=Math.max(0,annualTarget-maxReachable$);
+  const heat=feasible?0:clamp01(shortfall/Math.max(1,annualTarget*0.5));
+  return {fracYearElapsed,expectedToDate$,bookedToDate$,bookedFuture$,requested$,flatRunRate$,onCurveProjection$,coolingGap$,feasible,heat,maxReachable$,monthsLeft,annualTarget};
+}
+
+/* §4.6 exposure per week off the footprint */
+function weekExposure(weekDates,requests,siteById,tsp){
+  const wf=new Set(weekDates.map(ds));
+  let floor$=0,ceil$=0,pending=[];
+  for(const r of requests){
+    const fp=r.footprint;
+    const datesIn=fp.dates.filter(d=>wf.has(d));
+    if(!datesIn.length)continue;
+    const s=siteById[r.siteId];if(!s)continue;
+    const pay=reqShiftPay(r,s);
+    if(r.state==="confirmed"){floor$+=datesIn.length*pay;}
+    else if(r.state==="candidate"||r.state==="pending"||r.state==="override"){
+      pending.push(r);                               // not-yet-confirmed → the ceiling hedge
+      if(!reqIsDensity(r))ceil$+=datesIn.length*pay;
+      else ceil$+=Math.min(shiftCount(r),datesIn.length)*tsp.value; // density → typicalShiftPay (estimate)
+    }
+  }
+  ceil$+=floor$;
+  // collision: two pending footprints overlapping in this week
+  let collision=false;
+  for(let i=0;i<pending.length;i++)for(let j=i+1;j<pending.length;j++){
+    const a=new Set(pending[i].footprint.dates.filter(d=>wf.has(d)));
+    const b=pending[j].footprint.dates.filter(d=>wf.has(d));
+    if(b.some(d=>a.has(d)))collision=true;
+  }
+  const thinOnly=pending.length>0&&pending.every(r=>reqIsDensity(r)&&shiftCount(r)<=2);
+  const hole=floor$===0&&ceil$>0&&thinOnly;
+  return {floor$,ceil$,pending,collision,hole};
+}
+
+/* §5 request lifecycle clocks */
+function requestPressure(r){
+  if(r.state!=="candidate")return 0;             // apply-by urgency; → 0 once submitted
+  return clamp01(days(pd(r.opens),TODAY)/Math.max(1,days(pd(r.opens),pd(r.dueBy))));
+}
+/* response wait: how far a submitted request is toward its expected-response date */
+function responseWait(r){
+  if((r.state!=="pending"&&r.state!=="override")||!r.submittedOn||!r.expectedResponseBy)return null;
+  const o=pd(r.submittedOn),d=pd(r.expectedResponseBy);
+  return {frac:clamp01(days(o,TODAY)/Math.max(1,days(o,d))),overdue:TODAY>d};
+}
+function closingTerm(opens,dueBy){
+  const o=pd(opens),d=pd(dueBy);
+  if(TODAY<o)return 0;                            // not yet open
+  if(TODAY>d)return 0;                            // closed
+  return clamp01(days(o,TODAY)/Math.max(1,days(o,d)));
+}
+
+/* weeks of a month (Monday-start, overlapping the month) */
+function getWeeks(y,m){
+  const last=new Date(y,m+1,0);
+  let cur=new Date(y,m,1);cur.setDate(cur.getDate()-((cur.getDay()+6)%7));
+  const weeks=[];
+  while(cur<=last){
+    const dates=[];for(let i=0;i<7;i++){const d=new Date(cur);d.setDate(cur.getDate()+i);dates.push(d);}
+    if(dates.some(d=>d.getMonth()===m))weeks.push({start:new Date(cur),dates});
+    cur.setDate(cur.getDate()+7);
+  }
+  return weeks;
+}
+
+/* ════════ WINDOWS + BRIGHTNESS (§4.3) ════════
+   Derived per (site × week). Brightness drives GLOW ONLY:
+   never order, never visibility, never action (Inv 1, 2a). */
+function buildWindows(state,monthIdx,types,tsp){
+  const {sites,trips,layers,locks,pace,requests}=state;
+  const siteById=Object.fromEntries(sites.map(s=>[s.id,s]));
+  const weeks=getWeeks(YEAR,monthIdx);
+  const qInfo=monthQuota(pace,monthIdx,tsp);
+  // committed shifts toward this month (pinned dates landing in month)
+  let committed=0;
+  for(const r of requests){
+    if(OCCUPY.includes(r.state)){
+      const dts=r.footprint.dates;
+      const n=reqIsDensity(r)?(dts.some(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR)?shiftCount(r):0)
+              :dts.filter(d=>pd(d).getMonth()===monthIdx&&pd(d).getFullYear()===YEAR).length;
+      committed+=n;
+    }
+  }
+  const remaining=qInfo.quota.value-committed;
+  const raw=[];
+  weeks.forEach((wk,wi)=>{
+    sites.forEach(site=>{
+      const type=types[`${site.id}-${wi}`]||"day";   // window preview is coarse — day vs night
+      const money=windowMoney(site,type,wk.dates,trips);
+      const co=coLocation(site,wk.dates,trips);
+      const dout=weekDaysOut(wk.dates,layers);
+      const opens=ds(ad(wk.start,-site.cadence.opensDaysBefore));
+      const dueBy=monthDueBy(wk.start,site.cadence.dueByDaysBefore);
+      const closing=closingTerm(opens,dueBy);
+      const closed=TODAY>pd(dueBy)||!!closedTrip(trips,wk.dates);   // past due, or a closed (international) trip
+      const notOpen=TODAY<pd(opens);
+      const lockHit=wk.dates.filter(d=>locks.some(l=>l.date===ds(d)));
+      const dayStrs=wk.dates.map(ds);                   // all days of the week — weekends are workable
+      const perKid=kidDaysOut(dayStrs,layers);
+      const kidHrs=kidHoursCost(dayStrs,site,null,type,layers);   // family-time cost if you worked this week here at this shift
+      raw.push({id:`${site.id}-${wi}`,wi,site,type,week:wk,money,co,dout,opens,dueBy,dayStrs,perKid,kidHrs,
+        closing,closed,notOpen,lockHit,
+        existing:requests.find(r=>r.siteId===site.id&&r.footprint&&
+          r.footprint.dates.some(d=>pd(d).getMonth()===monthIdx&&wk.dates.some(wd=>ds(wd)===d)))});
+    });
+  });
+  // normalization ranges across the month's windows
+  const aw=raw.map(w=>w.money.awayPerHr.value), dt=raw.map(w=>w.dout);
+  const nrm=(v,a)=>{const lo=Math.min(...a),hi=Math.max(...a);return hi>lo?(v-lo)/(hi-lo):0.5;};
+  raw.forEach(w=>{
+    const c={
+      familyEfficiency:nrm(w.money.awayPerHr.value,aw),
+      coLocation:w.co.coLocated?1:0,
+      lowDaysOut:1-nrm(w.dout,dt),
+      quotaFit:remaining>0?clamp01(0.45+0.55*Math.min(1,remaining/Math.max(1,qInfo.quota.value))):0.08,
+      closing:w.closing,
+    };
+    let score=0;for(const k in BW)score+=BW[k]*c[k];
+    if(w.closed)score*=0.45;                       // closed windows dim (persist, never gone — Inv 8)
+    if(w.notOpen)score*=0.7;
+    w.components=c;w.score=score;w.bucket=coarseBucket(score);
+  });
+  return {weeks,windows:raw,qInfo,committed,remaining};
+}
+/* surface cards for ONE drawn window — a card per site over the window's own dates.
+   Brightness normalizes across this window's sites only (glow, never order — Inv 1/2a). */
+function windowCards(win,state,types,tsp){
+  const {sites,trips,layers,locks,requests}=state;
+  const dates=win.dates.map(pd),dayStrs=win.dates.slice();
+  const m0=dates.length?dates[0].getMonth():TODAY.getMonth();
+  const qInfo=monthQuota(state.pace,m0,tsp);
+  let committed=0;
+  for(const r of requests)if(OCCUPY.includes(r.state)){
+    const dts=r.footprint.dates;
+    committed+=reqIsDensity(r)?(dts.some(d=>pd(d).getMonth()===m0)?shiftCount(r):0):dts.filter(d=>pd(d).getMonth()===m0).length;
+  }
+  const remaining=qInfo.quota.value-committed;
+  const raw=sites.map(site=>{
+    const type=types[`${win.id}-${site.id}`]||"day";
+    const money=windowMoney(site,type,dates,trips);
+    const co=coLocation(site,dates,trips);
+    const dout=weekDaysOut(dates,layers);
+    const first=dates[0];
+    const opens=ds(ad(first,-site.cadence.opensDaysBefore));
+    const dueBy=monthDueBy(first,site.cadence.dueByDaysBefore);
+    const closing=closingTerm(opens,dueBy);
+    const closed=TODAY>pd(dueBy)||!!closedTrip(trips,dates);
+    const notOpen=TODAY<pd(opens);
+    const lockHit=dates.filter(d=>locks.some(l=>l.date===ds(d)));
+    const perKid=kidDaysOut(dayStrs,layers);
+    const kidHrs=kidHoursCost(dayStrs,site,null,type,layers);
+    const existing=requests.find(r=>r.windowId===win.id&&r.siteId===site.id);
+    return {id:`${win.id}-${site.id}`,winId:win.id,site,type,week:{start:first,dates},money,co,dout,opens,dueBy,dayStrs,perKid,kidHrs,closing,closed,notOpen,lockHit,existing};
+  });
+  const aw=raw.map(w=>w.money.awayPerHr.value),dt=raw.map(w=>w.dout);
+  const nrm=(v,a)=>{const lo=Math.min(...a),hi=Math.max(...a);return hi>lo?(v-lo)/(hi-lo):0.5;};
+  raw.forEach(w=>{
+    const c={familyEfficiency:nrm(w.money.awayPerHr.value,aw),coLocation:w.co.coLocated?1:0,
+      lowDaysOut:1-nrm(w.dout,dt),quotaFit:remaining>0?clamp01(0.45+0.55*Math.min(1,remaining/Math.max(1,qInfo.quota.value))):0.08,closing:w.closing};
+    let score=0;for(const k in BW)score+=BW[k]*c[k];
+    if(w.closed)score*=0.45;if(w.notOpen)score*=0.7;
+    w.components=c;w.score=score;w.bucket=coarseBucket(score);
+  });
+  return raw;
+}
+
+/* ════════ tiny UI atoms ════════ */
+function Num({e,money,k,dp,bold}){
+  const v=e.value;
+  const txt=money?(k?fmtK(v):fmt$(v)):(dp!=null?v.toFixed(dp):String(v));
+  if(e.basis==="estimate")
+    return <span title={"estimate — "+(e.assumptions||[]).join(" · ")}
+      style={{fontStyle:"italic",color:C.est,borderBottom:`1px dotted ${C.estLine}`,cursor:"help",fontWeight:bold?700:400}}>~{txt}</span>;
+  return <span style={{fontWeight:bold?700:400}}>{txt}</span>;
+}
+const Tag=({children,bg,col})=> <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",
+  padding:"1px 5px",borderRadius:3,background:bg||C.line2,color:col||C.gray,textTransform:"uppercase",whiteSpace:"nowrap"}}>{children}</span>;
+const Btn=({children,onClick,kind,small,disabled})=>{
+  const styles={prim:{bg:C.ink,col:C.bg,bd:C.ink},ghost:{bg:"transparent",col:C.gray,bd:C.line},
+    danger:{bg:"transparent",col:C.red,bd:C.red},good:{bg:"transparent",col:C.green,bd:C.juniper}}[kind||"ghost"];
+  return <button onClick={onClick} disabled={disabled} style={{fontFamily:MONO,fontSize:small?11:12,fontWeight:700,
+    padding:small?"4px 9px":"6px 12px",borderRadius:4,cursor:disabled?"not-allowed":"pointer",
+    background:styles.bg,color:disabled?C.faint:styles.col,border:`1px solid ${disabled?C.line:styles.bd}`,
+    opacity:disabled?0.6:1,letterSpacing:"0.02em",whiteSpace:"nowrap"}}>{children}</button>;
+};
+const inp={fontFamily:MONO,fontSize:13,padding:"6px 9px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,color:C.ink,width:"100%"};
+const Field=({label,children})=> <label style={{display:"block",marginBottom:7}}>
+  <div style={{fontSize:9,fontWeight:800,color:C.gray,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:3}}>{label}</div>
+  {children}</label>;
+function glowStyle(bucket){
+  switch(bucket){
+    case"brightest":return{border:`1px solid ${C.gray}`,background:C.panel,boxShadow:`0 5px 18px var(--shadow), 0 0 0 1px var(--glow-bd2)`};
+    case"bright":   return{border:`1px solid var(--glow-bd2)`,background:C.panel,boxShadow:`0 3px 11px var(--shadow-sm)`};
+    case"normal":   return{border:`1px solid ${C.line}`,background:C.panel,boxShadow:"none"};
+    default:        return{border:`1px solid ${C.line2}`,background:C.panel2,boxShadow:"none"};
+  }
+}
+
+/* ════════ STATS READOUT — the figures, broken out; no prescription, no warning ════════ */
+function StatItem({label,value,e,strong,accent}){
+  return <div style={{minWidth:0}}>
+    <div style={{fontSize:9,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{label}</div>
+    <div style={{fontSize:strong?18:14.5,fontWeight:strong?800:700,color:accent||C.ink,letterSpacing:"-0.01em"}}>
+      {e?<Num e={e} money k/>:value}</div>
+  </div>;
+}
+function StatsReadout({cool}){
+  return <div style={{padding:"11px 13px",borderRadius:7,border:`1px solid ${C.line}`,background:C.panel}}>
+    <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:9}}>
+      <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>This year</span>
+      <span style={{fontSize:10,color:C.mute}}>target <b style={{color:C.ink}}>{fmtK(cool.annualTarget)}</b></span>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"11px 10px"}}>
+      <StatItem label="On pace" e={est(cool.onCurveProjection$,["curve-weighted projection"])} strong accent={C.juniper}/>
+      <StatItem label="Annualized" e={est(cool.flatRunRate$,["flat run-rate × full year"])}/>
+      <StatItem label="Requested" e={est(cool.requested$,["submitted + draft + negotiating"])} accent={C.ocean}/>
+      <StatItem label="Worked" value={fmtK(cool.bookedToDate$)}/>
+      <StatItem label="Booked ahead" value={fmtK(cool.bookedFuture$)}/>
+      <StatItem label="Expected by now" e={est(cool.expectedToDate$,["curve-weighted to-date"])}/>
+    </div>
+  </div>;
+}
+
+/* ════════ BRIGHTNESS DECOMPOSITION (the "shows its work" safeguard) ════════ */
+function WhyBright({w}){
+  return <div style={{padding:"10px 12px",background:C.panel2,borderTop:`1px dashed ${C.line}`}}>
+    <div style={{fontSize:10,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:8}}>
+      Why it fits — components combine for surfacing only
+    </div>
+    {Object.keys(BW).map(k=>{
+      const v=w.components[k],pct=Math.round(v*100);
+      return <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+        <div style={{width:108,fontSize:11,color:BW_EST[k]?C.est:C.gray,fontStyle:BW_EST[k]?"italic":"normal",flexShrink:0}}>
+          {BW_LABEL[k]}{BW_EST[k]&&" ~"}</div>
+        <div style={{flex:1,height:6,background:C.line2,borderRadius:3,overflow:"hidden"}}>
+          <div style={{width:pct+"%",height:"100%",borderRadius:3,
+            background:BW_EST[k]?C.estLine:C.juniper}}/>
+        </div>
+        <div style={{width:64,fontSize:9.5,color:C.mute,textAlign:"right",flexShrink:0}}>×{BW[k]} = {(v*BW[k]).toFixed(2)}</div>
+      </div>;
+    })}
+    {w.kidHrs&&w.kidHrs.window&&<div style={{fontSize:10,color:C.mute,marginTop:7,paddingTop:6,borderTop:`1px dashed ${C.line2}`}}>
+      family-time cost <b style={{color:C.gray}}>{w.kidHrs.hours} kid-awake hrs</b> away · {fmtDT(w.kidHrs.window.start)} → {fmtDT(w.kidHrs.window.end)} <span style={{color:C.est,fontStyle:"italic"}}>~ full-week estimate</span>
+    </div>}
+    <div style={{marginTop:8,paddingTop:7,borderTop:`1px solid ${C.line}`,fontSize:11,color:C.gray,display:"flex",justifyContent:"space-between"}}>
+      <span>weighted score <b style={{color:C.ink}}>{w.score.toFixed(2)}</b> → fit <b style={{color:C.ink}}>{BUCKET_LABEL[w.bucket]}</b></span>
+      <span style={{color:C.mute}}>fit only · never orders / hides / recommends</span>
+    </div>
+  </div>;
+}
+
+/* ════════ PACE CURVE — the one Balance gesture ════════
+   Drag each month up/down to set SHIFTS for that month. Dollars are
+   extrapolated (shifts × typicalShiftPay); the annual figure is the live sum.
+   The comfort ceiling (§ pressureCeiling) rides the same curve as a draggable
+   line — months above it read hot, matching the year-strip pressure tint. */
+function PaceCurve({pace,setPace,tsp}){
+  const SPX=9,MAXSH=18,H=MAXSH*SPX;                    // px per shift, bar area height
+  const [year,setYear]=useState(YEAR);                 // by-year: each year has its own curve
+  const months=year===YEAR?Array.from({length:12-START_M},(_,i)=>i+START_M):Array.from({length:12},(_,i)=>i);  // 2026 floors at June
+  const shifts=curveFor(pace,year).map(m=>m.shifts||0);
+  const ceiling=pace.pressureCeiling;
+  const total=months.reduce((a,m)=>a+shifts[m],0);
+  const annual$=total*tsp.value, avg=months.length?total/months.length:0;
+  const setMonthShifts=(m,val)=>{
+    const v=Math.max(0,Math.min(MAXSH,Math.round(val)));
+    let base=(pace.curves&&pace.curves[year])?pace.curves[year]:pace.curve;
+    if(year===YEAR&&START_M>0)base=base.map((mm,i)=>i<START_M?{...mm,shifts:0}:mm);   // keep pre-floor months at 0
+    const next=base.map((mm,i)=>i===m?{...mm,shifts:v}:mm);
+    setPace({curves:{...(pace.curves||{}),[year]:next}});                              // edit only this year
+  };
+  const setCeiling=val=>setPace({pressureCeiling:Math.max(1,Math.min(MAXSH,Math.round(val)))});
+  const drag=(e,getStart,commit)=>{
+    e.preventDefault();const el=e.currentTarget;try{el.setPointerCapture(e.pointerId);}catch(_){}
+    const sY=e.clientY,sV=getStart();
+    const mv=ev=>commit(sV+(sY-ev.clientY)/SPX);
+    const up=()=>{el.removeEventListener("pointermove",mv);el.removeEventListener("pointerup",up);el.removeEventListener("pointercancel",up);};
+    el.addEventListener("pointermove",mv);el.addEventListener("pointerup",up);el.addEventListener("pointercancel",up);
+  };
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4,gap:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",alignItems:"center",gap:7}}>
+        <span style={{fontSize:11,fontWeight:800,color:C.gray,letterSpacing:"0.04em",textTransform:"uppercase"}}>Pace</span>
+        <div style={{display:"inline-flex",alignItems:"center",gap:3}}>
+          <button disabled={year<=YEAR} onClick={()=>setYear(y=>Math.max(YEAR,y-1))} style={{border:"none",background:"none",cursor:year<=YEAR?"default":"pointer",color:year<=YEAR?C.faint:C.gray,fontFamily:MONO,fontSize:14,padding:"0 2px",lineHeight:1}}>‹</button>
+          <span style={{fontSize:13,fontWeight:800,minWidth:34,textAlign:"center"}}>{year}</span>
+          <button onClick={()=>setYear(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:14,padding:"0 2px",lineHeight:1}}>›</button>
+        </div>
+        <span style={{fontSize:9.5,fontWeight:600,color:C.mute}}>drag months · shifts/mo</span>
+      </div>
+      <div style={{textAlign:"right",fontSize:11,color:C.gray}}>
+        <b style={{color:C.ink,fontSize:13}}>{total}</b> shifts{year===YEAR?" (Jun–Dec)":"/yr"} · avg <b style={{color:C.ink}}>{avg.toFixed(1)}</b>/mo
+        <div style={{fontSize:10}}>≈ <Num e={est(annual$,tsp.assumptions)} money k/> · <b style={{color:C.ink}}>{fmt$(avg*tsp.value)}</b>/mo avg</div>
+        <div style={{fontSize:9.5,color:C.mute}}>at <Num e={tsp} money/>/shift avg rate</div>
+      </div>
+    </div>
+    <div style={{position:"relative",display:"flex",alignItems:"flex-end",gap:2,height:H,marginTop:4}}>
+      {/* comfort ceiling — draggable line */}
+      <div onPointerDown={e=>drag(e,()=>ceiling,setCeiling)}
+        title={`comfort ceiling ${ceiling}/mo — drag`}
+        style={{position:"absolute",left:0,right:0,bottom:Math.min(H,ceiling*SPX)-6,height:12,zIndex:3,cursor:"ns-resize",touchAction:"none"}}>
+        <div style={{position:"absolute",left:0,right:0,top:6,borderTop:`1.5px dashed ${C.gray}`}}/>
+        <span style={{position:"absolute",right:0,top:-3,fontSize:8,fontWeight:700,color:C.pressHot,background:C.panel2,padding:"0 2px"}}>ceil {ceiling}</span>
+      </div>
+      {months.map(m=>{
+        const sh=shifts[m],h=Math.max(2,Math.min(H,sh*SPX)),isNow=year===YEAR&&m===TODAY.getMonth(),hot=sh>ceiling;
+        return <div key={m} onPointerDown={e=>drag(e,()=>shifts[m],v=>setMonthShifts(m,v))} title={`${MONL[m]} ${year}: ${sh} shifts ≈ ${fmt$(sh*tsp.value)} — drag`}
+          style={{flex:1,height:H,display:"flex",flexDirection:"column",justifyContent:"flex-end",alignItems:"center",
+            cursor:"ns-resize",touchAction:"none"}}>
+          <div style={{fontSize:8.5,fontWeight:700,color:hot?C.pressHot:(sh?C.gray:C.mute),marginBottom:1}}>{sh}</div>
+          <div style={{width:"74%",height:h,background:isNow?C.ink:(hot?C.pressHot:C.bar),borderRadius:"3px 3px 0 0",
+            border:isNow?"none":`1px solid ${hot?C.pressHot:C.faint}`}}/>
+        </div>;
+      })}
+    </div>
+    <div style={{display:"flex",gap:2,marginTop:3}}>
+      {months.map(m=><div key={m} style={{flex:1,textAlign:"center",fontSize:8,fontWeight:700,color:(year===YEAR&&m===TODAY.getMonth())?C.ink:C.mute}}>{MON[m][0]}</div>)}
+    </div>
+  </div>;
+}
+
+function Board({state,setState,monthIdx,setMonthIdx,tsp,view,goto,mobile}){
+  view=view||"all";
+  const [types,setTypes]=useState({});
+  const [open,setOpen]=useState(null);
+  const [creating,setCreating]=useState(null);
+  const [drawer,setDrawer]=useState(true);
+  const [sel,setSel]=useState(null);                 // {kind:"req"|"trip", id}
+  const [tripDrag,setTripDrag]=useState(null);       // live drop preview while dragging a trip: {set:Set<dateStr>, color}
+  const [collapsed,setCollapsed]=useState({});       // per-month collapse of the windows list (keyed "Y-M")
+  const cool=useMemo(()=>coolingAggregate(state,tsp),[state,tsp]);
+  const footprint=useFootprint(state);
+  const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
+
+  const setType=(id,t)=>setTypes(p=>({...p,[id]:t}));
+  const setPace=p=>setState(s=>({...s,pace:{...s.pace,...p}}));
+  function createRequest(w,type,foot,travel){
+    const r={id:"r"+Date.now(),siteId:w.site.id,shiftType:type,opens:w.opens,dueBy:w.dueBy,state:"candidate",footprint:foot};
+    if(travel)r.travel=travel;
+    if(creating&&creating.win)r.windowId=creating.win.id;
+    setState(s=>({...s,requests:[...s.requests,r]}));
+    setCreating(null);
+  }
+  // window-flow actions: surface a card → request it → submit the window's drafts in deadline order
+  const requestCard=(win,card)=>setState(s=>({...s,requests:[...s.requests,reqFromCard(win,card.site,card.type)]}));
+  const removeReq=id=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==id)}));
+  const delWindow=id=>setState(s=>({...s,windows:(s.windows||[]).filter(w=>w.id!==id),
+    requests:s.requests.filter(r=>!(r.windowId===id&&r.state==="candidate"))}));   // drop its un-submitted drafts; keep anything already sent
+  const submitInOrder=win=>setState(s=>{
+    const drafts=s.requests.filter(r=>r.windowId===win.id&&r.state==="candidate");
+    if(!drafts.length)return s;
+    return {...s,requests:s.requests.map(r=>{
+      if(!(r.windowId===win.id&&r.state==="candidate"))return r;
+      const cd=(siteById[r.siteId]&&siteById[r.siteId].cadence.expectedResponseDays)||10;
+      return {...r,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,cd))};
+    })};
+  });
+  const submitOne=r=>setState(s=>({...s,requests:s.requests.map(x=>{   // create → submit, inline (no trip to the Requests tab)
+    if(x.id!==r.id||x.state!=="candidate")return x;
+    const cd=(siteById[x.siteId]&&siteById[x.siteId].cadence.expectedResponseDays)||10;
+    return {...x,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,cd))};
+  })}));
+  const sp=<div style={{height:10}}/>;
+  const paceInner=<><PaceCurve pace={state.pace} setPace={setPace} tsp={tsp}/><div style={{marginTop:12}}><StatsReadout cool={cool}/></div></>;
+  const paceDrawerEl=<div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel2,marginBottom:12,overflow:"hidden"}}>
+    <div onClick={()=>setDrawer(d=>!d)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",cursor:"pointer"}}>
+      <span style={{fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Pace</span>
+      <span style={{fontSize:11,color:C.mute}}>on pace <b style={{color:C.ink}}>{fmtK(cool.onCurveProjection$)}</b> · worked {fmtK(cool.bookedToDate$)} · requested {fmtK(cool.requested$)}</span>
+      <span style={{marginLeft:"auto",fontSize:11,color:C.mute}}>{drawer?"▾ hide":"▸ show"}</span>
+    </div>
+    {drawer&&<div style={{padding:"0 12px 12px"}}>{paceInner}</div>}
+  </div>;
+  const calEl=<><Calendar state={state} setState={setState} footprint={footprint} layers={state.layers} selected={monthIdx} onSelect={(y,m)=>setMonthIdx(m)} ceiling={state.pace.pressureCeiling} sel={sel} setSel={setSel} goto={goto} mobile={mobile} preview={tripDrag}/>{!mobile&&<FootLegend/>}</>;
+  const layersEl=<LayersPanel state={state} setState={setState}/>;
+  const tripsEl=<TripsDrawer state={state} setState={setState}/>;
+  const sitesEl=<SitesWorksheet state={state} setState={setState}/>;
+  const winSorted=(state.windows||[]).slice().sort((a,b)=>a.dates[0].localeCompare(b.dates[0]));
+  const cardRow=(win,w)=>{
+    const isOpen=open===w.id,key=`${win.id}-${w.site.id}`;
+    const stL={fontSize:9,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase"};
+    const stV={fontSize:14,fontWeight:700,color:C.ink};
+    return <div key={w.id} style={{...glowStyle(w.bucket),borderRadius:7,marginBottom:6,transition:"box-shadow .2s"}}>
+      <div style={{padding:"9px 11px"}}>
+        {/* title line — site + where, then the details stack below (wraps clean on mobile) */}
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em"}}>{w.site.name}</span>
+          <Tag>{REACH_LABEL[w.site.reach]}</Tag>
+          {w.co.coLocated&&<Tag bg={C.softGood} col={C.green}>◈ co-located · {LOC_NAME[w.co.loc]}</Tag>}
+          {w.lockHit.length>0&&<Tag bg={C.line2} col={C.gray}>lock</Tag>}
+          {w.closed&&<Tag bg={C.line2} col={C.mute}>closed</Tag>}
+          {w.notOpen&&<Tag bg={C.line2} col={C.mute}>opens {MON[pd(w.opens).getMonth()]} {pd(w.opens).getDate()}</Tag>}
+        </div>
+        {w.site.note&&<div style={{fontSize:11.5,color:C.gray,marginTop:3,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{w.site.note}</div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:"5px 18px",marginTop:7}}>
+          <div><div style={stL}>$/hr ER</div><div style={stV}><Num e={w.money.erPerHr} money/></div></div>
+          <div><div style={stL}>$/hr away</div><div style={stV}><Num e={w.money.awayPerHr} money/></div></div>
+          <div><div style={stL}>kid-hrs</div><div style={{...stV,color:C.gray}} title={`${w.kidHrs.hours} kid-awake hours (7a–8p) away across this window`}>{w.kidHrs.hours}h</div></div>
+          <div><div style={stL}>close</div><div style={{...stV,color:w.closing>0.7?C.est:C.gray}}>{Math.round(w.closing*100)}%</div></div>
+        </div>
+        {w.perKid.length>0&&<div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}>
+          {w.perKid.map(k=><span key={k.childId} title={`${k.name}: ${k.count} of ${k.of} weekdays out of school`}
+            style={{fontSize:9.5,fontWeight:700,color:k.count>0?C.est:C.mute}}>◷ {k.name} {k.count}/{k.of}</span>)}
+        </div>}
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 11px",borderTop:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
+        <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden",flexWrap:"wrap"}}>
+          {CATS.map(c=><button key={c.id} onClick={()=>setType(key,c.id)}
+            style={{fontFamily:MONO,fontSize:11,fontWeight:700,padding:"3px 9px",border:"none",cursor:"pointer",
+              background:w.type===c.id?C.ink:"transparent",color:w.type===c.id?C.bg:C.gray}}>{c.label}</button>)}
+        </div>
+        {w.existing
+          ? <><Tag bg={C.softInfo} col={C.blue}>{ST_LABEL[w.existing.state]||w.existing.state}</Tag>
+              {w.existing.state==="candidate"&&<><Btn small kind="good" onClick={()=>submitOne(w.existing)}>mark requested →</Btn>
+              <Btn small kind="danger" onClick={()=>removeReq(w.existing.id)}>remove</Btn></>}</>
+          : !w.closed&&<><Btn small kind="prim" onClick={()=>requestCard(win,w)}>draft</Btn>
+              <Btn small onClick={()=>setCreating({w,win})}>compose…</Btn></>}
+        <span style={{marginLeft:"auto"}}/>
+        <Btn small onClick={()=>setOpen(isOpen?null:w.id)}>{isOpen?"hide":"why"}</Btn>
+      </div>
+      {isOpen&&<WhyBright w={w}/>}
+    </div>;
+  };
+  const windowBlock=win=>{
+    const wcol=collapsed[win.id];                       // each window collapses too (default open)
+    const dts=win.dates.map(pd);
+    const exp=weekExposure(dts,state.requests,siteById,tsp);
+    const wt=Number.isFinite(win.target)?win.target:win.dates.length;
+    const drafts=state.requests.filter(r=>r.windowId===win.id&&r.state==="candidate")
+      .sort((a,b)=>pd(a.dueBy)-pd(b.dueBy));
+    const reqd=state.requests.filter(r=>r.windowId===win.id).length;
+    const range=`${md(win.dates[0])}–${md(win.dates[win.dates.length-1])}`;
+    return <div key={win.id} style={{marginBottom:12,border:`1px solid ${C.line2}`,borderRadius:9,padding:"10px 11px",background:C.panel2}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,margin:`0 1px ${wcol?0:8}px`,flexWrap:"wrap"}}>
+        <span onClick={()=>setCollapsed(c=>({...c,[win.id]:!wcol}))} style={{display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+          <span style={{fontSize:11,color:C.gray,width:10}}>{wcol?"▸":"▾"}</span>
+          <span style={{fontSize:13,fontWeight:800,letterSpacing:"-0.01em"}}>{range}</span>
+          <span style={{fontSize:10.5,color:C.gray}}>{win.dates.length}d{wt<win.dates.length?` · work ${wt}`:""}</span>
+        </span>
+        <div style={{flex:1,minWidth:120,maxWidth:240,display:"flex",alignItems:"center",gap:6}}>
+          <div style={{flex:1,height:6,background:C.line2,borderRadius:3,position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.ceil$/8000*100)+"%",background:"repeating-linear-gradient(90deg,var(--faint),var(--faint) 4px,transparent 4px,transparent 7px)"}}/>
+            <div style={{position:"absolute",left:0,top:0,bottom:0,width:Math.min(100,exp.floor$/8000*100)+"%",background:C.ink}}/>
+          </div>
+          <span style={{fontSize:9.5,color:C.mute,whiteSpace:"nowrap"}}>{fmt$(exp.floor$)}→{fmt$(exp.ceil$)}</span>
+        </div>
+        {exp.collision&&<Tag bg={C.softWarn} col={C.red}>double-book</Tag>}
+        {wcol&&reqd>0&&<Tag bg={C.softInfo} col={C.blue}>{reqd} requested</Tag>}
+        <span style={{marginLeft:"auto"}}/>
+        <Btn small kind="danger" onClick={()=>delWindow(win.id)}>delete</Btn>
+      </div>
+      {!wcol&&windowCards(win,state,types,tsp).map(w=>cardRow(win,w))}
+      {!wcol&&drafts.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"7px 9px",border:`1px dashed ${C.line}`,borderRadius:6,flexWrap:"wrap"}}>
+        <span style={{fontSize:10.5,fontWeight:700,color:C.gray}}>mark requested, in deadline order:</span>
+        {drafts.map((r,i)=><span key={r.id} style={{fontSize:10,fontWeight:700,color:C.gray}}>
+          {i>0?"→ ":""}{(siteById[r.siteId]||{}).name} <span style={{color:C.mute}}>by {md(r.dueBy)}</span></span>)}
+        <span style={{marginLeft:"auto"}}/>
+        <Btn small kind="prim" onClick={()=>submitInOrder(win)}>mark all requested →</Btn>
+      </div>}
+    </div>;
+  };
+  // group windows by month; the calendar's selected month sits first, the rest run chronologically. each month collapses.
+  const selKey=`${YEAR}-${monthIdx}`;
+  const winGroups={};
+  for(const win of winSorted){const d=pd(win.dates[0]),k=`${d.getFullYear()}-${d.getMonth()}`;(winGroups[k]=winGroups[k]||[]).push(win);}
+  const winKeys=Object.keys(winGroups).sort((a,b)=>{
+    if(a===selKey)return -1;if(b===selKey)return 1;
+    const [ay,am]=a.split("-").map(Number),[by,bm]=b.split("-").map(Number);return ay-by||am-bm;});
+  const defOpen=winGroups[selKey]?selKey:winKeys[0];   // open the selected month, or the earliest if it has none
+  const windowsEl=<>
+    <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 2px 8px",flexWrap:"wrap"}}>
+      <span style={{fontSize:15.5,fontWeight:800,letterSpacing:"-0.02em"}}>Your windows</span>
+      <span style={{fontSize:11,color:C.gray}}>Draw a span on the calendar; site options surface beneath it.</span>
+      <span style={{marginLeft:"auto",fontSize:9.5,color:C.est,fontStyle:"italic"}}>~ = estimate</span>
+    </div>
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",fontSize:10,color:C.mute,margin:"0 2px 10px"}}>
+      <span>fit:</span>
+      {BUCKETS.map(b=><span key={b} style={{display:"inline-flex",alignItems:"center",gap:4}}>
+        <span style={{width:12,height:12,borderRadius:3,...glowStyle(b),display:"inline-block"}}/>{BUCKET_LABEL[b]}</span>)}
+    </div>
+    {winKeys.length===0&&<div style={{fontSize:11.5,color:C.mute,fontStyle:"italic",padding:"6px 2px"}}>No windows yet — draw a span on the calendar above to surface site options.</div>}
+    {winKeys.map(k=>{
+      const [ky,km]=k.split("-").map(Number),isSel=k===selKey;
+      const col=k in collapsed?collapsed[k]:k!==defOpen;   // default-open the selected (or earliest) month; others collapsed
+      return <div key={k} style={{marginBottom:12}}>
+        <div onClick={()=>setCollapsed(c=>({...c,[k]:!col}))} style={{display:"flex",alignItems:"center",gap:7,padding:"5px 3px",cursor:"pointer",borderBottom:`1px solid ${C.line2}`,marginBottom:8}}>
+          <span style={{fontSize:11,color:C.gray,width:10}}>{col?"▸":"▾"}</span>
+          <span style={{fontSize:12.5,fontWeight:800,letterSpacing:"-0.01em",color:isSel?C.ink:C.gray}}>{MONL[km]} {ky}</span>
+          {isSel&&<Tag bg={C.sel} col={C.ink}>selected</Tag>}
+          <span style={{fontSize:10.5,fontWeight:700,color:C.mute}}>{winGroups[k].length} window{winGroups[k].length>1?"s":""}</span>
+        </div>
+        {!col&&winGroups[k].map(windowBlock)}
+      </div>;
+    })}
+  </>;
+
+  const tripsPaletteEl=<TripsPalette state={state} setState={setState} sel={sel} setSel={setSel} goto={goto} onPreview={setTripDrag}/>;
+  let body;
+  if(view==="pace")body=<><div style={{fontSize:15.5,fontWeight:800,marginBottom:10}}>Pace</div>{paceInner}</>;
+  else if(view==="setup")body=<>{layersEl}{sp}{tripsEl}{sp}{sitesEl}</>;
+  // main workspace: calendar (draw windows) + trips palette + the surfaced cards, grouped by window
+  else body=<>{calEl}{sp}{tripsPaletteEl}{sp}{windowsEl}</>;
+
+  return <div style={{height:"100%",overflow:"auto"}}>
+    <div style={{maxWidth:980,margin:"0 auto",padding:"12px 16px 60px"}}>{body}</div>
+    {creating&&<CreateModal w={creating.w} state={state} tsp={tsp} onClose={()=>setCreating(null)} onCreate={createRequest}/>}
+  </div>;
+}
+const Fact=({label,children})=> <div style={{padding:"9px 11px",textAlign:"right",minWidth:74,borderRight:`1px solid ${C.line2}`}}>
+  <div style={{fontSize:9,fontWeight:700,color:C.mute,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:2}}>{label}</div>
+  <div style={{fontSize:14.5,fontWeight:700,color:C.ink}}>{children}</div>
+</div>;
+
+function CreateModal({w,state,tsp,onClose,onCreate}){
+  const byWindow=w.site.submissionType==="by_window";
+  const [type,setType]=useState(w.type);
+  const days=w.week.dates.map(ds);                      // weekends selectable too
+  const [take,setTake]=useState(2);
+  const [picked,setPicked]=useState(byWindow?days:[days[0]]);
+  const toggle=d=>setPicked(p=>p.includes(d)?p.filter(x=>x!==d):[...p,d]);
+  const [travelOn,setTravelOn]=useState(false);
+  const [tv,setTv]=useState(()=>travelOf(w.site));     // per-trip travel override (else the site default)
+  function go(){
+    const dates=picked.slice().sort();
+    const foot={kind:"pinned",dates};                  // one window type — a drawn day-set …
+    if(byWindow)foot.target=Math.min(take,dates.length);   // … plus a density target for by-window sites
+    onCreate(w,type,foot,travelOn?tv:null);
+  }
+  // live readout — money + kid-awake hours for what's being built
+  const money=windowMoney(w.site,type,w.week.dates,state.trips);
+  const count=byWindow?Math.min(take,picked.length):picked.length;
+  const effDates=byWindow?picked.slice(0,Math.min(take,picked.length)):picked;
+  const perKid=kidDaysOut(effDates,state.layers);
+  const cost=kidHoursCost(effDates,w.site,travelOn?tv:null,type,state.layers);
+  const totalPay=money.shiftPay*count;
+  return <Overlay onClose={onClose}>
+    <div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>{w.site.name}</div>
+    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>{byWindow?"by week — pick days + how many to take":"by shift — pick the dates"}</div>
+    <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden",marginBottom:12,flexWrap:"wrap"}}>
+      {CATS.map(c=><button key={c.id} onClick={()=>setType(c.id)} style={{fontFamily:MONO,fontSize:12,fontWeight:700,
+        padding:"5px 14px",border:"none",cursor:"pointer",background:type===c.id?C.ink:"transparent",color:type===c.id?C.bg:C.gray}}>{c.label}</button>)}
+    </div>
+    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
+      {days.map(d=>{const on=picked.includes(d);return <button key={d} onClick={()=>toggle(d)}
+        style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"6px 9px",borderRadius:5,cursor:"pointer",
+          border:`1px solid ${on?C.ink:C.line}`,background:on?C.ink:C.panel,color:on?C.bg:C.gray}}>
+        {MON[pd(d).getMonth()]} {pd(d).getDate()}</button>;})}
+    </div>
+    {byWindow&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+      <span style={{fontSize:12,color:C.gray}}>take</span>
+      <Btn small onClick={()=>setTake(t=>Math.max(1,t-1))}>−</Btn>
+      <span style={{fontSize:15.5,fontWeight:800,minWidth:18,textAlign:"center"}}>{take}</span>
+      <Btn small onClick={()=>setTake(t=>Math.min(picked.length,t+1))}>+</Btn>
+      <span style={{fontSize:11,color:C.mute}}>of {picked.length} days · ceiling at <Num e={tsp} money/>/shift</span>
+    </div>}
+    <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.gray,marginBottom:travelOn?7:14,cursor:"pointer"}}>
+      <input type="checkbox" checked={travelOn} onChange={e=>setTravelOn(e.target.checked)}/>
+      custom travel for this trip {travelOn?"":`— else ${w.site.name}'s usual`}
+    </label>
+    {travelOn&&<div style={{display:"flex",gap:6,alignItems:"flex-end",flexWrap:"wrap",marginBottom:14}}>
+      <Field label="leave (days before)"><input type="number" min="0" style={{...inp,width:78}} value={tv.beforeDays} onChange={e=>setTv(v=>({...v,beforeDays:Math.max(0,+e.target.value||0)}))}/></Field>
+      <Field label="at"><input type="time" style={{...inp,width:104}} value={tv.departTime} onChange={e=>setTv(v=>({...v,departTime:e.target.value}))}/></Field>
+      <Field label="home (days after)"><input type="number" min="0" style={{...inp,width:78}} value={tv.afterDays} onChange={e=>setTv(v=>({...v,afterDays:Math.max(0,+e.target.value||0)}))}/></Field>
+      <Field label="at"><input type="time" style={{...inp,width:104}} value={tv.returnTime} onChange={e=>setTv(v=>({...v,returnTime:e.target.value}))}/></Field>
+    </div>}
+    {/* live readout — what this candidate records */}
+    <div style={{border:`1px solid ${C.line}`,borderRadius:7,background:C.panel2,padding:"10px 12px",marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
+        <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.05em",color:C.gray,textTransform:"uppercase"}}>What this adds</span>
+        <span style={{fontSize:13,fontWeight:800}}>{count}× · {fmt$(totalPay)}{byWindow&&count<picked.length?" if all land":""}</span>
+      </div>
+      <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8}}>
+        <div><div style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>$/hr ER</div><div style={{fontSize:15.5,fontWeight:700}}><Num e={money.erPerHr} money/></div></div>
+        <div><div style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>$/hr away</div><div style={{fontSize:15.5,fontWeight:700}}><Num e={money.awayPerHr} money/></div></div>
+        <div><div style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>away hrs</div><div style={{fontSize:15.5,fontWeight:700,color:C.gray}}>{money.awayHours}</div>
+          <div style={{fontSize:8.5,color:C.mute}}>{money.travel}h travel{w.co.coLocated?" · co-located":""}</div></div>
+      </div>
+      <div style={{borderTop:`1px solid ${C.line2}`,paddingTop:7}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+          <span style={{fontSize:9,fontWeight:700,color:C.mute,textTransform:"uppercase"}}>Kid-awake hours away {byWindow?"(of the take)":""}</span>
+          <span style={{fontSize:15.5,fontWeight:800}}>{cost.hours}h</span>
+        </div>
+        {cost.window&&<div style={{fontSize:8.5,color:C.mute,marginBottom:6}}>away {fmtDT(cost.window.start)} → {fmtDT(cost.window.end)} · 7a–8p only{travelOn?"":` · ${w.site.name} travel`}</div>}
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {perKid.map(k=><span key={k.childId} style={{fontSize:11,fontWeight:700,color:k.count>0?C.est:C.green}}>
+            ◷ {k.name} <b>{k.count}</b>/{k.of} home</span>)}
+          {perKid.every(k=>k.count===0)&&<span style={{fontSize:11,color:C.green}}>kids at school every day</span>}
+        </div>
+      </div>
+    </div>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+      <Btn onClick={onClose}>cancel</Btn>
+      <Btn kind="prim" disabled={!picked.length} onClick={go}>create draft</Btn>
+    </div>
+  </Overlay>;
+}
+function Overlay({children,onClose}){
+  return <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(28,25,23,.4)",display:"flex",
+    alignItems:"center",justifyContent:"center",zIndex:200,padding:16}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.panel,borderRadius:10,padding:"18px 20px",maxWidth:460,width:"100%",
+      boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>{children}</div>
+  </div>;
+}
+
+/* Balance collapsed into a single gesture — the shift-quantity PaceCurve in the
+   Board drawer (§6.1). Annual $ is extrapolated; the comfort ceiling rides the
+   curve; infeasibility still renders as the cooling aggregate failing to cool. */
+
+/* ════════ PENDING — the lifecycle list (§5) ════════
+   One scrolling column: Candidates (apply, with deadline chain) → Confirmed →
+   Pending (awaiting + in-negotiation overrides) → Past (worked, scrolling down). */
+const md=d=>`${MON[pd(d).getMonth()]} ${pd(d).getDate()}`;
+/* group sorted dates into contiguous (consecutive-day) runs → window ranges for display */
+const dateRuns=dates=>{const s=[...dates].sort();const runs=[];
+  for(const d of s){const last=runs[runs.length-1];
+    if(last&&days(pd(last.to),pd(d))===1)last.to=d;else runs.push({from:d,to:d});}
+  return runs;};
+const fmtRun=r=>r.from===r.to?md(r.from)
+  :`${md(r.from)}–${pd(r.from).getMonth()===pd(r.to).getMonth()?pd(r.to).getDate():md(r.to)}`;
+const ST_COL={candidate:C.gray,pending:C.blue,override:C.pressHot,confirmed:C.green,rejected:C.red,expired:C.mute};
+const ST_LABEL={candidate:"draft",pending:"requested",override:"negotiating",confirmed:"booked",rejected:"rejected",expired:"expired"};
+function Pending({state,setState,tsp}){
+  const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
+  const [note,setNote]=useState(null);                 // transient booking-conflict notice
+  const setReq=(id,fn)=>setState(s=>({...s,requests:s.requests.map(x=>x.id===id?fn(x):x)}));
+  const discard=id=>setState(s=>({...s,requests:s.requests.filter(x=>x.id!==id)}));
+  // booking exclusivity: a confirm can't land a shift whose wall-clock interval overlaps an already-confirmed one
+  const bookGuard=r=>{const cf=bookingConflict(pinFrom(r),r.shiftType,state.requests,r.id);
+    if(cf){const other=state.requests.find(x=>x.id===cf.other.id),os=other&&siteById[other.siteId];
+      setNote(`Can't book ${shiftLabel(r.shiftType)} on ${md(cf.date)} — overlaps a confirmed ${shiftLabel(cf.other.shift)}${os?` at ${os.name}`:""}.`);return false;}
+    setNote(null);return true;};
+  const cadDays=r=>(siteById[r.siteId]&&siteById[r.siteId].cadence.expectedResponseDays)||10;
+  const pinFrom=r=>r.footprint.dates.slice(0,shiftCount(r));   // density resolves to its first `target` days; exact keeps all
+  const submit=r=>setReq(r.id,x=>({...x,state:"pending",submittedOn:ds(TODAY),expectedResponseBy:ds(ad(TODAY,cadDays(x)))}));
+  const accept=r=>{if(!bookGuard(r))return;setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY),footprint:{kind:"pinned",dates:pinFrom(x)}}));};
+  const reject=r=>setReq(r.id,x=>({...x,state:"rejected",resolvedOn:ds(TODAY)}));
+  const toOverride=r=>setReq(r.id,x=>({...x,state:"override",footprint:{kind:"pinned",dates:pinFrom(x)},rateOverride:Number.isFinite(x.rateOverride)?x.rateOverride:siteRate(siteById[x.siteId],x.shiftType)}));
+  const confirmOverride=r=>{if(!bookGuard(r))return;setReq(r.id,x=>({...x,state:"confirmed",resolvedOn:ds(TODAY)}));};
+  const payOf=r=>{const s=siteById[r.siteId];return s?shiftCount(r)*reqShiftPay(r,s):0;};
+
+  function chainFor(r){
+    // no manual dependency — the chain emerges from due dates: r "waits on" the still-open
+    // request (awaiting a response) that's furthest along the queue yet due before r is.
+    const ahead=state.requests.filter(u=>u.id!==r.id&&(u.state==="pending"||u.state==="override")&&pd(u.dueBy)<pd(r.dueBy));
+    if(!ahead.length)return null;
+    const upstream=ahead.reduce((a,b)=>pd(b.dueBy)>pd(a.dueBy)?b:a);
+    const up=siteById[upstream.siteId];
+    const slack=days(pd(upstream.expectedResponseBy||upstream.dueBy),pd(r.dueBy));
+    return {up,upstream,slack};
+  }
+
+  const reqs=state.requests;
+  const candidates=reqs.filter(r=>r.state==="candidate").sort((a,b)=>pd(a.dueBy)-pd(b.dueBy));
+  const confirmedUp=reqs.filter(r=>r.state==="confirmed"&&!isPastReq(r)).sort((a,b)=>reqMaxDate(a).localeCompare(reqMaxDate(b)));
+  const inflight=reqs.filter(r=>r.state==="pending"||r.state==="override").sort((a,b)=>pd(a.expectedResponseBy||a.dueBy)-pd(b.expectedResponseBy||b.dueBy));
+  const resolved=reqs.filter(r=>r.state==="rejected"||r.state==="expired");
+  const past=reqs.filter(isPastReq).sort((a,b)=>reqMaxDate(b).localeCompare(reqMaxDate(a)));
+  // confirmed shifts arrive as many one-date requests (imported calendar) — collapse consecutive same-site day/night ones into runs
+  const bookedRuns=list=>{
+    const items=[];
+    for(const r of list){const s=siteById[r.siteId];for(const d of r.footprint.dates)items.push({d,r,s});}
+    items.sort((a,b)=>a.d.localeCompare(b.d));
+    const runs=[];
+    for(const it of items){const last=runs[runs.length-1],night=shiftIsNight(it.r.shiftType),pay=it.s?reqShiftPay(it.r,it.s):0;
+      if(last&&last.siteId===it.r.siteId&&last.night===night&&days(pd(last.to),pd(it.d))===1){last.to=it.d;last.n++;last.$+=pay;}
+      else runs.push({siteId:it.r.siteId,name:it.s?it.s.name:"(removed site)",type:it.r.shiftType,night,from:it.d,to:it.d,n:1,$:pay});}
+    return runs;
+  };
+  const RunRow=({run,dim})=> <div style={{padding:"9px 11px",border:`1px solid ${dim?C.line:C.juniper}`,borderRadius:7,background:C.panel,marginBottom:6,opacity:dim?0.5:1}}>
+    <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+      <span style={{fontSize:13,fontWeight:800}}>{run.name}</span>
+      <Tag bg={C.line2} col={shiftCol(run.type)}>{shiftLabel(run.type)}</Tag>
+      {run.n>1&&<Tag bg={C.line2}>{run.n} shifts</Tag>}
+      <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:C.ink}}>{fmt$(run.$)}</span>
+    </div>
+    <div style={{fontSize:10,color:C.gray,marginTop:4}}>{run.from===run.to?md(run.from):`${md(run.from)}–${md(run.to)}`}</div>
+  </div>;
+
+  const Head=({title,n,sub})=> <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"0 2px 8px"}}>
+    <span style={{fontSize:14.5,fontWeight:800,letterSpacing:"-0.01em"}}>{title}</span>
+    <span style={{fontSize:11,fontWeight:700,color:C.mute}}>{n}</span>
+    <span style={{fontSize:11,color:C.gray}}>{sub}</span>
+  </div>;
+  const Empty=({t})=> <div style={{fontSize:11,color:C.mute,fontStyle:"italic",padding:"4px 2px 0"}}>{t}</div>;
+  const RowCard=({children,dim,accent})=> <div style={{padding:"9px 11px",border:`1px solid ${accent||C.line}`,borderRadius:7,
+    background:C.panel,marginBottom:6,opacity:dim?0.5:1}}>{children}</div>;
+  const Ident=({r})=>{const site=siteById[r.siteId];return <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+    <span style={{fontSize:13,fontWeight:800}}>{site?site.name:"(removed site)"}</span>
+    <Tag bg={C.line2} col={ST_COL[r.state]}>{ST_LABEL[r.state]}</Tag>
+    <Tag>{shiftLabel(r.shiftType)}</Tag>
+    {Number.isFinite(r.rateOverride)&&<Tag bg={C.softWarn} col={C.pressHot}>rate {fmt$(r.rateOverride)}/hr</Tag>}
+    {Number.isFinite(r.bonusOverride)&&r.bonusOverride>0&&<Tag bg={C.softWarn} col={C.pressHot}>+{fmt$(r.bonusOverride)}/shift</Tag>}
+    <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:C.ink}}>{fmt$(payOf(r))}</span>
+  </div>;};
+  const Dates=({r})=> <div style={{fontSize:10,color:C.gray,marginTop:4}}>
+    {reqIsDensity(r)?`${md(r.footprint.dates[0])}–${md(r.footprint.dates.at(-1))} · ${shiftCount(r)} of ${r.footprint.dates.length} days`
+      :dateRuns(r.footprint.dates).map(fmtRun).join(" · ")}</div>;
+
+  return <div style={{height:"100%",overflow:"auto"}}>
+    <div style={{maxWidth:720,margin:"0 auto",padding:"14px 16px 80px"}}>
+      <div style={{fontSize:18,fontWeight:800,letterSpacing:"-0.02em"}}>Requests</div>
+      <div style={{fontSize:11.5,color:C.gray,marginBottom:16}}>the request lifecycle, newest intent on top, history scrolling down.</div>
+      {note&&<div onClick={()=>setNote(null)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 11px",marginBottom:12,borderRadius:7,
+        border:`1px solid ${C.pressHot}`,background:C.softWarn,cursor:"pointer"}}>
+        <span style={{fontSize:11.5,fontWeight:700,color:C.pressHot}}>{note}</span>
+        <span style={{marginLeft:"auto",fontSize:10,color:C.mute}}>dismiss ✕</span></div>}
+
+      {/* ── DRAFTS ── */}
+      <Head title="Drafts" n={candidates.length} sub="planned · mark requested when you ask the site · deadline chain"/>
+      {candidates.length===0&&<Empty t="No drafts yet — create one on the calendar."/>}
+      {candidates.map(r=>{
+        const press=requestPressure(r),notOpen=TODAY<pd(r.opens),chain=chainFor(r);
+        return <RowCard key={r.id}>
+          <Ident r={r}/><Dates r={r}/>
+          <div style={{marginTop:7}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:9.5,color:C.mute,marginBottom:2}}>
+              <span>{notOpen?`opens ${r.opens}`:`open now`}</span>
+              <span style={{color:press>0.7?C.red:C.gray}}>apply by {r.dueBy}</span>
+            </div>
+            <div style={{height:5,background:C.line2,borderRadius:3,overflow:"hidden"}}>
+              <div style={{width:(press*100)+"%",height:"100%",background:press>0.7?C.red:C.ink}}/>
+            </div>
+          </div>
+          {chain&&<div style={{marginTop:6,fontSize:10,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <span style={{color:C.gray}}>⛓ hear back from <b>{chain.up?chain.up.name:"?"}</b> first</span>
+            {chain.slack<0? <Tag bg={C.softWarn} col={C.red}>slack {chain.slack}d — due before they respond</Tag>
+              : <Tag bg={C.softGood} col={C.green}>{chain.slack}d slack</Tag>}
+          </div>}
+          <div style={{display:"flex",gap:6,marginTop:8}}>
+            <Btn small kind="prim" onClick={()=>submit(r)}>mark requested →</Btn>
+            <Btn small kind="danger" onClick={()=>discard(r.id)}>discard</Btn>
+          </div>
+        </RowCard>;
+      })}
+
+      {/* ── CONFIRMED (upcoming) ── */}
+      <div style={{marginTop:18}}><Head title="Booked" n={confirmedUp.length} sub="upcoming · on the calendar"/></div>
+      {confirmedUp.length===0&&<Empty t="No upcoming booked shifts."/>}
+      {bookedRuns(confirmedUp).map((run,i)=><RunRow key={i} run={run}/>)}
+
+      {/* ── SUBMITTED (awaiting + negotiating) ── */}
+      <div style={{marginTop:18}}><Head title="Requested" n={inflight.length} sub="awaiting the site · accept / decline / negotiate"/></div>
+      {inflight.length===0&&<Empty t="Nothing out for response."/>}
+      {inflight.map(r=>{
+        const wait=responseWait(r),neg=r.state==="override";
+        return <RowCard key={r.id} accent={neg?C.pressHot:undefined}>
+          <Ident r={r}/><Dates r={r}/>
+          {wait&&<div style={{marginTop:7}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:9.5,color:C.mute,marginBottom:2}}>
+              <span>submitted {r.submittedOn}</span>
+              <span style={{color:wait.overdue?C.red:C.gray}}>{wait.overdue?"overdue":"response by"} {r.expectedResponseBy}</span>
+            </div>
+            <div style={{height:5,background:C.line2,borderRadius:3,overflow:"hidden"}}>
+              <div style={{width:(wait.frac*100)+"%",height:"100%",background:wait.overdue?C.red:C.blue}}/>
+            </div>
+          </div>}
+          {!neg
+            ? <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                <Btn small kind="good" onClick={()=>accept(r)}>accept</Btn>
+                <Btn small kind="danger" onClick={()=>reject(r)}>reject</Btn>
+                <Btn small onClick={()=>toOverride(r)}>override</Btn>
+              </div>
+            : <OverrideEditor r={r} site={siteById[r.siteId]}
+                onRm={d=>setReq(r.id,x=>({...x,footprint:{kind:"pinned",dates:x.footprint.dates.filter(y=>y!==d)}}))}
+                onAdd={d=>setReq(r.id,x=>x.footprint.dates.includes(d)?x:({...x,footprint:{kind:"pinned",dates:[...x.footprint.dates,d].sort()}}))}
+                onRate={v=>setReq(r.id,x=>({...x,rateOverride:v}))}
+                onBonus={v=>setReq(r.id,x=>({...x,bonusOverride:v}))}
+                onShift={v=>setReq(r.id,x=>({...x,shiftType:v}))}
+                onConfirm={()=>confirmOverride(r)} onReject={()=>reject(r)}/>}
+        </RowCard>;
+      })}
+      {resolved.length>0&&<div style={{marginTop:8}}>
+        <div style={{fontSize:10,fontWeight:700,color:C.mute,textTransform:"uppercase",letterSpacing:"0.04em",margin:"0 2px 6px"}}>resolved · persists (Inv 8)</div>
+        {resolved.map(r=><RowCard key={r.id} dim>
+          <Ident r={r}/><Dates r={r}/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
+            <span style={{fontSize:9.5,color:C.mute,fontStyle:"italic"}}>faded to legibility floor</span>
+            <Btn small onClick={()=>discard(r.id)}>dismiss</Btn>
+          </div>
+        </RowCard>)}
+      </div>}
+
+      {/* ── PAST (worked) ── */}
+      <div style={{marginTop:18}}><Head title="Past" n={past.length} sub="worked · scrolling down"/></div>
+      {past.length===0&&<Empty t="No past shifts yet."/>}
+      {bookedRuns(past).map((run,i)=><RunRow key={i} run={run} dim/>)}
+
+      <p style={{fontSize:11,color:C.mute,textAlign:"center",marginTop:22,lineHeight:1.6}}>
+        Booked and negotiating shifts land on the calendar and press the month.<br/>
+        Only the pace/exposure readout crosses back to the Board (the seam, §7).
+      </p>
+    </div>
+  </div>;
+}
+/* inline negotiation editor — edits commit live (shows on the calendar / pressure) */
+function OverrideEditor({r,site,onRm,onAdd,onRate,onBonus,onShift,onConfirm,onReject}){
+  const [add,setAdd]=useState("");
+  const perShift=(Number(r.rateOverride)||0)*siteHours(site,r.shiftType)+(Number(r.bonusOverride)||0);
+  const dayShifts=siteMenu(site).filter(m=>!shiftIsNight(m.shift)),nightShifts=siteMenu(site).filter(m=>shiftIsNight(m.shift));
+  return <div style={{marginTop:8,padding:"9px 10px",border:`1px dashed ${C.pressHot}`,borderRadius:6,background:C.softWarn}}>
+    <div style={{fontSize:9.5,fontWeight:800,color:C.pressHot,letterSpacing:"0.04em",textTransform:"uppercase",marginBottom:6}}>Negotiated shift, dates, rate and bonus</div>
+    {/* the site's answer can be coarse (day/night) or a specific shift it assigned */}
+    <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:8}}>
+      <span style={{fontSize:10,color:C.gray}}>shift</span>
+      <select value={r.shiftType} onChange={e=>onShift(e.target.value)} style={{...inp,width:140}}>
+        <optgroup label="Any">{CATS.map(c=><option key={c.id} value={c.id}>{c.label} (any)</option>)}</optgroup>
+        {dayShifts.length>0&&<optgroup label="Day shifts">{dayShifts.map(m=><option key={m.shift} value={m.shift}>{shiftLabel(m.shift)}</option>)}</optgroup>}
+        {nightShifts.length>0&&<optgroup label="Night shifts">{nightShifts.map(m=><option key={m.shift} value={m.shift}>{shiftLabel(m.shift)}</option>)}</optgroup>}
+      </select>
+    </div>
+    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
+      {r.footprint.dates.map(d=><span key={d} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,
+        padding:"2px 4px 2px 7px",border:`1px solid ${C.line}`,borderRadius:4,background:C.panel}}>
+        {md(d)}<button onClick={()=>onRm(d)} style={{border:"none",background:"none",cursor:"pointer",color:C.red,fontFamily:MONO,fontSize:12}}>×</button></span>)}
+    </div>
+    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+      <input type="date" value={add} onChange={e=>setAdd(e.target.value)} style={{...inp,width:140}}/>
+      <Btn small onClick={()=>{if(DATE_RE.test(add)){onAdd(add);setAdd("");}}}>+ add date</Btn>
+      <span style={{marginLeft:"auto",fontSize:10,color:C.gray}}>$/hr</span>
+      <input type="number" value={r.rateOverride} onChange={e=>onRate(+e.target.value||0)} style={{...inp,width:72}}/>
+      <span style={{fontSize:10,color:C.gray}}>+ bonus/shift</span>
+      <input type="number" value={Number.isFinite(r.bonusOverride)?r.bonusOverride:0} onChange={e=>onBonus(Math.max(0,+e.target.value||0))} style={{...inp,width:72}}/>
+    </div>
+    <div style={{fontSize:10,color:C.mute,marginBottom:8}}>{fmt$(perShift)}/shift × {r.footprint.dates.length} = <b style={{color:C.gray}}>{fmt$(perShift*r.footprint.dates.length)}</b>{Number(r.bonusOverride)>0?` (incl. ${fmt$(r.bonusOverride)} bonus/shift)`:""}</div>
+    <div style={{display:"flex",gap:6}}>
+      <Btn small kind="good" disabled={!r.footprint.dates.length} onClick={onConfirm}>confirm</Btn>
+      <Btn small kind="danger" onClick={onReject}>reject</Btn>
+    </div>
+  </div>;
+}
+
+/* ════════ SITES WORKSHEET — add / edit named, never-rated sites; live, near the window list (§3.1, Inv 4) ════════ */
+function SiteWizard({state,setState,embed,onClose}){
+  const [openId,setOpenId]=useState(state.sites[0]?.id||null);
+  const sites=state.sites;
+  const setSites=fn=>setState(st=>({...st,sites:fn(st.sites)}));   // live edits
+  const reqCount=id=>state.requests.filter(r=>r.siteId===id).length;
+  const upd=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,...patch}:s));
+  const updCad=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,cadence:{...s.cadence,...patch}}:s));
+  const updTravel=(id,patch)=>setSites(p=>p.map(s=>s.id===id?{...s,travel:{...travelOf(s),...patch}}:s));
+  const setMenu=(id,fn)=>setSites(p=>p.map(s=>s.id===id?{...s,menu:fn(siteMenu(s))}:s));
+  const updMenu=(id,i,patch)=>setMenu(id,m=>m.map((e,j)=>j===i?{...e,...patch}:e));
+  const delMenu=(id,i)=>setMenu(id,m=>m.length>1?m.filter((_,j)=>j!==i):m);   // keep at least one offered shift
+  const addMenu=id=>setMenu(id,m=>{const used=new Set(m.map(e=>e.shift));const free=SHIFTS.find(sh=>!used.has(sh.id))||SHIFTS[0];
+    return [...m,{shift:free.id,rate:200,rest:shiftRestDefault(free.id)}];});
+  const addSite=()=>{const id="site"+Date.now();
+    setSites(p=>[...p,{id,name:"New site",note:"",reach:"local",homeBaseLoc:"boston",
+      menu:[{shift:"d7",rate:200,rest:10}],submissionType:"by_shift",travel:defaultTravel("local"),
+      cadence:{opensDaysBefore:60,dueByDaysBefore:21,expectedResponseDays:14}}]);
+    setOpenId(id);};
+  const rm=id=>{if(reqCount(id)>0)return;setSites(p=>p.filter(s=>s.id!==id));if(openId===id)setOpenId(null);};
+  const N=props=> <input type="number" style={inp} {...props}/>;
+  const Inner=<div style={{maxHeight:embed?"none":"82vh",display:"flex",flexDirection:"column"}}>
+      {!embed&&<div style={{fontSize:15.5,fontWeight:800,marginBottom:2}}>Sites worksheet</div>}
+      <div style={{fontSize:11,color:C.gray,marginBottom:10}}>Name and note are free text. Changes save as you type.</div>
+      <div style={{flex:1,overflow:"auto",margin:"0 -2px",padding:"0 2px"}}>
+        {sites.map(s=>{
+          const open=openId===s.id, refs=reqCount(s.id);
+          return <div key={s.id} style={{border:`1px solid ${C.line}`,borderRadius:7,marginBottom:7,background:C.panel,overflow:"hidden"}}>
+            <div onClick={()=>setOpenId(open?null:s.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",cursor:"pointer"}}>
+              <span style={{fontSize:13,fontWeight:800}}>{s.name||"(unnamed)"}</span>
+              <Tag>{REACH_LABEL[s.reach]}</Tag>
+              <Tag bg={C.line2}>{s.submissionType==="by_window"?"by week":"by shift"}</Tag>
+              <Tag bg={C.line2}>due {s.cadence.dueByDaysBefore}d before month</Tag>
+              <span style={{marginLeft:"auto",fontSize:11,color:C.mute}}>{open?"▾":"▸"}</span>
+            </div>
+            {open&&<div style={{padding:"4px 10px 10px",borderTop:`1px solid ${C.line2}`}}>
+              <Field label="Name (carries satisfaction)"><input style={inp} value={s.name} onChange={e=>upd(s.id,{name:e.target.value})}/></Field>
+              <Field label="Note (free text · non-sortable)"><input style={inp} value={s.note} onChange={e=>upd(s.id,{note:e.target.value})}/></Field>
+              <div style={{display:"flex",gap:8}}>
+                <Field label="Reach"><select style={inp} value={s.reach} onChange={e=>upd(s.id,{reach:e.target.value})}>
+                  {Object.keys(REACH_LABEL).map(r=><option key={r} value={r}>{REACH_LABEL[r]}</option>)}</select></Field>
+                <Field label="Home base"><select style={inp} value={s.homeBaseLoc} onChange={e=>upd(s.id,{homeBaseLoc:e.target.value})}>
+                  {Object.keys(LOC_NAME).map(l=><option key={l} value={l}>{LOC_NAME[l]}</option>)}</select></Field>
+              </div>
+              <div style={{fontSize:10,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.gray,margin:"8px 0 3px"}}>Shift menu — what this site offers ($/hr · rest · kid-hrs)</div>
+              {CATS.map(c=>{const night=c.id==="night";
+                const rows=siteMenu(s).map((m,i)=>({m,i})).filter(({m})=>shiftIsNight(m.shift)===night);
+                return <div key={c.id} style={{marginBottom:3}}>
+                  <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:night?C.ocean:C.gray,margin:"5px 0 2px"}}>{c.label}</div>
+                  {rows.length===0&&<div style={{fontSize:9.5,color:C.mute,fontStyle:"italic",paddingLeft:2}}>none offered</div>}
+                  {rows.map(({m,i})=><div key={i} style={{display:"flex",gap:6,alignItems:"flex-end",marginBottom:5}}>
+                    <Field label="Shift"><select style={{...inp,width:100}} value={m.shift} onChange={e=>updMenu(s.id,i,{shift:e.target.value})}>
+                      {SHIFTS.map(sh=><option key={sh.id} value={sh.id}>{sh.label}</option>)}</select></Field>
+                    <Field label="$/hr"><N value={m.rate} onChange={e=>updMenu(s.id,i,{rate:+e.target.value||0})}/></Field>
+                    <Field label="rest"><N value={m.rest} onChange={e=>updMenu(s.id,i,{rest:Math.max(0,+e.target.value||0)})}/></Field>
+                    <Field label="kid-hrs"><N value={Number.isFinite(m.kidHours)?m.kidHours:Math.round(defaultKidHours(m.shift)*10)/10} onChange={e=>updMenu(s.id,i,{kidHours:Math.max(0,+e.target.value||0)})}/></Field>
+                    <span style={{fontSize:9.5,color:C.mute,paddingBottom:7}}>{shiftHours(m.shift)}h</span>
+                    <Btn small kind="danger" disabled={siteMenu(s).length<=1} onClick={()=>delMenu(s.id,i)}>✕</Btn>
+                  </div>)}
+                </div>;})}
+              <div style={{fontSize:9,color:C.mute,margin:"2px 0 4px"}}>kid-hrs = waking hours with the kids this shift costs (school days are excluded automatically). Blank = estimated from the shift time.</div>
+              <div style={{marginBottom:6}}><Btn small onClick={()=>addMenu(s.id)} disabled={siteMenu(s).length>=SHIFTS.length}>+ add shift</Btn></div>
+              <Field label="Submission type"><select style={inp} value={s.submissionType} onChange={e=>upd(s.id,{submissionType:e.target.value})}>
+                <option value="by_shift">by shift (pinned)</option><option value="by_window">by week (smeared)</option></select></Field>
+              <div style={{display:"flex",gap:8}}>
+                <Field label="Opens (days before)"><N value={s.cadence.opensDaysBefore} onChange={e=>updCad(s.id,{opensDaysBefore:+e.target.value||0})}/></Field>
+                <Field label="Requests due (days before the month)"><N value={s.cadence.dueByDaysBefore} onChange={e=>updCad(s.id,{dueByDaysBefore:+e.target.value||0})}/></Field>
+                <Field label="Response (days)"><N value={s.cadence.expectedResponseDays} onChange={e=>updCad(s.id,{expectedResponseDays:+e.target.value||0})}/></Field>
+              </div>
+              <div style={{fontSize:9.5,color:C.mute,margin:"2px 0 4px"}}>Every shift in a month shares one due date (month start − this lead). The site whose date lands earliest leads the chain.</div>
+              <div style={{fontSize:10,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.gray,margin:"8px 0 3px"}}>Travel (real flight timing)</div>
+              <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+                <Field label="Leave (days before)"><N value={travelOf(s).beforeDays} onChange={e=>updTravel(s.id,{beforeDays:Math.max(0,+e.target.value||0)})}/></Field>
+                <Field label="at"><input type="time" style={inp} value={travelOf(s).departTime} onChange={e=>updTravel(s.id,{departTime:e.target.value})}/></Field>
+                <Field label="Home (days after)"><N value={travelOf(s).afterDays} onChange={e=>updTravel(s.id,{afterDays:Math.max(0,+e.target.value||0)})}/></Field>
+                <Field label="at"><input type="time" style={inp} value={travelOf(s).returnTime} onChange={e=>updTravel(s.id,{returnTime:e.target.value})}/></Field>
+              </div>
+              <div style={{fontSize:9.5,color:C.mute,margin:"2px 0 4px"}}>When you leave home and get back, relative to the shift block. This away window drives the kid-awake hours a trip costs.</div>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+                <Btn small kind="danger" disabled={refs>0} onClick={()=>rm(s.id)}>remove</Btn>
+                {refs>0&&<span style={{fontSize:10,color:C.mute}}>{refs} request{refs>1?"s":""} reference this site — can’t remove</span>}
+              </div>
+            </div>}
+          </div>;
+        })}
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:10}}>
+        <Btn onClick={addSite}>+ add site</Btn>
+        <div style={{flex:1}}/>
+        {!embed&&<Btn kind="prim" onClick={onClose}>done</Btn>}
+      </div>
+    </div>;
+  return embed?Inner:<Overlay onClose={onClose}>{Inner}</Overlay>;
+}
+
+/* ════════ PRESENCE LAYERS — primary, categorized, editable, JSON-importable (near the calendar) ════════ */
+function LayersPanel({state,setState}){
+  const [editing,setEditing]=useState(null);
+  const [adding,setAdding]=useState("");
+  const fileRef=useRef(),target=useRef(null);
+  const layers=state.layers;
+  const setLayers=fn=>setState(s=>({...s,layers:fn(s.layers)}));
+  const setLayer=(id,patch)=>setLayers(ls=>ls.map(l=>l.id===id?{...l,...patch}:l));
+  const toggle=id=>setLayers(ls=>ls.map(l=>l.id===id?{...l,visible:l.visible===false}:l));
+  const addLayer=()=>{const id="L"+Date.now();setLayers(ls=>[...ls,{id,name:(adding.trim()||"New layer"),kind:"custom",color:"#888880",visible:true,ranges:[]}]);setAdding("");setEditing(id);};
+  const del=id=>{setLayers(ls=>ls.filter(l=>l.id!==id));setEditing(null);};
+  const setRanges=(id,fn)=>setLayers(ls=>ls.map(l=>l.id===id?{...l,ranges:fn(l.ranges||[])}:l));
+  const addRange=id=>setRanges(id,rs=>[...rs,{from:`${YEAR}-01-01`,to:`${YEAR}-01-01`,label:""}].sort((a,b)=>a.from.localeCompare(b.from)));
+  const updRange=(id,i,patch)=>setRanges(id,rs=>rs.map((r,j)=>j===i?{...r,...patch}:r));
+  const rmRange=(id,i)=>setRanges(id,rs=>rs.filter((_,j)=>j!==i));
+  const expL=l=>{const blob=new Blob([JSON.stringify(l.ranges||[],null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=l.name.replace(/\s+/g,"_")+".json";a.click();};
+  const impL=e=>{const f=e.target.files?.[0],id=target.current;if(!f||!id)return;const rd=new FileReader();
+    rd.onload=ev=>{try{const j=JSON.parse(ev.target.result);const arr=Array.isArray(j)?j:(j.ranges||[]);
+      const norm=arr.map(r=>({from:r.from||r.s,to:r.to||r.e||r.from||r.s,label:String(r.label||r.l||"")})).filter(r=>DATE_RE.test(r.from||""));
+      if(!norm.length){alert("No valid ranges (need from / s).");return;}
+      setRanges(id,rs=>{const by=new Map(rs.map((r,i)=>[r.from,i]));const m=[...rs];for(const r of norm){if(by.has(r.from))m[by.get(r.from)]=r;else m.push(r);}return m.sort((a,b)=>a.from.localeCompare(b.from));});
+      alert(`Imported ${norm.length} ranges into the layer.`);}catch(err){alert("Invalid JSON.");}};
+    rd.readAsText(f);e.target.value="";};
+  const ed=layers.find(l=>l.id===editing);
+  const KIND={school:"school",holiday:"holiday",event:"event",custom:"custom"};
+  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"9px 11px"}}>
+    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:7}}>
+      <span style={{fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>Presence layers</span>
+      <span style={{fontSize:9.5,color:C.mute}}>tap to show/hide · ✎ to edit ranges & import JSON</span>
+    </div>
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+      {layers.map(l=>{const on=l.visible!==false;return <span key={l.id}
+        style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 7px",borderRadius:14,cursor:"pointer",
+          border:`1px solid ${on?C.line:C.line2}`,background:on?C.panel2:"transparent",opacity:on?1:0.55}}>
+        <span onClick={()=>toggle(l.id)} style={{display:"inline-flex",alignItems:"center",gap:5}}>
+          <span style={{width:9,height:9,borderRadius:"50%",background:l.color,border:on?"none":`1px solid ${C.faint}`}}/>
+          <span style={{fontSize:11.5,fontWeight:700,color:on?C.ink:C.mute}}>{l.name}</span>
+          <span style={{fontSize:9,color:C.mute}}>{(l.ranges||[]).length}</span>
+        </span>
+        <span onClick={()=>setEditing(editing===l.id?null:l.id)} title="edit ranges & import JSON" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:26,height:24,padding:"0 7px",marginLeft:2,borderRadius:8,fontSize:14,lineHeight:1,cursor:"pointer",color:editing===l.id?C.ink:C.gray,background:editing===l.id?C.line:C.panel,border:`1px solid ${editing===l.id?C.faint:C.line}`}}>✎</span>
+      </span>;})}
+      <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
+        <input value={adding} onChange={e=>setAdding(e.target.value)} placeholder="+ layer" onKeyDown={e=>{if(e.key==="Enter")addLayer();}}
+          style={{...inp,width:84,padding:"3px 7px",borderRadius:14}}/>
+        <Btn small onClick={addLayer}>add</Btn>
+      </span>
+    </div>
+    {ed&&<div style={{marginTop:9,paddingTop:9,borderTop:`1px solid ${C.line2}`}}>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+        <input value={ed.name} onChange={e=>setLayer(ed.id,{name:e.target.value})} style={{...inp,width:150}}/>
+        <select value={ed.kind} onChange={e=>setLayer(ed.id,{kind:e.target.value})} style={{...inp,width:96}}>
+          {Object.keys(KIND).map(k=><option key={k} value={k}>{k}</option>)}</select>
+        {ed.kind!=="school"&&<input type="color" value={/^#/.test(ed.color)?ed.color:"#888880"} onChange={e=>setLayer(ed.id,{color:e.target.value})} style={{width:28,height:24,padding:0,border:`1px solid ${C.line}`,borderRadius:4,background:C.panel,cursor:"pointer"}}/>}
+        {ed.kind==="school"&&<span style={{fontSize:9.5,color:C.mute}}>drives days-out (Inv 9)</span>}
+        <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+          <Btn small onClick={()=>{target.current=ed.id;fileRef.current.click();}}>↥ import</Btn>
+          <Btn small onClick={()=>expL(ed)}>↧ export</Btn>
+          <Btn small kind="danger" onClick={()=>del(ed.id)}>delete</Btn>
+        </div>
+      </div>
+      <div style={{maxHeight:160,overflow:"auto"}}>
+        {(ed.ranges||[]).length===0&&<div style={{fontSize:11,color:C.mute,fontStyle:"italic",padding:"4px 0"}}>No ranges. Add one or import JSON ({`[{from,to,label}]`} or {`{s,e,l}`}).</div>}
+        {(ed.ranges||[]).map((r,i)=><div key={i} style={{display:"flex",gap:4,alignItems:"center",padding:"3px 0",borderBottom:`1px solid ${C.line2}`}}>
+          <input style={{...inp,flex:1}} value={r.label} placeholder="label" onChange={e=>updRange(ed.id,i,{label:e.target.value})}/>
+          <input type="date" style={{...inp,width:128}} value={r.from} onChange={e=>updRange(ed.id,i,{from:e.target.value})}/>
+          <input type="date" style={{...inp,width:128}} value={r.to} onChange={e=>updRange(ed.id,i,{to:e.target.value})}/>
+          <Btn small kind="danger" onClick={()=>rmRange(ed.id,i)}>×</Btn>
+        </div>)}
+      </div>
+      <div style={{marginTop:7}}><Btn small onClick={()=>addRange(ed.id)}>+ add range</Btn></div>
+      <input ref={fileRef} type="file" accept=".json" onChange={impL} style={{display:"none"}}/>
+    </div>}
+  </div>;
+}
+
+/* ════════ YEAR VIEW — the footprint / home base (§7): confirmed placements + pending ════════ */
+const SHIFT_COL={day:"var(--shift-day)",night:"var(--shift-night)"};
+const OVERRIDE_COL={day:"var(--ov-day)",night:"var(--ov-night)"};   // tentative (in-negotiation) shifts
+const shiftCol=id=>SHIFT_COL[shiftIsNight(id)?"night":"day"];       // catalog id → day/night tint
+const overrideCol=id=>OVERRIDE_COL[shiftIsNight(id)?"night":"day"];
+const LOC_TINT={boston:"var(--block-trip)",santa_fe:"var(--block-trip)",abq:"var(--block-trip)",montana:"var(--block-trip)",portland:"var(--block-trip)"};
+function monthGrid(y,m){
+  const f=(new Date(y,m,1).getDay()+6)%7,n=dim(y,m),wk=Math.ceil((f+n)/7);
+  const cells=[];for(let i=0;i<wk*7;i++){const dn=i-f+1;cells.push(dn>=1&&dn<=n?new Date(y,m,dn):null);}
+  return {cells,totalCols:wk*7};
+}
+function useFootprint(state){
+  return useMemo(()=>{
+    const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
+    const byDay={},famBy={},lockBy={},perYM={};       // all keyed by full date / "Y-M" (multi-year)
+    for(const r of state.requests){
+      const s=siteById[r.siteId];if(!s)continue;
+      const fp=r.footprint;
+      const speculative=reqIsDensity(r)&&(r.state==="candidate"||r.state==="pending");   // density days read as "some of these will land"
+      for(const d of fp.dates){(byDay[d]=byDay[d]||[]).push({state:speculative?"smeared":r.state,type:r.shiftType,site:s});
+        if(r.state==="confirmed"){const dt=pd(d),k=`${dt.getFullYear()}-${dt.getMonth()}`;(perYM[k]=perYM[k]||{n:0,$:0});perYM[k].n++;perYM[k].$+=reqShiftPay(r,s);}}
+    }
+    for(const sp of state.trips){if(!placed(sp))continue;let d=pd(sp.from);const t=pd(sp.to);while(d<=t){famBy[ds(d)]={loc:sp.loc,wf:sp.workFactor,name:sp.name};d=ad(d,1);}}
+    for(const l of state.locks)lockBy[l.date]=l;
+    const winBy={};                                    // dateStr → windowId (the drawn intent band)
+    for(const w of (state.windows||[]))for(const d of w.dates)winBy[d]=w.id;
+    return {byDay,famBy,lockBy,perYM,winBy,loadYM:loadByYM(state)};
+  },[state]);
+}
+/* does one layer cover a single date? mirrors layerCoverage's future-year inference.
+   returns {label,inferred} for the matching range, or null. visibility-independent. */
+function layerOnDay(layer,dateStr){
+  const d=pd(dateStr),y=d.getFullYear();
+  const yearsWith=new Set((layer.ranges||[]).map(r=>+r.from.slice(0,4)));
+  let src=y,inferred=false;
+  if(!yearsWith.has(y)){const prior=[...yearsWith].filter(yy=>yy<y).sort((a,b)=>b-a)[0];if(prior==null)return null;src=prior;inferred=true;}
+  const shift=y-src;
+  for(const r of (layer.ranges||[])){
+    if(+r.from.slice(0,4)!==src)continue;
+    const f=pd(r.from),t=pd(r.to);f.setFullYear(f.getFullYear()+shift);t.setFullYear(t.getFullYear()+shift);
+    if(d>=f&&d<=t)return {label:r.label,inferred};
+  }
+  return null;
+}
+/* layer-day coverage across a rendered year range, with future-year inference (shifted) */
+function layerCoverage(layers,startY,endY){
+  // for each layer+year, the ranges to use: real if present, else shift from the latest prior year that has any
+  const byDayLayers={};                                // dateStr → [{id,name,color,kind,inferred}]
+  for(const l of layers){
+    if(l.visible===false)continue;
+    const yearsWith=new Set((l.ranges||[]).map(r=>+r.from.slice(0,4)));
+    for(let y=startY;y<=endY;y++){
+      let src=y,inferred=false;
+      if(!yearsWith.has(y)){
+        const prior=[...yearsWith].filter(yy=>yy<y).sort((a,b)=>b-a)[0];
+        if(prior==null)continue; src=prior;inferred=true;
+      }
+      const shift=y-src;
+      for(const r of (l.ranges||[])){
+        if(+r.from.slice(0,4)!==src)continue;
+        let d=ad(pd(r.from),0);const t=pd(r.to);d.setFullYear(d.getFullYear()+shift);t.setFullYear(t.getFullYear()+shift);
+        while(d<=t){const k=ds(d);(byDayLayers[k]=byDayLayers[k]||[]).push({id:l.id,name:l.name,color:l.color,kind:l.kind,childId:l.childId,label:r.label,inferred});d=ad(d,1);}
+      }
+    }
+  }
+  return byDayLayers;
+}
+
+/* by-row year strip — structural spine + month selector. Click a row to load its windows. */
+const CAL_CELL=18,CAL_CG=2,CAL_WG=8,CAL_LBL=86,CAL_RG=3;
+const calMl=ci=>(ci%7===0&&ci>0)?CAL_WG:(ci===0?0:CAL_CG);
+const calMaxCols=37;   // widest any weekday-aligned month reaches (Sun-start 31-day = 6 offset + 31); trailing weeks 38–42 are always empty
+/* one shared per-day visual, used by the by-row strip and the mobile month grid */
+function dayVisual(d,ctx){
+  const str=ds(d),we=d.getDay()===0||d.getDay()===6;
+  const marks=ctx.byDay[str]||[],fam=ctx.famBy[str],lk=ctx.lockBy[str],lays=ctx.layerCov[str]||[];
+  const closed=fam&&fam.wf==="closed";
+  const conf=marks.find(x=>x.state==="confirmed"),neg=marks.find(x=>x.state==="override"),pend=marks.find(x=>x.state==="pending"),cand=marks.find(x=>x.state==="candidate"),smear=marks.find(x=>x.state==="smeared");
+  const winRaw=ctx.winBy?ctx.winBy[str]:null;                    // a drawn window covers this day (intent, pre-request)
+  const win=(winRaw&&winRaw!==ctx.hideWinId)?winRaw:null;        // hide the band of a window being moved/resized (its preview shows instead)
+  // layered channels: fill = shift (concrete) or a faint trip wash; family blockers ride the bottom bars;
+  // pressure lives on the focused month; the cost (family-off ∩ work) reads as a hatch.
+  let bg=we?C.weekend:C.panel,border=`1px solid ${C.line2}`,inner=null;
+  if(fam){bg=LOC_TINT[fam.loc];border=`1px solid ${C.ocean}`;}   // trip → faint blue wash + ocean edge
+  if(win&&!conf&&!neg&&!pend&&!cand&&!smear){bg=C.sel;border=`1.5px dashed ${C.gray}`;}   // bare window day
+  if(conf){bg=shiftCol(conf.type);border=`1px solid ${shiftCol(conf.type)}`;}
+  else if(neg){bg=overrideCol(neg.type);border=`1.5px dashed ${shiftCol(neg.type)}`;}
+  else if(pend){border=`1.5px solid ${C.ink}`;}
+  else if(cand){border=`1.5px dotted ${C.est}`;}
+  else if(smear){inner="dotted";}
+  const cost=lays.length>0&&!!(conf||neg||pend||cand||smear);   // working a family-off day → family-time cost
+  const drawing=(ctx.drawSet&&ctx.drawSet.has(str))||(ctx.winPrevSet&&ctx.winPrevSet.has(str)),inSel=ctx.selReqDates&&ctx.selReqDates.has(str),inTrip=ctx.selTripDates&&ctx.selTripDates.has(str);
+  const selWin=ctx.selWinDates&&ctx.selWinDates.has(str);
+  const prev=!!(ctx.preview&&ctx.preview.set&&ctx.preview.set.has(str));   // a trip drag is hovering this day
+  if(drawing){border=`1.5px solid ${C.ink}`;bg=C.sel;}
+  const lt=lays.length?` · ${lays.map(x=>x.name+(x.inferred?"~":"")).join(", ")}`:"";
+  const title=`${str}${conf?` · ${conf.site.name} ${shiftLabel(conf.type)}`:""}${neg?` · negotiating ${neg.site.name}`:""}${pend?` · requested ${pend.site.name}`:""}${cand?` · draft ${cand.site.name}`:""}${fam?` · ${fam.name} (${fam.wf})`:""}${lk?` · lock: ${lk.label}`:""}${lt}`;
+  return {str,we,fam,lk,lays,closed,conf,neg,pend,cand,smear,win,selWin,cost,bg,border,inner,drawing,inSel,inTrip,prev,prevColor:ctx.preview&&ctx.preview.color,title};
+}
+function DayCell({d,ctx,box,ml,num,tool,onCellDown,onTap,y,m,hStart,hEnd,onHandle}){
+  const base={...box,marginLeft:ml||0,flexShrink:0,borderRadius:2,position:"relative",boxSizing:"border-box"};
+  if(!d)return <div style={base}/>;
+  const v=dayVisual(d,ctx);
+  const nub=which=><span onPointerDown={e=>{e.stopPropagation();onHandle&&onHandle(e,which,v.str);}}
+    style={{position:"absolute",top:0,bottom:0,[which==="start"?"left":"right"]:-3,width:7,zIndex:5,cursor:"ew-resize",touchAction:"none",
+      display:"flex",alignItems:"center",justifyContent:"center"}}>
+    <span style={{width:3,height:"62%",borderRadius:2,background:C.ink,boxShadow:`0 0 0 1px ${C.bg}`}}/></span>;
+  return <div data-date={v.str} onPointerDown={tool&&tool!=="off"?e=>onCellDown(e,v.str,y,m):undefined}
+    onClick={onTap?()=>onTap(v.str):undefined} title={v.title}
+    style={{...base,background:v.bg,border:v.border,
+      cursor:v.closed?"not-allowed":(tool==="erase"?"cell":"pointer"),touchAction:tool&&tool!=="off"?"none":"auto",
+      outline:v.inSel||v.selWin?`2px solid ${C.ink}`:(v.inTrip?`2px dashed ${C.ink}`:"none"),outlineOffset:-1,opacity:v.closed&&!v.conf&&!v.neg?0.82:1,
+      display:num?"flex":"block",alignItems:"center",justifyContent:"center"}}>
+    {num&&<span style={{fontSize:13,fontWeight:v.conf?800:500,color:v.conf?"var(--on-shift)":(v.we?C.mute:C.gray),position:"relative",zIndex:1}}>{d.getDate()}</span>}
+    {v.closed&&!v.conf&&!v.neg&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(45deg,${C.faint} 0 1px,transparent 1px 4px)`,pointerEvents:"none"}}/>}
+    {v.cost&&<span style={{position:"absolute",inset:0,backgroundImage:`repeating-linear-gradient(135deg,${C.pressHot} 0 1.5px,transparent 1.5px 5px)`,opacity:0.55,pointerEvents:"none"}}/>}
+    {v.inner==="dotted"&&<span style={{position:"absolute",inset:2,borderRadius:1,border:`1px dotted ${C.est}`}}/>}
+    {v.lk&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:"50%",background:v.lk.kind==="hard"?C.ink:C.panel,border:`1.5px solid ${C.ink}`}}/>}
+    {v.lays.length>0&&<div style={{position:"absolute",left:0,right:0,bottom:0,height:num?4:3,display:"flex",overflow:"hidden",borderRadius:"0 0 1px 1px",pointerEvents:"none"}}>
+      {v.lays.slice(0,4).map((x,i)=><span key={i} style={{flex:1,background:x.color,opacity:x.inferred?0.4:0.95}}/>)}</div>}
+    {v.prev&&<><span style={{position:"absolute",inset:0,borderRadius:2,background:v.prevColor||C.ocean,opacity:0.16,pointerEvents:"none",zIndex:0}}/>
+      <span style={{position:"absolute",inset:0,borderRadius:2,border:`2px dashed ${v.prevColor||C.ocean}`,pointerEvents:"none",zIndex:6}}/></>}
+    {hStart&&nub("start")}{hEnd&&nub("end")}
+  </div>;
+}
+/* one month as a weekday-aligned by-row strip — cells are the drawing surface */
+function MonthRowInner({y,m,footprint,layerCov,selectable,sel,onSelect,ceiling,tool,drawSet,winPrevSet,hideWinId,selReqDates,selWinDates,selTripDates,preview,onCellDown,onTap,selStart,selEnd,onHandle}){
+  const {byDay,famBy,lockBy,perYM,winBy,loadYM}=footprint;
+  const g=monthGrid(y,m),isNow=y===YEAR&&m===TODAY.getMonth();
+  const pm=perYM[`${y}-${m}`],ld=loadYM[`${y}-${m}`]||{conf:0,win:0},load=ld.conf+ld.win;
+  const tint=pressureTint(load,ceiling),hot=load>ceiling;
+  const ctx={byDay,famBy,lockBy,winBy,layerCov,tint,drawSet,winPrevSet,hideWinId,selReqDates,selWinDates,selTripDates,preview};
+  const barW=44,confW=Math.min(barW,ld.conf/Math.max(1,ceil2(ceiling))*barW),winW=Math.min(barW-confW,ld.win/Math.max(1,ceil2(ceiling))*barW);
+  function ceil2(c){return Math.max(c,load);}                 // bar scales to whichever is larger
+  const GW=200,gsc=Math.max(ceiling,load)||1,gcw=ld.conf/gsc*GW,gww=Math.min(GW-gcw,ld.win/gsc*GW),gtick=Math.min(GW-1,ceiling/gsc*GW);  // focused-month pressure gauge
+  return <div data-now={isNow?"1":undefined} style={{display:"flex",alignItems:"center",marginBottom:CAL_RG,borderRadius:5,
+    background:sel?C.sel:"transparent",boxShadow:sel?`inset 2px 0 0 ${C.ink}`:"none"}}>
+    <div onClick={selectable?()=>onSelect(y,m):undefined} style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8,cursor:selectable?"pointer":"default"}}>
+      <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.03em",color:sel||isNow?C.ink:C.gray}}>{MON[m].toUpperCase()}{sel&&" ◂"}</div>
+      <div style={{fontSize:8.5,color:pm&&pm.n?C.ink:C.mute}}>{pm&&pm.n?`${pm.n} · ${fmtK(pm.$)}`:"—"}</div>
+      {/* two-layer pressure: confirmed (dark) + window (mid) vs ceiling */}
+      <div title={`${ld.conf} booked + ${ld.win} in-flight of ~${ceiling}/mo`} style={{display:"inline-flex",alignItems:"center",gap:3,marginTop:1}}>
+        <div style={{width:barW,height:4,background:C.line2,borderRadius:2,overflow:"hidden",display:"flex",position:"relative"}}>
+          <div style={{width:confW,height:"100%",background:hot?C.pressHot:C.ink}}/>
+          <div style={{width:winW,height:"100%",background:C.bar}}/>
+          <div style={{position:"absolute",left:Math.min(barW-1,barW*ceiling/Math.max(ceiling,load)),top:-1,bottom:-1,width:1,background:C.gray}}/>
+        </div>
+        <span style={{fontSize:7,fontWeight:700,color:hot?C.pressHot:C.mute}}>{load||""}{hot?"⚠":""}</span>
+      </div>
+    </div>
+    <div style={{display:"flex",flexDirection:"column",gap:3,paddingTop:sel?3:0}}>
+      {sel&&<div title={`${ld.conf} booked + ${ld.win} in-flight of ~${ceiling}/mo`} style={{display:"flex",alignItems:"center",gap:6,marginLeft:1}}>
+        <div style={{width:GW,height:7,background:C.line2,borderRadius:3,overflow:"hidden",display:"flex",position:"relative"}}>
+          <div style={{width:gcw,height:"100%",background:hot?C.pressHot:C.ink}}/>
+          <div style={{width:gww,height:"100%",background:C.bar}}/>
+          <div style={{position:"absolute",left:gtick,top:-1,bottom:-1,width:1,background:C.gray}}/>
+        </div>
+        <span style={{fontSize:9,fontWeight:700,color:hot?C.pressHot:C.gray}}>{load}/{ceiling}{hot?" ⚠":""} <span style={{fontWeight:600,color:C.mute}}>pressure</span></span>
+      </div>}
+      <div style={{display:"flex"}}>
+        {Array.from({length:calMaxCols},(_,ci)=>{
+          const d=ci<g.cells.length?g.cells[ci]:null,str=d&&ds(d);
+          return <DayCell key={ci} d={d} ctx={ctx} box={{width:CAL_CELL,height:CAL_CELL}} ml={calMl(ci)} tool={tool} onCellDown={onCellDown} onTap={onTap} y={y} m={m}
+            hStart={str&&str===selStart} hEnd={str&&str===selEnd} onHandle={onHandle}/>;
+        })}
+      </div>
+    </div>
+  </div>;
+}
+/* memoized so a draw (which only changes the active month's drawSet) re-renders one month,
+   not the whole multi-year strip. Compares data props by identity; ignores callback props
+   (they're closures refreshed on every state change, which re-renders all rows anyway). */
+const MR_KEYS=["y","m","footprint","layerCov","selectable","sel","ceiling","tool","drawSet","winPrevSet","hideWinId","selReqDates","selWinDates","selTripDates","preview","selStart","selEnd"];
+const MonthRow=React.memo(MonthRowInner,(a,b)=>MR_KEYS.every(k=>Object.is(a[k],b[k])));
+/* calendar filters — toggle which presence layers paint the days, right on the workspace */
+function LayerFilters({layers,setLayers,goto}){
+  return <div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",padding:"6px 10px",borderBottom:`1px solid ${C.line2}`}}>
+    <span style={{fontSize:9.5,fontWeight:800,color:C.mute,textTransform:"uppercase",letterSpacing:"0.05em",flexShrink:0}}>show</span>
+    {layers.map(l=>{const on=l.visible!==false;
+      return <button key={l.id} onClick={()=>setLayers(ls=>ls.map(x=>x.id===l.id?{...x,visible:!on}:x))}
+        style={{flexShrink:0,display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:13,cursor:"pointer",
+          border:`1px solid ${on?l.color:C.line}`,background:on?C.panel2:"transparent",opacity:on?1:0.55}}>
+        <span style={{width:10,height:10,borderRadius:3,background:l.color}}/>
+        <span style={{fontSize:11,fontWeight:700,color:on?C.ink:C.mute,whiteSpace:"nowrap"}}>{l.name}</span>
+        {!on&&<span style={{fontSize:9.5,color:C.mute}}>off</span>}
+      </button>;})}
+    <button onClick={()=>goto&&goto("setup")} title="edit calendars in Setup"
+      style={{flexShrink:0,fontFamily:MONO,fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:13,cursor:"pointer",
+        border:`1px dashed ${C.line}`,background:"transparent",color:C.gray}}>✎ edit</button>
+  </div>;
+}
+/* day info box — what's true about a single day: holidays, which kids are off, trips, locks, shifts */
+const WDAY=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+function DayInfoCard({str,state,fp,onClose}){
+  const d=pd(str),we=d.getDay()===0||d.getDay()===6;
+  const siteById=Object.fromEntries(state.sites.map(s=>[s.id,s]));
+  const schools=state.layers.filter(l=>l.kind==="school");
+  const kids=schools.map(l=>{const c=layerOnDay(l,str);return {name:l.name,off:we||!!c,reason:we?"weekend":(c?c.label:null),inferred:!!(c&&c.inferred)};});
+  const events=state.layers.filter(l=>l.kind!=="school").map(l=>{const c=layerOnDay(l,str);
+    return c?{name:l.name,kind:l.kind,label:c.label,color:l.color,inferred:c.inferred}:null;}).filter(Boolean);
+  const fam=fp.famBy[str],lk=fp.lockBy[str];
+  const allMarks=fp.byDay[str]||[];
+  const marks=allMarks.filter(m=>m.state!=="confirmed");   // booked shifts are hardened placement — already on the calendar, no text line needed
+  const Row=({label,children})=> <div style={{display:"flex",gap:8,padding:"4px 0",borderTop:`1px solid ${C.line2}`}}>
+    <span style={{flex:"0 0 70px",fontSize:9,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.mute,paddingTop:2}}>{label}</span>
+    <div style={{flex:1,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>{children}</div></div>;
+  const quiet=!events.length&&!fam&&!lk&&!allMarks.length&&kids.every(k=>!k.off);
+  return <div style={{border:`1px solid ${C.ink}`,borderRadius:8,background:C.panel,padding:"9px 12px",marginBottom:10,
+    height:148,boxSizing:"border-box",display:"flex",flexDirection:"column"}}>
+    <div style={{flexShrink:0,display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
+      <span style={{fontSize:14,fontWeight:800}}>{WDAY[d.getDay()]}</span>
+      <span style={{fontSize:12,color:C.gray}}>{MONL[d.getMonth()]} {d.getDate()}, {d.getFullYear()}</span>
+      {we&&<Tag bg={C.line2}>weekend</Tag>}
+      <span style={{marginLeft:"auto",fontSize:11,color:C.mute,cursor:"pointer"}} onClick={onClose}>close ✕</span>
+    </div>
+    {/* fixed-height box, content scrolls inside — keeps the page from re-flowing as you tap different days */}
+    <div style={{flex:1,minHeight:0,overflowY:"auto"}}>
+    {events.length>0&&<Row label="Holiday">{events.map((e,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:700}}>
+      <span style={{width:9,height:9,borderRadius:3,background:e.color||C.ink}}/>{e.label||e.name}{e.inferred&&<span style={{fontSize:9,color:C.mute,fontStyle:"italic"}}>~ inferred</span>}</span>)}</Row>}
+    {schools.length>0&&<Row label="Kids">{kids.map((k,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,
+      color:k.off?C.est:C.green}}>{k.off?"◷":"✓"} {k.name} <span style={{fontWeight:600,color:C.mute}}>{k.off?`off${k.reason?` · ${k.reason}`:""}${k.inferred?" ~":""}`:"in school"}</span></span>)}</Row>}
+    {fam&&<Row label="Trip"><span style={{fontSize:12,fontWeight:700}}>✈ {fam.name} <span style={{fontWeight:600,color:C.mute}}>· {fam.wf==="closed"?"no work":fam.wf}</span></span></Row>}
+    {lk&&<Row label="Lock"><span style={{fontSize:12,fontWeight:700,color:C.pressHot}}>🔒 {lk.label} <span style={{fontWeight:600,color:C.mute}}>· {lk.kind}</span></span></Row>}
+    {marks.length>0&&<Row label="Shifts">{marks.map((m,i)=><span key={i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700}}>
+      <span style={{width:9,height:9,borderRadius:3,background:m.state==="smeared"?C.est:shiftCol(m.type)}}/>{m.site.name} · {shiftLabel(m.type)} <span style={{fontWeight:600,color:C.mute}}>· {m.state==="smeared"?"draft (density)":(ST_LABEL[m.state]||m.state)}</span></span>)}</Row>}
+    {quiet&&<div style={{fontSize:11,color:C.mute,fontStyle:"italic",paddingTop:4,borderTop:`1px solid ${C.line2}`}}>Nothing scheduled — kids in school, no holiday. Open for work.</div>}
+    </div>
+  </div>;
+}
+function Calendar({state,setState,footprint,layers,selected,onSelect,ceiling,sel,setSel,goto,mobile,preview}){
+  const sites=state.sites;
+  const [mode,setMode]=useState("cal");
+  const [dayInfo,setDayInfo]=useState(null);                  // date string of the inspected day
+  const [range,setRange]=useState({s:YEAR,e:YEAR+1});         // two years by default; "load more" extends
+  const [act,setAct]=useState("select");                      // calendar interaction mode: select | draw | inspect | erase
+  const [draw,setDraw]=useState(null);                        // {startStr,endStr,y,m}
+  const [winPrev,setWinPrev]=useState(null);                  // live move/resize preview: {dates:[...],hideId} — local, commits on pointer-up
+  const [focusY,setFocusY]=useState(YEAR);                    // mobile focus year
+  const cov=useMemo(()=>layerCoverage(layers,range.s,range.e+1),[layers,range.s,range.e]);
+  const focusCov=useMemo(()=>layerCoverage(layers,focusY-1,focusY+1),[layers,focusY]);
+  const onScroll=e=>{const el=e.target;if(el.scrollHeight-el.scrollTop-el.clientHeight<140)setRange(r=>({...r,e:r.e+1}));};
+  const scrollRef=useRef(null);
+  const scrollToToday=()=>{onSelect&&onSelect(YEAR,TODAY.getMonth());requestAnimationFrame(()=>{const el=scrollRef.current&&scrollRef.current.querySelector("[data-now]");if(el)el.scrollIntoView({block:"center",behavior:"smooth"});});};
+  const setReqs=fn=>setState(s=>({...s,requests:fn(s.requests)}));
+  const setLayers=fn=>setState(s=>({...s,layers:fn(s.layers)}));
+  const addReq=r=>setReqs(rs=>mergeCandidates([...rs,r]));
+  const setReq=(id,fn)=>setReqs(rs=>rs.map(x=>x.id===id?fn(x):x));
+  const delReq=id=>setReqs(rs=>rs.filter(x=>x.id!==id));
+  const setTrip=(id,fn)=>setState(s=>({...s,trips:s.trips.map(x=>x.id===id?fn(x):x)}));
+  const setWindows=fn=>setState(s=>({...s,windows:fn(s.windows||[])}));
+  const addWindow=w=>setWindows(ws=>[...ws,w]);
+  // edit a window AND keep its draft candidates in sync (the window is the live source).
+  // a candidate that was deliberately composed to differ (dates ≠ the window's) is left alone.
+  const updWindow=(id,fn)=>setState(s=>{
+    const old=(s.windows||[]).find(w=>w.id===id);if(!old)return s;
+    const oldKey=old.dates.join(",");
+    let win=old;
+    const windows=s.windows.map(w=>{if(w.id!==id)return w;const n=fn(w);if(Number.isFinite(n.target)&&n.target>=n.dates.length)delete n.target;win=n;return n;});
+    const dates=win.dates.slice(),dens=Number.isFinite(win.target)&&win.target<dates.length;
+    const requests=s.requests.map(r=>(r.windowId===id&&r.state==="candidate"&&r.footprint.dates.join(",")===oldKey)
+      ? {...r,footprint:dens?{kind:"pinned",dates,target:win.target}:{kind:"pinned",dates}}:r);
+    return {...s,windows,requests};
+  });
+  const delWindow=id=>setState(s=>({...s,windows:(s.windows||[]).filter(w=>w.id!==id),
+    requests:s.requests.filter(r=>!(r.windowId===id&&r.state==="candidate"))}));
+  const windowAt=str=>(state.windows||[]).find(w=>w.dates.includes(str));
+  const occupantAt=str=>state.requests.find(r=>OCCUPY.includes(r.state)&&r.footprint.kind==="pinned"&&r.footprint.dates.includes(str));  // any draft or committed shift
+  const tripAt=str=>state.trips.find(t=>placed(t)&&str>=t.from&&str<=t.to);
+  // tap behavior depends on the mode: inspect → day-info box; select → pick the window / request / trip under the day
+  const tapHandler=str=>{
+    if(act==="inspect"){setDayInfo(str);return;}
+    const w=windowAt(str);if(w){setSel({kind:"window",id:w.id});return;}
+    const occ=occupantAt(str);if(occ){setSel({kind:"req",id:occ.id});return;}
+    const t=tripAt(str);setSel(t?{kind:"trip",id:t.id}:null);
+  };
+  const dayClosed=str=>state.trips.some(t=>placed(t)&&t.workFactor==="closed"&&str>=t.from&&str<=t.to);
+  const pt=e=>e.touches?e.touches[0]:e;
+  function listen(move,up){const m=e=>move(pt(e)),u=e=>{window.removeEventListener("pointermove",m);window.removeEventListener("pointerup",u);up(pt(e));};
+    window.addEventListener("pointermove",m);window.addEventListener("pointerup",u);}
+  // drag a window's handle to extend / collapse — previews locally, commits once on release
+  function handleResize(e,which,w){
+    e.preventDefault();const start=w.dates[0],end=w.dates[w.dates.length-1];let lastD=null,cur=w.dates.slice();
+    listen(p=>{const d=nearestDate(p.clientX,p.clientY);if(!d||d===lastD)return;lastD=d;
+      let ns=start,ne=end;if(which==="end")ne=d<start?start:d;else ns=d>end?end:d;
+      cur=daysBetween(ns,ne);if(cur.length)setWinPrev({dates:cur,hideId:w.id});},
+      ()=>{if(cur.length)updWindow(w.id,x=>({...x,dates:cur}));setWinPrev(null);});
+  }
+  // pointer-drag gestures — wired only in draw / erase modes (select & inspect are taps; scrolling stays free)
+  function cellDown(e,str,y,m){
+    e.preventDefault();
+    if(act==="erase"){                                     // drag to trim the drawn window
+      const done=new Set();
+      const erase=d=>{if(!d||done.has(d))return;done.add(d);const w=windowAt(d);if(!w)return;
+        const left=w.dates.filter(x=>x!==d);if(left.length)updWindow(w.id,x=>({...x,dates:left}));else delWindow(w.id);};
+      erase(str);listen(p=>erase(nearestDate(p.clientX,p.clientY)),()=>{});return;
+    }
+    // draw mode: only ever draws a new window — never selects or moves what's underneath
+    if(dayClosed(str))return;
+    setDraw({startStr:str,endStr:str,y,m});
+    listen(p=>{const dd=nearestDate(p.clientX,p.clientY);if(dd){const pdd=pd(dd);if(pdd.getMonth()===m&&pdd.getFullYear()===y)setDraw(d=>d&&d.endStr===dd?d:(d&&{...d,endStr:dd}));}},   // no-op when the end cell hasn't changed → no re-render
+      ()=>setDraw(d=>{if(d){const dates=daysBetween(d.startStr,d.endStr).filter(x=>!dayClosed(x));
+        if(dates.length)addWindow(makeBlankWindow(dates));}return null;}));   // draw commits; no auto-select
+  }
+  const dragMode=act==="draw"||act==="erase";              // captures pointer drags (locks scroll on those cells)
+  const tapMode=act==="select"||act==="inspect";
+  const drawSet=draw?new Set(daysBetween(draw.startStr,draw.endStr)):null;
+  const sr=sel&&sel.kind==="req"?state.requests.find(r=>r.id===sel.id):null;
+  const stp=sel&&sel.kind==="trip"?state.trips.find(t=>t.id===sel.id):null;
+  const swin=sel&&sel.kind==="window"?(state.windows||[]).find(w=>w.id===sel.id):null;
+  const srDates=sr?new Set(sr.footprint.dates):null;
+  const swinDates=swin&&!winPrev?new Set(swin.dates):null;   // the live preview replaces the static selection outline
+  const swinStart=swin?swin.dates[0]:null,swinEnd=swin?swin.dates[swin.dates.length-1]:null;   // windows resize on the calendar
+  const stpDates=stp?(()=>{const s=new Set();let d=pd(stp.from);const t=pd(stp.to);while(d<=t){s.add(ds(d));d=ad(d,1);}return s;})():null;
+  // per-month subset of the live move/resize preview (null elsewhere → those months skip re-render via memo)
+  const hideWinId=winPrev?winPrev.hideId:null;
+  const winPrevSetFor=(y,m)=>{if(!winPrev)return null;let s=null;for(const d of winPrev.dates){const dt=pd(d);if(dt.getFullYear()===y&&dt.getMonth()===m)(s=s||new Set()).add(d);}return s;};
+  const items=[];
+  if(mode==="cal"){for(let y=range.s;y<=range.e;y++){const ms=[];for(let mm=0;mm<12;mm++){if(y<YEAR||(y===YEAR&&mm<START_M))continue;ms.push(mm);}if(!ms.length)continue;items.push({h:`${y}`});for(const mm of ms)items.push({y,m:mm});}}
+  else{for(let y=range.s;y<=range.e;y++){items.push({h:`${y}–${String((y+1)%100).padStart(2,"0")} school year`});
+    for(const mm of [7,8,9,10,11])items.push({y,m:mm});for(const mm of [0,1,2,3,4,5,6])items.push({y:y+1,m:mm});}}
+  const width=CAL_LBL+calMaxCols*(CAL_CELL+CAL_CG)+(calMaxCols/7)*CAL_WG;
+  const MODES=[["select","☞ select"],["draw","✎ draw"],["inspect","◉ inspect"],["erase","⌫ erase"]];
+  const MODE_HINT={select:"tap a window to adjust, move, request or delete it",draw:"drag across days to add a window",
+    inspect:"tap a day to see what's on it",erase:"drag across a window to trim it"};
+  const modePalette=<div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+    <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:6,overflow:"hidden"}}>
+      {MODES.map(([k,l])=><button key={k} onClick={()=>{setAct(k);setSel(null);setDraw(null);}} style={{fontFamily:MONO,fontSize:11.5,fontWeight:800,
+        padding:"5px 12px",border:"none",cursor:"pointer",background:act===k?C.ink:"transparent",color:act===k?C.bg:C.gray,letterSpacing:"-0.01em"}}>{l}</button>)}
+    </div>
+    <span style={{fontSize:9.5,color:C.mute}}>{MODE_HINT[act]}</span>
+  </div>;
+  const dayInfoEl=dayInfo?<DayInfoCard str={dayInfo} state={state} fp={footprint} onClose={()=>setDayInfo(null)}/>:null;
+  const editBars=<>
+    {swin&&(()=>{const wt=Number.isFinite(swin.target)?swin.target:swin.dates.length,nReq=state.requests.filter(r=>r.windowId===swin.id).length;
+      return <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+      <div style={{flex:"0 0 140px",fontSize:11,fontWeight:800,lineHeight:1.25}}>Window <span style={{color:C.mute,fontWeight:600}}>{md(swin.dates[0])}–{md(swin.dates[swin.dates.length-1])} · {swin.dates.length}d</span></div>
+      {/* density lives on the window now: "work N of these M days." N = M is an exact window. */}
+      <div style={{display:"inline-flex",alignItems:"center",gap:6}}>
+        <span style={{fontSize:11,color:C.gray}}>work</span>
+        <Btn small onClick={()=>updWindow(swin.id,x=>({...x,target:Math.max(1,wt-1)}))}>−</Btn>
+        <span style={{fontSize:13,fontWeight:800,minWidth:14,textAlign:"center"}}>{wt}</span>
+        <Btn small onClick={()=>updWindow(swin.id,x=>({...x,target:Math.min(x.dates.length,wt+1)}))}>+</Btn>
+        <span style={{fontSize:11,color:C.mute}}>of {swin.dates.length} {wt<swin.dates.length?"— some will land":"— all of them"}</span>
+      </div>
+      {/* move the whole window by a day — no drag needed (draw mode is for drawing only) */}
+      <div style={{display:"inline-flex",alignItems:"center",gap:4}}>
+        <span style={{fontSize:11,color:C.gray}}>move</span>
+        <Btn small onClick={()=>updWindow(swin.id,x=>({...x,dates:shiftDates(x.dates,-1)}))}>◀</Btn>
+        <Btn small onClick={()=>updWindow(swin.id,x=>({...x,dates:shiftDates(x.dates,1)}))}>▶</Btn>
+      </div>
+      {nReq>0&&<Tag bg={C.softInfo} col={C.blue}>{nReq} candidate{nReq>1?"s":""}</Tag>}
+      <span style={{marginLeft:"auto"}}/>
+      <Btn small kind="danger" onClick={()=>{delWindow(swin.id);setSel(null);}}>delete</Btn>
+      <Btn small kind="prim" onClick={()=>setSel(null)}>done</Btn>
+    </div>;})()}
+    {sr&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+      <div style={{flex:"0 0 150px",fontSize:11,fontWeight:800,lineHeight:1.25}}>{(sites.find(s=>s.id===sr.siteId)||{}).name} <span style={{color:C.mute,fontWeight:600}}>{shiftLabel(sr.shiftType)} · {sr.footprint.dates.length}d · {ST_LABEL[sr.state]||sr.state}</span></div>
+      <span style={{fontSize:9.5,color:C.mute}}>read-only here</span>
+      <Btn small kind="prim" onClick={()=>goto&&goto("pending")}>manage in Requests →</Btn>
+      <Btn small onClick={()=>setSel(null)}>done</Btn>
+    </div>}
+    {stp&&<div style={{padding:"8px 10px",borderBottom:`1px solid ${C.line2}`,background:C.panel2}}>
+      <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
+        <span style={{fontSize:12.5,fontWeight:800,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stp.name}</span>
+        <Tag bg={C.line2} col={C.ocean}>{LOC_NAME[stp.loc]}</Tag>
+        <Tag bg={C.line2}>{stp.workFactor}</Tag>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+        <div style={{display:"inline-flex",alignItems:"center",gap:4}}>
+          <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),-1)),to:ds(ad(pd(x.to),-1))}))}>◀</Btn>
+          <span style={{fontSize:10.5,fontWeight:700,color:C.gray,minWidth:92,textAlign:"center"}}>{md(stp.from)}–{md(stp.to)}</span>
+          <Btn small onClick={()=>setTrip(stp.id,x=>({...x,from:ds(ad(pd(x.from),1)),to:ds(ad(pd(x.to),1))}))}>▶</Btn>
+        </div>
+        <span style={{flex:1}}/>
+        <Btn small kind="prim" onClick={()=>goto&&goto("setup")}>Edit…</Btn>
+        <Btn small kind="danger" onClick={()=>{setTrip(stp.id,x=>({...x,placed:false}));setSel(null);}}>unplace</Btn>
+        <Btn small onClick={()=>setSel(null)}>done</Btn>
+      </div>
+    </div>}
+  </>;
+
+  if(mobile){
+    const fM=selected,fld=footprint.loadYM[`${focusY}-${fM}`]||{conf:0,win:0},ftint=pressureTint(fld.conf+fld.win,ceiling);
+    const fctx={byDay:footprint.byDay,famBy:footprint.famBy,lockBy:footprint.lockBy,winBy:footprint.winBy,layerCov:focusCov,tint:ftint,
+      drawSet:draw&&draw.y===focusY&&draw.m===fM?drawSet:null,winPrevSet:winPrevSetFor(focusY,fM),hideWinId,selReqDates:srDates,selWinDates:swinDates,selTripDates:stpDates,preview};
+    const fg=monthGrid(focusY,fM);
+    const dow=<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
+      {"MTWTFSS".split("").map((c,i)=><div key={i} style={{textAlign:"center",fontSize:9.5,fontWeight:700,color:C.mute}}>{c}</div>)}</div>;
+    const grid=()=><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+      {fg.cells.map((d,i)=>{const str=d&&ds(d);
+        return <DayCell key={i} d={d} ctx={fctx} box={{width:"100%",aspectRatio:"1"}} num
+        tool={dragMode?act:null} onCellDown={cellDown} onTap={tapMode?tapHandler:undefined} y={focusY} m={fM}
+        hStart={str&&str===swinStart} hEnd={str&&str===swinEnd} onHandle={(e,which)=>swin&&handleResize(e,which,swin)}/>;})}</div>;
+    return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
+      <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
+      <div style={{display:"flex",alignItems:"stretch"}}>
+        {/* month picker — vertical narrow scroll */}
+        <div style={{flexShrink:0,width:54,borderRight:`1px solid ${C.line2}`,maxHeight:380,overflowY:"auto"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3,padding:"5px 0",position:"sticky",top:0,background:C.panel,borderBottom:`1px solid ${C.line2}`,zIndex:1}}>
+            <button disabled={focusY<=YEAR} onClick={()=>setFocusY(y=>Math.max(YEAR,y-1))} style={{border:"none",background:"none",cursor:focusY<=YEAR?"default":"pointer",color:focusY<=YEAR?C.faint:C.gray,fontFamily:MONO,fontSize:13}}>‹</button>
+            <span style={{fontSize:11,fontWeight:800}}>{focusY}</span>
+            <button onClick={()=>setFocusY(y=>y+1)} style={{border:"none",background:"none",cursor:"pointer",color:C.gray,fontFamily:MONO,fontSize:13}}>›</button>
+          </div>
+          {MON.map((mn,m)=>{if(focusY<YEAR||(focusY===YEAR&&m<START_M))return null;const l=footprint.loadYM[`${focusY}-${m}`]||{conf:0,win:0},load=l.conf+l.win,t=pressureTint(load,ceiling),on=m===fM,hot=load>ceiling;
+            return <button key={m} onClick={()=>onSelect(focusY,m)} style={{width:"100%",fontFamily:MONO,cursor:"pointer",border:"none",
+              borderBottom:`1px solid ${C.line2}`,padding:"7px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:1,
+              background:on?C.ink:(t||C.panel),color:on?C.bg:C.ink}}>
+              <span style={{fontSize:11.5,fontWeight:800}}>{mn}</span>
+              <span style={{fontSize:8,fontWeight:700,color:on?C.bg:(hot?C.pressHot:C.mute)}}>{load?`${load}/${ceiling}`:"·"}</span>
+            </button>;})}
+        </div>
+        {/* focus month — inline. View: tap to inspect. Edit: month locked for drags; candidates + trips stay below */}
+        <div style={{flex:1,minWidth:0,padding:"9px 11px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7,flexWrap:"wrap"}}>
+            <span style={{fontSize:15.5,fontWeight:800}}>{MONL[fM]} {focusY}</span>
+            <span style={{fontSize:10,color:fld.conf+fld.win>ceiling?C.pressHot:C.mute}}>{fld.conf}+{fld.win}/{ceiling}/mo</span>
+          </div>
+          <div style={{marginBottom:7}}>{modePalette}</div>
+          {sel&&editBars}
+          {dayInfoEl}
+          {dow}
+          <div style={{touchAction:dragMode?"none":"auto"}}>{grid()}</div>
+          <FootLegend/>
+        </div>
+      </div>
+    </div>;
+  }
+
+  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
+      {modePalette}
+      <div style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:6}}>
+        <Btn small onClick={scrollToToday}>Today</Btn>
+        <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:5,overflow:"hidden"}}>
+          {[["cal","year"],["school","school yr"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{fontFamily:MONO,fontSize:10,fontWeight:700,
+            padding:"3px 8px",border:"none",cursor:"pointer",background:mode===k?C.ink:"transparent",color:mode===k?C.bg:C.gray}}>{l}</button>)}
+        </div>
+      </div>
+    </div>
+    <LayerFilters layers={layers} setLayers={setLayers} goto={goto}/>
+    {sel&&editBars}
+    {dayInfoEl&&<div style={{padding:"8px 12px 0"}}>{dayInfoEl}</div>}
+    {/* browse vs edit: tools are gated behind edit so dragging doesn't fight browsing */}
+    <div ref={scrollRef} style={{maxHeight:380,overflow:"auto",padding:"8px 12px"}}>
+      <div style={{minWidth:width}}>
+        <div style={{display:"flex",position:"sticky",top:0,background:C.panel,zIndex:2,paddingBottom:3}}>
+          <div style={{width:CAL_LBL,flexShrink:0}}/>
+          {Array.from({length:calMaxCols},(_,ci)=><div key={ci} style={{width:CAL_CELL,marginLeft:calMl(ci),textAlign:"center",fontSize:8,fontWeight:700,color:C.mute,flexShrink:0}}>{"MTWTFSS"[ci%7]}</div>)}
+        </div>
+        {items.map((it,i)=> it.h!=null
+          ? <div key={i} style={{padding:"8px 0 3px",marginLeft:CAL_LBL-6,fontSize:13,fontWeight:900,color:C.ink}}>{it.h}</div>
+          : <MonthRow key={i} y={it.y} m={it.m} footprint={footprint} layerCov={cov} ceiling={ceiling}
+              selectable={it.y===YEAR} sel={it.y===YEAR&&it.m===selected} onSelect={onSelect}
+              tool={dragMode?act:null} drawSet={draw&&draw.y===it.y&&draw.m===it.m?drawSet:null} winPrevSet={winPrevSetFor(it.y,it.m)} hideWinId={hideWinId} selReqDates={srDates} selWinDates={swinDates} selTripDates={stpDates} preview={preview}
+              onCellDown={cellDown} onTap={tapMode?tapHandler:undefined}
+              selStart={swinStart} selEnd={swinEnd} onHandle={(e,which)=>swin&&handleResize(e,which,swin)}/>)}
+        <div style={{textAlign:"center",marginTop:6}}><button onClick={()=>setRange(r=>({...r,e:r.e+1}))}
+          style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"4px 14px",border:`1px solid ${C.line}`,borderRadius:5,background:C.panel,color:C.gray,cursor:"pointer"}}>load more ▾</button></div>
+      </div>
+    </div>
+  </div>;
+}
+const FootLegend=()=> <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",fontSize:9.5,color:C.mute,margin:"6px 2px 0"}}>
+  <LegDot bg={SHIFT_COL.day}>day booked</LegDot>
+  <LegDot bg={SHIFT_COL.night}>night booked</LegDot>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:OVERRIDE_COL.day,border:`1.5px dashed ${SHIFT_COL.day}`}}/>negotiating</span>
+  <LegDot ring={C.ink}>requested</LegDot>
+  <LegDot dotted>draft</LegDot>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,background:C.blockTrip,border:`1px solid ${C.ocean}`}}/>trip</span>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:11,height:11,borderRadius:3,backgroundImage:`repeating-linear-gradient(135deg,${C.pressHot} 0 1.5px,transparent 1.5px 5px)`,border:`1px solid ${C.line}`}}/>family-time cost</span>
+  <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",border:`2px solid ${C.ink}`}}/>lock</span>
+  <span style={{display:"inline-flex",alignItems:"center",gap:3}}><span style={{width:3,height:3,borderRadius:"50%",background:C.juniper}}/><span style={{width:3,height:3,borderRadius:"50%",background:C.ocean}}/>family off · bottom bars (~ inferred)</span>
+  <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:4}}>focused-month pressure
+    <span style={{display:"inline-flex",width:34,height:6,borderRadius:3,overflow:"hidden",border:`1px solid ${C.line}`}}><span style={{width:14,background:C.ink}}/><span style={{width:9,background:C.bar}}/></span>
+    <span style={{color:C.pressHot}}>over ceiling</span></span>
+</div>;
+const LegDot=({bg,ring,dotted,children})=> <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
+  <span style={{width:12,height:12,borderRadius:3,background:bg||C.panel,
+    border:ring?`1.5px solid ${ring}`:(dotted?`1px dotted ${C.est}`:(bg?"none":`1px solid ${C.line}`))}}/>{children}</span>;
+
+/* a small collapsible section wrapper for the side drawers */
+function Drawer({title,sub,n,children,open,setOpen}){
+  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,overflow:"hidden"}}>
+    <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"baseline",gap:8,padding:"8px 11px",cursor:"pointer"}}>
+      <span style={{fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray}}>{title}</span>
+      {n!=null&&<span style={{fontSize:11,fontWeight:700,color:C.mute}}>{n}</span>}
+      <span style={{fontSize:10,color:C.mute}}>{sub}</span>
+      <span style={{marginLeft:"auto",fontSize:11,color:C.mute}}>{open?"▾":"▸"}</span>
+    </div>
+    {open&&<div style={{padding:"0 11px 11px"}}>{children}</div>}
+  </div>;
+}
+/* ════════ TRIPS DRAWER — the fun back door: family trips that gate windows ════════ */
+function TripsDrawer({state,setState}){
+  const [open,setOpen]=useState(false);
+  const trips=state.trips;
+  const setTrips=fn=>setState(s=>({...s,trips:fn(s.trips)}));
+  const upd=(id,patch)=>setTrips(ts=>ts.map(t=>t.id===id?{...t,...patch}:t));
+  const add=()=>setTrips(ts=>[...ts,{id:"t"+Date.now(),name:"New trip",from:`${YEAR}-07-06`,to:`${YEAR}-07-12`,loc:Object.keys(LOC_NAME)[0],workFactor:"closed"}]);
+  const rm=id=>setTrips(ts=>ts.filter(t=>t.id!==id));
+  const WF=[["colocate","co-locate"],["commute","commute"],["closed","closed"]];
+  const WFNOTE={colocate:"work locally — nearby sites co-locate (cheap)",commute:"leave the trip to work — full travel",closed:"no work — options closed (e.g. international)"};
+  return <Drawer title="Trips" sub="Family travel" n={trips.length} open={open} setOpen={setOpen}>
+    <div style={{maxHeight:"44vh",overflowY:"auto",overflowX:"hidden",margin:"0 -1px 2px",padding:"0 1px",WebkitOverflowScrolling:"touch"}}>
+    {trips.map(t=><div key={t.id} style={{border:`1px solid ${C.line2}`,borderRadius:6,padding:"7px 8px",marginBottom:6}}>
+      <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",marginBottom:5}}>
+        <input style={{...inp,flex:"1 1 120px"}} value={t.name} onChange={e=>upd(t.id,{name:e.target.value})}/>
+        <select style={{...inp,width:110}} value={t.loc} onChange={e=>upd(t.id,{loc:e.target.value})}>
+          {Object.keys(LOC_NAME).map(l=><option key={l} value={l}>{LOC_NAME[l]}</option>)}</select>
+        <Btn small kind="danger" onClick={()=>rm(t.id)}>×</Btn>
+      </div>
+      <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+        <input type="date" style={{...inp,width:128}} value={t.from} onChange={e=>upd(t.id,{from:e.target.value})}/>
+        <input type="date" style={{...inp,width:128}} value={t.to} onChange={e=>upd(t.id,{to:e.target.value})}/>
+        <div style={{display:"inline-flex",border:`1px solid ${C.line}`,borderRadius:4,overflow:"hidden"}}>
+          {WF.map(([k,l])=><button key={k} onClick={()=>upd(t.id,{workFactor:k})} title={WFNOTE[k]} style={{fontFamily:MONO,fontSize:9.5,fontWeight:700,
+            padding:"3px 7px",border:"none",cursor:"pointer",background:t.workFactor===k?C.ink:"transparent",color:t.workFactor===k?C.bg:C.gray}}>{l}</button>)}
+        </div>
+      </div>
+      <div style={{fontSize:9,color:C.mute,marginTop:4}}>{WFNOTE[t.workFactor]}</div>
+    </div>)}
+    </div>
+    <Btn small onClick={add}>+ add trip</Btn>
+    <span style={{fontSize:9.5,color:C.mute,marginLeft:8}}>trips render on the calendar; closed trips strike out their days</span>
+  </Drawer>;
+}
+function SitesWorksheet({state,setState}){
+  const [open,setOpen]=useState(false);
+  return <Drawer title="Sites" sub="Rates, reach, and timing" n={state.sites.length} open={open} setOpen={setOpen}>
+    <SiteWizard state={state} setState={setState} embed/>
+  </Drawer>;
+}
+/* ════════ TRIPS PALETTE — the third workspace pillar: hideable, horizontal, drag onto the calendar ════════ */
+function TripsPalette({state,setState,sel,setSel,goto,onPreview}){
+  const [ghost,setGhost]=useState(null);
+  const [open,setOpen]=useState(true);
+  const trips=state.trips;
+  const setTrips=fn=>setState(s=>({...s,trips:fn(s.trips)}));
+  const dur=t=>Math.max(1,(DATE_RE.test(t.from||"")&&DATE_RE.test(t.to||""))?days(pd(t.from),pd(t.to))+1:7);
+  const place=(id,fromDate)=>setTrips(ts=>ts.map(t=>t.id===id?{...t,from:fromDate,to:ds(ad(pd(fromDate),dur(t)-1)),placed:true}:t));
+  const addTrip=()=>{const id="t"+Date.now();setTrips(ts=>[...ts,{id,name:"New trip",from:`${YEAR}-07-06`,to:`${YEAR}-07-10`,loc:Object.keys(LOC_NAME)[0],workFactor:"closed",placed:false}]);setSel&&setSel({kind:"trip",id});};
+  const start=(e,t)=>{
+    e.preventDefault();e.stopPropagation();                 // grip is touch-action:none → drag in any direction
+    let moved=false,lastD; const sx=e.clientX, sy=e.clientY;
+    const previewAt=d=>onPreview&&onPreview(d?{set:new Set(Array.from({length:dur(t)},(_,i)=>ds(ad(pd(d),i)))),color:WFC[t.workFactor]}:null);
+    const move=ev=>{const p=ev.touches?ev.touches[0]:ev;
+      if(!moved&&Math.abs(p.clientX-sx)+Math.abs(p.clientY-sy)<5)return;   // ignore taps / micro-jitter
+      moved=true; const d=nearestDate(p.clientX,p.clientY);
+      setGhost({name:t.name,x:p.clientX,y:p.clientY,date:d});
+      if(d!==lastD){lastD=d;previewAt(d);}};   // live drop preview — only when the hovered day changes
+    const cleanup=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",cancel);};
+    const up=ev=>{cleanup();const p=ev.touches?ev.touches[0]:ev;const d=nearestDate(p.clientX,p.clientY);
+      if(moved&&d)place(t.id,d); setSel&&setSel({kind:"trip",id:t.id}); setGhost(null); previewAt(null);};
+    const cancel=()=>{cleanup();setGhost(null);previewAt(null);};
+    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);window.addEventListener("pointercancel",cancel);
+  };
+  const WFC={colocate:C.juniper,commute:C.ocean,closed:C.pressHot};
+  return <div style={{border:`1px solid ${C.line}`,borderRadius:8,background:C.panel,padding:"9px 11px"}}>
+    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:open?7:0}}>
+      <span onClick={()=>setOpen(o=>!o)} style={{fontSize:11,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.gray,cursor:"pointer"}}>{open?"▾":"▸"} Trips</span>
+      <span style={{fontSize:9.5,color:C.mute}}>swipe to browse · drag the ⠿ handle onto a day · </span>
+      <span onClick={()=>goto&&goto("setup")} style={{fontSize:9.5,color:C.blue,cursor:"pointer",borderBottom:`1px solid ${C.line}`}}>edit in Setup →</span>
+    </div>
+    {open&&<div style={{display:"flex",gap:7,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
+      {trips.map(t=>{const on=sel&&sel.kind==="trip"&&sel.id===t.id;
+      return <div key={t.id} onClick={()=>setSel&&setSel({kind:"trip",id:t.id})} title={`${t.workFactor} · grab ⠿ to drag onto a day`}
+        style={{display:"inline-flex",alignItems:"stretch",gap:6,padding:"6px 9px",borderRadius:7,cursor:"pointer",touchAction:"pan-x",flexShrink:0,
+          border:`1px solid ${on?C.ink:C.line}`,outline:on?`1px solid ${C.ink}`:"none",background:placed(t)?C.panel2:C.panel,opacity:placed(t)?1:0.92,minWidth:104}}>
+        <span onPointerDown={e=>start(e,t)} title="drag onto a day"
+          style={{display:"flex",alignItems:"center",padding:"0 5px",margin:"-6px 2px -6px -7px",fontSize:15,lineHeight:1,color:C.mute,cursor:"grab",touchAction:"none",borderRight:`1px solid ${C.line2}`}}>⠿</span>
+        <div style={{display:"flex",flexDirection:"column",gap:2,minWidth:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:5}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:WFC[t.workFactor]}}/>
+            <span style={{fontSize:12,fontWeight:800}}>{t.name}</span>
+          </div>
+          <div style={{fontSize:9,color:C.mute}}>{LOC_NAME[t.loc]} · {t.workFactor} · {dur(t)}d</div>
+          <div style={{fontSize:8.5,color:placed(t)?C.gray:C.est,fontWeight:700}}>{placed(t)?`${md(t.from)}–${md(t.to)}`:"⤓ unplaced — drag in"}</div>
+        </div>
+      </div>;})}
+      <button onClick={addTrip} style={{fontFamily:MONO,fontSize:11,fontWeight:700,padding:"6px 10px",borderRadius:7,cursor:"pointer",flexShrink:0,
+        border:`1px dashed ${C.line}`,background:"transparent",color:C.gray}}>+ trip</button>
+    </div>}
+    {ghost&&<div style={{position:"fixed",left:ghost.x+12,top:ghost.y+12,zIndex:400,pointerEvents:"none",
+      background:C.ink,color:C.bg,fontSize:11,fontWeight:700,padding:"4px 8px",borderRadius:5,boxShadow:`0 6px 18px var(--shadow)`}}>
+      {ghost.name}{ghost.date?` → ${md(ghost.date)}`:" · drop on a day"}</div>}
+  </div>;
+}
+
+/* ════════ APP SHELL ════════ */
+function App(){
+  const [state,setState]=useState(()=>{
+    const fromUrl=readHashState();                       // a share-link wins on first load
+    if(fromUrl){try{history.replaceState(null,"",location.pathname+location.search);}catch(_){}return fromUrl;}
+    try{const s=localStorage.getItem("perDiemState");if(s){const v=sanitizeState(JSON.parse(s));if(v)return v;}}catch(e){}
+    return seedState();
+  });
+  const [view,setView]=useState("work");   // one tab set, top on desktop / bottom on mobile
+  const [monthIdx,setMonthIdx]=useState(7); // August — requests are open now
+  const [isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width: 760px)").matches);
+  const [back,setBack]=useState(null);   // single-level return target for in-app deep links
+  const [toast,setToast]=useState(null);
+  const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}}); // system|light|dark
+  const fileRef=useRef();
+  useEffect(()=>{const mq=window.matchMedia&&window.matchMedia("(max-width: 760px)");if(!mq)return;
+    const h=()=>setIsMobile(mq.matches);if(mq.addEventListener){mq.addEventListener("change",h);return ()=>mq.removeEventListener("change",h);}},[]);
+  useEffect(()=>{try{localStorage.setItem("perDiemState",JSON.stringify(state));}catch(e){}},[state]);
+  useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),4000);return ()=>clearTimeout(t);},[toast]);
+  // theme: follow device when "system", else explicit; reflected on <html data-theme>
+  useEffect(()=>{
+    const mq=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)");
+    const apply=()=>{const eff=theme==="system"?((mq&&mq.matches)?"dark":"light"):theme;
+      document.documentElement.setAttribute("data-theme",eff);};
+    apply();try{localStorage.setItem("perDiemTheme",theme);}catch(e){}
+    if(theme==="system"&&mq&&mq.addEventListener){mq.addEventListener("change",apply);return ()=>mq.removeEventListener("change",apply);}
+  },[theme]);
+  const themeIcon={system:"◐",light:"☀",dark:"☾"}[theme];
+  const themeText={system:"auto",light:"light",dark:"dark"}[theme];
+  const cycleTheme=()=>setTheme(t=>t==="system"?"light":t==="light"?"dark":"system");
+  const tsp=useMemo(()=>typicalShiftPay(state.sites),[state.sites]);
+
+  const exportJSON=()=>{
+    const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="per-diem.json";a.click();
+  };
+  const importJSON=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+    rd.onload=ev=>{try{const v=sanitizeState(JSON.parse(ev.target.result));if(v){setState(v);}else alert("Couldn’t read that file — wrong shape.");}catch(err){alert("Invalid file");}};rd.readAsText(f);};
+  const reset=()=>{if(confirm("Reset to seed data? This discards your requests and dials."))setState(seedState());};
+  const share=()=>{
+    const url=shareLink(state);
+    if(!url){setToast("Couldn’t build a link (compressor unavailable).");return;}
+    const big=url.length>8000;
+    const msg=`Link copied · ${url.length.toLocaleString()} chars${big?" · ⚠ long, may not survive every browser/proxy":""}`;
+    if(navigator.clipboard&&navigator.clipboard.writeText)
+      navigator.clipboard.writeText(url).then(()=>setToast(msg)).catch(()=>{prompt("Copy this share link:",url);});
+    else prompt("Copy this share link:",url);
+  };
+
+  const VIEWS=[["work","▦","Calendar"],["pending","◷","Requests"],["pace","∿","Pace"],["setup","⚙","Setup"]];
+  const labelOf=v=>(VIEWS.find(x=>x[0]===v)||[,,v])[2];
+  const goto=t=>{if(t!==view){setBack(view);setView(t);}};   // deep link, remembers where to return
+  const pick=t=>{setView(t);setBack(null);};                  // manual tab tap clears the return crumb
+  // request-pipeline counts — surfaced as a strip + Requests-tab badge so the lifecycle is visible from anywhere
+  const pl=(()=>{const rs=state.requests;
+    return {drafts:rs.filter(r=>r.state==="candidate").length,
+      awaiting:rs.filter(r=>r.state==="pending"||r.state==="override").length,
+      overdue:rs.filter(r=>(r.state==="pending"||r.state==="override")&&r.expectedResponseBy&&pd(r.expectedResponseBy)<TODAY).length,
+      booked:rs.filter(r=>r.state==="confirmed"&&!isPastReq(r)).length};})();
+  const reqBadge=(pl.drafts>0||pl.overdue>0)?<span style={{marginLeft:5,fontSize:10,fontWeight:800,color:C.bg,
+    background:pl.overdue>0?C.red:C.ink,borderRadius:8,padding:"0 5px"}}>{pl.drafts>0?pl.drafts:"!"}</span>:null;
+  const pipeStrip=<div style={{display:"flex",alignItems:"center",gap:4,padding:"4px 14px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexShrink:0,flexWrap:"wrap"}}>
+    <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginRight:2}}>requests</span>
+    {[["●",pl.drafts,"drafts",false],["◷",pl.awaiting,"awaiting",false],["⚠",pl.overdue,"overdue",true],["✓",pl.booked,"booked",false]]
+      .filter(([,n,,warn])=>!warn||n>0).map(([ic,n,lab,warn])=>
+        <button key={lab} onClick={()=>goto("pending")} style={{fontFamily:MONO,fontSize:11,fontWeight:700,border:"none",background:"none",
+          cursor:"pointer",color:warn&&n>0?C.red:C.gray,display:"inline-flex",alignItems:"center",gap:4,padding:"1px 5px"}}>
+          <span>{ic}</span><b style={{color:warn&&n>0?C.red:C.ink}}>{n}</b> {lab}</button>)}
+  </div>;
+  const content=view==="pending"
+    ? <Pending state={state} setState={setState} tsp={tsp}/>
+    : <Board state={state} setState={setState} monthIdx={monthIdx} setMonthIdx={setMonthIdx} tsp={tsp} view={view} goto={goto} mobile={isMobile}/>;
+  return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
+    {/* header */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",
+      borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+        <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM</span>
+      </div>
+      <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+        <Btn small onClick={cycleTheme} title={`theme: ${themeText}`}>{themeIcon} {themeText}</Btn>
+        <span style={{width:1,height:16,background:C.line}}/>
+        <Btn small kind="prim" onClick={share}>share link</Btn>
+        <Btn small onClick={exportJSON}>export</Btn>
+        <Btn small onClick={()=>fileRef.current.click()}>import</Btn>
+        <Btn small onClick={reset}>reset</Btn>
+        <input ref={fileRef} type="file" accept=".json" onChange={importJSON} style={{display:"none"}}/>
+      </div>
+    </div>
+    {toast&&<div style={{position:"fixed",bottom:isMobile?68:18,left:"50%",transform:"translateX(-50%)",zIndex:300,
+      background:C.ink,color:C.bg,fontSize:12,fontWeight:600,padding:"8px 14px",borderRadius:6,
+      boxShadow:"0 8px 24px rgba(0,0,0,.25)",maxWidth:"90vw",textAlign:"center"}}>{toast}</div>}
+    {pipeStrip}
+    {/* desktop: top tabs — each a view into the same model (calendar and windows are separate) */}
+    {!isMobile&&<div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
+      {VIEWS.map(([id,ic,label])=><button key={id} onClick={()=>pick(id)}
+        style={{fontFamily:MONO,fontSize:13,fontWeight:800,padding:"9px 15px",border:"none",cursor:"pointer",
+          background:"transparent",color:view===id?C.ink:C.mute,letterSpacing:"-0.01em",
+          borderBottom:view===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}{id==="pending"&&reqBadge}</button>)}
+      <span style={{marginLeft:"auto",alignSelf:"center",fontSize:9.5,color:C.mute,padding:"0 14px"}}>today {ds(TODAY)}</span>
+    </div>}
+    {/* in-app back crumb — there's no browser back, so deep links always offer a way home */}
+    {back&&back!==view&&<div style={{flexShrink:0,borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"5px 12px"}}>
+      <button onClick={()=>{setView(back);setBack(null);}} style={{fontFamily:MONO,fontSize:12,fontWeight:700,border:"none",background:"none",
+        cursor:"pointer",color:C.blue,display:"inline-flex",alignItems:"center",gap:4}}>‹ back to {labelOf(back)}</button>
+    </div>}
+    {/* surface — one active view */}
+    <div style={{flex:1,minHeight:0}}>{content}</div>
+    {/* mobile: bottom tab bar — the same views */}
+    {isMobile&&<div style={{display:"flex",borderTop:`1px solid ${C.line}`,background:C.panel,flexShrink:0,paddingBottom:"env(safe-area-inset-bottom)"}}>
+      {VIEWS.map(([id,ic,label])=>{
+        const on=view===id;
+        return <button key={id} onClick={()=>pick(id)} style={{flex:1,fontFamily:MONO,border:"none",cursor:"pointer",background:"transparent",
+          padding:"7px 2px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,
+          color:on?C.ink:C.mute,borderTop:on?`2px solid ${C.ink}`:"2px solid transparent",marginTop:-1}}>
+          <span style={{fontSize:17,lineHeight:1,position:"relative"}}>{ic}{id==="pending"&&reqBadge&&<span style={{position:"absolute",top:-4,right:-9}}>{reqBadge}</span>}</span>
+          <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"-0.01em"}}>{label}</span>
+        </button>;
+      })}
+    </div>}
+  </div>;
+}
+/* ════════ ERROR BOUNDARY — last-resort guard against a white screen ════════ */
+class Boundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(err){return {err};}
+  componentDidCatch(e,info){console.error("Per Diem crashed:",e,info);}
+  render(){
+    if(!this.state.err)return this.props.children;
+    return <div style={{fontFamily:MONO,maxWidth:440,margin:"12vh auto",padding:"0 20px",color:C.ink,textAlign:"center"}}>
+      <div style={{fontSize:17,fontWeight:800,marginBottom:8}}>Something went sideways.</div>
+      <div style={{fontSize:13,color:C.gray,lineHeight:1.6,marginBottom:16}}>
+        The data couldn’t be rendered — usually a malformed share link or import.
+        Your local copy is untouched until you reset.
+      </div>
+      <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+        <button onClick={()=>{try{history.replaceState(null,"",location.pathname);}catch(_){}location.reload();}}
+          style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.line}`,background:C.panel,color:C.ink}}>Drop link &amp; reload</button>
+        <button onClick={()=>{try{localStorage.removeItem("perDiemState");history.replaceState(null,"",location.pathname);}catch(_){}location.reload();}}
+          style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.ink}`,background:C.ink,color:C.bg}}>Reset to sample</button>
+      </div>
+    </div>;
+  }
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Boundary><App/></Boundary>);
+</script>
+</body>
+</html>
