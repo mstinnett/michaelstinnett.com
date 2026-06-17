@@ -347,8 +347,25 @@ function Banner({agg,goal,viewYM,mobile}){
   const pct=goal>0?clamp(projected/goal,0,1):0;
   const wpct=goal>0?clamp(agg.worked$/goal,0,1):0;
   const my=MON[+viewYM.slice(5,7)-1];
+  const goalBar=<div style={{height:mobile?5:8,borderRadius:5,background:C.line2,position:"relative",overflow:"hidden"}}>
+    <div style={{position:"absolute",inset:0,width:`${pct*100}%`,background:C.bar}}/>
+    <div style={{position:"absolute",inset:0,width:`${wpct*100}%`,background:C.juniper}}/></div>;
+  if(mobile){
+    const h1=Math.round(agg.hrs.worked),h2=Math.round(agg.hrs.scheduled),h3=Math.round(agg.hrs.proposed);
+    return <div style={{borderBottom:`1px solid ${C.line}`,background:C.panel,padding:"5px 12px",flexShrink:0}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:11,fontVariantNumeric:"tabular-nums"}}>
+        <span><b style={{fontSize:13.5}}>{fmtK(agg.worked$)}</b> <span style={{color:C.mute}}>worked</span></span>
+        <span><b style={{fontSize:12.5}}>{fmtK(agg.scheduled$)}</b> <span style={{color:C.mute}}>sched</span></span>
+        <span style={{color:C.ocean}}><b style={{fontSize:12.5}}>{fmtK(agg.proposed$)}</b> <span style={{color:C.mute}}>prop</span></span>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
+        <div style={{flex:1}}>{goalBar}</div>
+        <span style={{fontSize:9.5,color:C.mute,whiteSpace:"nowrap"}}>{my} miss {h1}/{h2}/<span style={{color:C.ocean}}>{h3}</span>h</span>
+      </div>
+    </div>;
+  }
   return <div style={{borderBottom:`1px solid ${C.line}`,background:C.panel,padding:"9px 14px",flexShrink:0}}>
-    <div style={{display:"flex",gap:mobile?14:22,flexWrap:"wrap",alignItems:"flex-end"}}>
+    <div style={{display:"flex",gap:22,flexWrap:"wrap",alignItems:"flex-end"}}>
       <Stat label="Worked $" value={fmtK(agg.worked$)} sub={`${YEAR} to date`}/>
       <Stat label="Scheduled $" value={fmtK(agg.scheduled$)} sub="committed ahead" accent={C.ink}/>
       <Stat label="Proposed $" value={fmtK(agg.proposed$)} sub="if it lands" accent={C.ocean}/>
@@ -359,10 +376,7 @@ function Banner({agg,goal,viewYM,mobile}){
       <div style={{flex:1,minWidth:160}}>
         <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:3}}>
           Goal {fmtK(goal)} · projected {fmtK(projected)}</div>
-        <div style={{height:8,borderRadius:5,background:C.line2,position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",inset:0,width:`${pct*100}%`,background:C.bar}}/>
-          <div style={{position:"absolute",inset:0,width:`${wpct*100}%`,background:C.juniper}}/>
-        </div>
+        {goalBar}
       </div>
     </div>
   </div>;
