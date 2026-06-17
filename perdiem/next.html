@@ -132,6 +132,9 @@ function seedState(){
   shifts.push({id:"P1",date:"2026-07-14",siteId:"abq",   type:"day",  status:"proposed",coLocated:false});
   shifts.push({id:"P2",date:"2026-07-15",siteId:"abq",   type:"day",  status:"proposed",coLocated:false});
   shifts.push({id:"P3",date:"2026-08-12",siteId:"santa_fe",type:"day",status:"proposed",coLocated:false});
+  // a scheduled remote cluster (ABQ) so real travel days bookend it out of the box
+  shifts.push({id:"S1",date:"2026-09-29",siteId:"abq",type:"day",status:"scheduled",coLocated:false});
+  shifts.push({id:"S2",date:"2026-09-30",siteId:"abq",type:"day",status:"scheduled",coLocated:false});
   // 2026 catch-up: per-month earned override for the pre-app months
   const monthOverrides={"2026-01":7600,"2026-02":9200,"2026-03":12400,"2026-04":10800,"2026-05":8800};
   const settings={wake:"07:00",bed:"20:00",schoolStart:"08:00",schoolEnd:"15:00",goal:220000};
@@ -227,6 +230,43 @@ function scheduleWindow(state,sIdx,w){
   return {...state,shifts:[...keep,...made],windows:state.windows.filter(x=>x.id!==w.id)};
 }
 
+/* ─── travel days: real bookends around scheduled remote clusters, editable ─── */
+function scheduledClusters(state,sIdx){
+  const bySite={};
+  state.shifts.filter(s=>s.status==="scheduled").forEach(s=>{(bySite[s.siteId]=bySite[s.siteId]||[]).push(s.date);});
+  const out=[];
+  for(const siteId in bySite){
+    if(!sIdx[siteId]||sIdx[siteId].reach==="local")continue;       // only remote clusters travel
+    const dates=bySite[siteId].slice().sort();let run=null;
+    dates.forEach(dt=>{if(run&&Math.round((pd(dt)-pd(run.to))/864e5)===1)run.to=dt;
+      else {if(run)out.push(run);run={siteId,from:dt,to:dt};}});
+    if(run)out.push(run);
+  }
+  return out;
+}
+// date → {kind:"depart"|"return", time, siteId} for every scheduled travel day
+function travelBand(state,sIdx){
+  const map={};
+  scheduledClusters(state,sIdx).forEach(c=>{
+    const site=sIdx[c.siteId],tv=site.travel||TRAVEL_DEFAULT[site.reach]||TRAVEL_DEFAULT.local;
+    for(let i=(tv.beforeDays||0);i>=1;i--){const dt=ds(ad(pd(c.from),-i));if(!map[dt])map[dt]={kind:"depart",time:tv.departTime,siteId:c.siteId};}
+    for(let i=1;i<=(tv.afterDays||0);i++){const dt=ds(ad(pd(c.to),i));if(!map[dt])map[dt]={kind:"return",time:tv.returnTime,siteId:c.siteId};}
+  });
+  return map;
+}
+// hours a travel day costs: coarse half/whole override, else exact (awake time after departure / before return)
+function travelMissed(dateStr,info,state,edit){
+  const aw=homeAwake(dateStr,state),full=aw.reduce((t,[a,b])=>t+(b-a),0);
+  if(edit&&edit.coarse==="whole")return Math.round(full*10)/10;
+  if(edit&&edit.coarse==="half")return Math.round(full*5)/10;
+  const time=parseHM((edit&&edit.time)||info.time);
+  let t=0;for(const [a,b] of aw)t+=info.kind==="depart"?ovl(a,b,time,24):ovl(a,b,0,time);
+  return Math.round(t*10)/10;
+}
+const travelEditOf=(state,dt)=>(state.travelEdits||{})[dt];
+// a month with a 2026 catch-up override is frozen: its days can't hold shifts
+const monthLocked=(state,dateStr)=>Number.isFinite((state.monthOverrides||{})[mk(dateStr)]);
+
 /* year + month aggregates for the banner */
 function aggregate(state,sIdx,viewYM){
   const yr=String(YEAR);
@@ -245,6 +285,10 @@ function aggregate(state,sIdx,viewYM){
   // proposed windows: money is pinned (X×rate); hours contribute their low end (a floor) for the window's month
   (state.windows||[]).forEach(w=>{if(!w.from.startsWith(yr))return;const b=windowBand(w,state,sIdx);
     proposed$+=b.money;if(mk(w.from)===viewYM)hrs.proposed+=b.min;});
+  // travel days (scheduled remote clusters) add their hours to worked/scheduled by date
+  const tb=travelBand(state,sIdx);
+  Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;
+    hrs[dt<TODAY_S?"worked":"scheduled"]+=travelMissed(dt,tb[dt],state,travelEditOf(state,dt));});
   return {worked$,scheduled$,proposed$,hrs};
 }
 
@@ -313,7 +357,7 @@ function monthCells(y,m){
 function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to);}
 
 const siteCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
-function DayCell({str,shift,state,sIdx,selected,today,win,preview,onTap,onDown,onEnter}){
+function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,onTap,onDown,onEnter}){
   if(!str)return <div style={{aspectRatio:"1"}}/>;
   const out=schoolOut(str,state),trip=tripOn(str,state.trips);
   let bg=C.panel;
@@ -323,21 +367,26 @@ function DayCell({str,shift,state,sIdx,selected,today,win,preview,onTap,onDown,o
   const cat=shift?shiftCat(sIdx[shift.siteId],shift.type):null;
   const status=shift?bucketOf(shift):null;
   const warn=shift?warnOf(shift,state):null;
+  const showTravel=travel&&!shift;
+  const tMissed=showTravel?travelMissed(str,travel,state,travelEditOf(state,str)):0;
   const day=+str.slice(8,10);
-  const ringCol=selected?C.ink:warn?C.warn:win?C.ocean:C.line2;
+  const ringCol=selected?C.ink:warn?C.warn:win?C.ocean:showTravel?C.ocean:C.line2;
   const spanFirst=win&&win.kind==="span"&&win.w.from===str;
   return <div onClick={()=>onTap(str)}
     onPointerDown={onDown?e=>onDown(str,e):undefined} onPointerEnter={onEnter?()=>onEnter(str):undefined}
-    style={{aspectRatio:"1",border:`${selected||warn||win?2:1}px ${win&&win.kind==="travel"?"dashed":"solid"} ${ringCol}`,
-    borderRadius:8,background:bg,padding:"4px 5px",cursor:"pointer",position:"relative",
+    style={{aspectRatio:"1",border:`${selected||warn||win||showTravel?2:1}px ${(win&&win.kind==="travel")?"dashed":"solid"} ${ringCol}`,
+    borderRadius:8,background:bg,padding:"4px 5px",cursor:"pointer",position:"relative",opacity:locked?0.5:1,
     display:"flex",flexDirection:"column",overflow:"hidden",touchAction:onDown?"none":"auto"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
       <span style={{fontSize:11,fontWeight:today?900:600,color:today?C.ink:C.gray}}>{day}</span>
-      {warn?<span title={warn} style={{fontSize:10,color:C.warn}}>⚠</span>
-        :win&&win.kind==="travel"?<span title="travel day" style={{fontSize:9,color:C.ocean}}>✈</span>
+      {locked?<span title="catch-up month — locked" style={{fontSize:9,color:C.mute}}>🔒</span>
+        :warn?<span title={warn} style={{fontSize:10,color:C.warn}}>⚠</span>
+        :(win&&win.kind==="travel")?<span title="provisional travel" style={{fontSize:9,color:C.ocean,opacity:0.6}}>✈</span>
         :today?<span style={{width:5,height:5,borderRadius:5,background:C.danger}}/>:null}
     </div>
     {shift?<ShiftPill site={sIdx[shift.siteId]} cat={cat} status={status} co={shift.coLocated}/>
+      :showTravel?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:C.ocean,display:"flex",alignItems:"center",gap:2,
+        border:`1.5px solid ${C.ocean}`,borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>✈ {fmtH(tMissed)}</div>
       :spanFirst?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:C.ocean,border:`1.5px dashed ${C.ocean}`,
         borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>{siteCode(sIdx[win.w.siteId])} ×{win.w.x}</div>
       :win&&win.kind==="span"?<div style={{marginTop:"auto",height:3,borderRadius:2,background:C.ocean,opacity:0.4}}/>:null}
@@ -359,7 +408,7 @@ function ShiftPill({site,cat,status,co}){
 const CAL_MONTHS=Array.from({length:19},(_,i)=>{const m=5+i;return [2026+Math.floor(m/12),m%12];});
 const DowHeader=()=> <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
   {DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}</div>;
-function MonthGrid({y,m,state,sIdx,selected,onTap,label,winBy,previewSet,onDown,onEnter}){
+function MonthGrid({y,m,state,sIdx,selected,onTap,label,winBy,travelBy,previewSet,onDown,onEnter}){
   const cells=monthCells(y,m);
   return <div style={{marginBottom:16}}>
     {label&&<div style={{position:"sticky",top:0,zIndex:1,background:C.panel,fontSize:12.5,fontWeight:800,
@@ -369,12 +418,13 @@ function MonthGrid({y,m,state,sIdx,selected,onTap,label,winBy,previewSet,onDown,
       {cells.map((str,i)=>{const shift=str?state.shifts.find(s=>s.date===str):null;
         return <DayCell key={i} str={str} shift={shift} state={state} sIdx={sIdx}
           selected={str&&str===selected} today={str===TODAY_S}
-          win={str&&winBy?winBy[str]:null} preview={!!(str&&previewSet&&previewSet.has(str))}
+          win={str&&winBy?winBy[str]:null} travel={str&&travelBy?travelBy[str]:null} locked={str?monthLocked(state,str):false}
+          preview={!!(str&&previewSet&&previewSet.has(str))}
           onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
     </div>
   </div>;
 }
-function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,onCreateWindow}){
+function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,onCreateWindow}){
   const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
   const step=n=>{let m=viewM+n,y=viewY;if(m<0){m=11;y--;}if(m>11){m=0;y++;}setView(y,m);};
   const [drag,setDrag]=useState(null);
@@ -384,7 +434,7 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
     window.addEventListener("pointerup",up);return ()=>window.removeEventListener("pointerup",up);},[drag,onCreateWindow]);
   const onDown=tool==="window"?(str)=>setDrag({anchor:str,over:str}):undefined;
   const onEnter=tool==="window"?(str)=>setDrag(d=>d?{...d,over:str}:d):undefined;
-  const gridProps={winBy,previewSet,onDown,onEnter};
+  const gridProps={winBy,travelBy,previewSet,onDown,onEnter};
   return <div style={{display:"flex",flexDirection:"column",minHeight:0,height:"100%"}}>
     {/* tools band */}
     <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap",flexShrink:0}}>
@@ -428,6 +478,15 @@ function Readout({state,sIdx,selected,mutate}){
     <span style={{fontSize:11,color:C.gray}}>kids home & awake <b style={{color:C.ink}}>{fmtH(awake)}</b></span>
     {trip&&<span style={{fontSize:10.5,color:C.ocean}}>✈ {trip.name} ({trip.workFactor})</span>}
   </div>;
+
+  // catch-up month → locked
+  if(monthLocked(state,selected))return <div style={{padding:"14px"}}>{head}
+    <div style={{fontSize:11.5,color:C.gray,display:"flex",alignItems:"center",gap:6}}>🔒 {MONL[d.getMonth()]} is a 2026 catch-up month
+      ({fmt$(state.monthOverrides[mk(selected)])} earned). Its days are frozen — clear the override in <b>Trips&nbsp;&amp;&nbsp;Calendars</b> to edit shifts.</div>
+  </div>;
+  // travel day (scheduled remote cluster) → exact + coarse editor
+  const tinfo=travelBand(state,sIdx)[selected];
+  if(!shift&&tinfo)return <TravelReadout state={state} sIdx={sIdx} dateStr={selected} info={tinfo} head={head} awake={awake} mutate={mutate}/>;
 
   if(!shift)return <div style={{padding:"14px"}}>{head}
     <div style={{fontSize:11.5,color:C.gray,marginBottom:8}}>No shift here. Add one:</div>
@@ -527,6 +586,38 @@ function WindowReadout({state,sIdx,wid,mutate,onScheduled}){
   </div>;
 }
 
+/* ════════ TRAVEL READOUT — a real travel day: exact time + coarse feel ════════ */
+function TravelReadout({state,sIdx,dateStr,info,head,awake,mutate}){
+  const edit=travelEditOf(state,dateStr)||{};
+  const setEdit=patch=>mutate(s=>{const te={...(s.travelEdits||{})};const next={...(te[dateStr]||{}),...patch};
+    Object.keys(next).forEach(k=>{if(next[k]==null)delete next[k];});
+    if(Object.keys(next).length)te[dateStr]=next;else delete te[dateStr];return {...s,travelEdits:te};});
+  const missed=travelMissed(dateStr,info,state,edit),site=sIdx[info.siteId];
+  const feel=edit.coarse||"exact";
+  const time=edit.time||info.time;
+  return <div style={{padding:"14px"}}>{head}
+    <div style={{fontSize:11.5,fontWeight:700,color:C.ocean,marginBottom:10}}>
+      ✈ Travel day — {info.kind==="depart"?"leaving for":"home from"} {site?site.name:"a trip"}</div>
+    <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
+      <div style={{flex:"1 1 280px"}}>
+        <Field label="How it feels"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          <Btn on={feel==="exact"} onClick={()=>setEdit({coarse:undefined})}>Exact time</Btn>
+          <Btn on={feel==="half"} onClick={()=>setEdit({coarse:"half"})}>½ a day</Btn>
+          <Btn on={feel==="whole"} onClick={()=>setEdit({coarse:"whole"})}>Whole day</Btn>
+        </div></Field>
+        {feel==="exact"&&<Field label={info.kind==="depart"?"Depart time":"Return time"}>
+          <input type="time" style={{...inp,maxWidth:150}} value={time} onChange={e=>setEdit({time:e.target.value})}/>
+          <div style={{fontSize:10.5,color:C.mute,marginTop:3}}>
+            {info.kind==="depart"?`you miss kid-awake time after ${time}`:`you miss kid-awake time until ${time}`}</div></Field>}
+        {feel!=="exact"&&<div style={{fontSize:10.5,color:C.mute}}>Stored as ~{fmtH(missed)} of this day's {fmtH(awake)} kid-awake hours, so monthly totals stay one clean number.</div>}
+      </div>
+      <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
+        <Stat label="Hours missed" value={fmtH(missed)} sub={feel==="exact"?"exact":feel==="half"?"½ day":"whole day"} accent={C.ocean}/>
+      </div>
+    </div>
+  </div>;
+}
+
 /* ════════ DRAWER — calendars + trips visibility ════════ */
 function DrawerStrip({state,mutate}){
   const [open,setOpen]=useState(false);
@@ -560,6 +651,16 @@ function TripsCalsTab({state,mutate}){
       Hours missed = a shift's overlap with the time kids are home and awake. On school days that's before {s.schoolStart} and after {s.schoolEnd}; on days off, the whole {s.wake}–{s.bed} window.</div>
     <h3 style={{fontSize:13,fontWeight:800,marginBottom:10}}>Earnings goal</h3>
     <Field label={`${YEAR} total money earned`}><input type="number" style={{...inp,maxWidth:200}} value={s.goal} onChange={e=>setS({goal:+e.target.value||0})}/></Field>
+    <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>2026 catch-up</h3>
+    <div style={{fontSize:11,color:C.gray,marginBottom:10}}>Enter what you already earned in a past month instead of re-entering every shift. A month with a value is <b>frozen</b> on the calendar (🔒) and its override is authoritative.</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>
+      {MON.map((mn,i)=>{const key=`2026-${String(i+1).padStart(2,"0")}`,v=(state.monthOverrides||{})[key];
+        const setOv=val=>mutate(st=>{const o={...(st.monthOverrides||{})};if(val===""||val==null)delete o[key];else o[key]=+val;return {...st,monthOverrides:o};});
+        return <label key={key} style={{fontSize:11}}>
+          <span style={{color:Number.isFinite(v)?C.ink:C.mute,fontWeight:Number.isFinite(v)?800:600}}>{Number.isFinite(v)?"🔒 ":""}{mn}</span>
+          <input type="number" placeholder="—" style={{...inp,padding:"4px 6px"}} value={Number.isFinite(v)?v:""} onChange={e=>setOv(e.target.value)}/>
+        </label>;})}
+    </div>
     <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>Calendars</h3>
     {state.calendars.map(c=><div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${C.line2}`}}>
       <span style={{width:9,height:9,borderRadius:9,background:c.color}}/>
@@ -618,6 +719,7 @@ function App(){
 
   const sIdx=useMemo(()=>siteIndex(state.sites),[state.sites]);
   const winBy=useMemo(()=>winBand(state.windows,sIdx),[state.windows,sIdx]);
+  const travelBy=useMemo(()=>travelBand(state,sIdx),[state.shifts,sIdx]);
   const viewYM=`${viewY}-${String(viewM+1).padStart(2,"0")}`;
   const agg=useMemo(()=>aggregate(state,sIdx,viewYM),[state,sIdx,viewYM]);
 
@@ -625,6 +727,7 @@ function App(){
   const dropWinAt=(s,str)=>s.windows.filter(w=>!(str>=w.from&&str<=w.to));
   const onTap=str=>{
     if(tool==="window")return;   // window tool builds via drag, not tap
+    if(monthLocked(state,str)){setSelected(str);setSelWid(null);const d0=pd(str);setVY([d0.getFullYear(),d0.getMonth()]);return;}   // frozen month
     const ex=state.shifts.find(s=>s.date===str);
     if(tool==="propose"){
       if(!ex)mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"proposed",coLocated:false}]}));
@@ -676,7 +779,7 @@ function App(){
         <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
           <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} viewY={viewY} viewM={viewM} setView={setView}
             tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
-            winBy={winBy} onCreateWindow={onCreateWindow}/>
+            winBy={winBy} travelBy={travelBy} onCreateWindow={onCreateWindow}/>
         </div>
         <div style={mobile
           ?{flex:"0 0 auto",maxHeight:"42%",overflow:"auto",borderTop:`1px solid ${C.line}`,background:C.panel}
