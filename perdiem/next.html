@@ -9,6 +9,7 @@
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script">
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js" as="script">
 <style>
   *{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none;}
   input,textarea,select{user-select:text;-webkit-user-select:text;font-family:inherit;}
@@ -46,6 +47,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
 <script type="text/babel">
 const {useState,useMemo,useRef,useEffect}=React;
 
@@ -352,7 +354,18 @@ function sanitize(o){
   return {sites,trips:arr(o.trips,seed.trips),calendars:arr(o.calendars,seed.calendars),
     settings,monthOverrides:obj(o.monthOverrides),travelEdits:obj(o.travelEdits),shifts,windows,travelMigrated:true};
 }
+function readHash(){
+  try{const m=(location.hash||"").match(/[#&]s=([^&]+)/);
+    if(m&&window.LZString){const j=LZString.decompressFromEncodedURIComponent(m[1]);if(j)return sanitize(JSON.parse(j));}}catch(e){}
+  return null;
+}
+function shareLink(state){
+  try{if(!window.LZString)return null;
+    return location.origin+location.pathname+"#s="+LZString.compressToEncodedURIComponent(JSON.stringify(state));}catch(e){return null;}
+}
 function load(){
+  const fromUrl=readHash();                                  // a share-link wins on first load
+  if(fromUrl){try{history.replaceState(null,"",location.pathname+location.search);}catch(_){}return fromUrl;}
   try{const s=localStorage.getItem("perDiemNext");if(s)return sanitize(JSON.parse(s));}catch(e){}
   return seedState();
 }
@@ -588,7 +601,8 @@ function MonthStrip({y,m,state,sIdx,selected,onTap,cell,cg,wg,winBy,travelBy,pre
 }
 function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,onCreateWindow}){
   const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
-  const [cell,setCell]=useState(18);   // strip zoom (desktop)
+  const [cell,setCell]=useState(()=>{try{const v=+localStorage.getItem("perDiemZoom");return v>=12&&v<=42?v:18;}catch(e){return 18;}});   // strip zoom, remembered
+  useEffect(()=>{try{localStorage.setItem("perDiemZoom",cell);}catch(e){}},[cell]);
   const cg=Math.max(1,Math.round(cell/9)),wg=Math.max(2,Math.round(cell/3));
   const step=n=>{let m=viewM+n,y=viewY;if(m<0){m=11;y--;}if(m>11){m=0;y++;}setView(y,m);};
   const [drag,setDrag]=useState(null);
@@ -1079,13 +1093,34 @@ function App(){
   const TABS=[["calendar","Calendar"],["setup","Trips & Calendars"],["sites","Sites"]];
   const themeIcon={system:"◐",light:"☀",dark:"☾"}[theme];
   const cycle=()=>setTheme(t=>t==="system"?"light":t==="light"?"dark":"system");
+  const fileRef=useRef();
+  const [toast,setToast]=useState(null);
+  useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),4000);return ()=>clearTimeout(t);},[toast]);
+  const exportJSON=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="per-diem.json";a.click();};
+  const importJSON=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+    rd.onload=ev=>{try{const v=sanitize(JSON.parse(ev.target.result));past.current=[];setCanUndo(false);setState(v);setToast("Imported.");}
+      catch(err){alert("Couldn’t read that file — wrong shape.");}};
+    rd.readAsText(f);e.target.value="";};
+  const share=()=>{const url=shareLink(state);if(!url){setToast("Share link unavailable (compressor not loaded).");return;}
+    const big=url.length>12000,msg=`Link copied · ${url.length.toLocaleString()} chars${big?" · ⚠ long":""}`;
+    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(url).then(()=>setToast(msg)).catch(()=>prompt("Copy this link:",url));
+    else prompt("Copy this share link:",url);};
 
   return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
+    {toast&&<div style={{position:"fixed",bottom:mobile?70:18,left:"50%",transform:"translateX(-50%)",zIndex:400,
+      background:C.ink,color:C.bg,fontSize:12,fontWeight:600,padding:"8px 14px",borderRadius:6,maxWidth:"90vw",textAlign:"center",
+      boxShadow:"0 8px 24px rgba(0,0,0,.25)"}}>{toast}</div>}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
       <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM <span style={{fontSize:10,color:C.mute,fontWeight:700}}>next · stage 1</span></span>
-      <div style={{display:"flex",gap:5,alignItems:"center"}}>
+      <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
         <Btn small onClick={cycle}>{themeIcon} {theme}</Btn>
+        <span style={{width:1,height:16,background:C.line}}/>
+        <Btn small kind="prim" onClick={share}>share link</Btn>
+        <Btn small onClick={exportJSON}>export</Btn>
+        <Btn small onClick={()=>fileRef.current.click()}>import</Btn>
         <Btn small onClick={()=>{if(confirm("Reset to seed data?")){past.current=[];setCanUndo(false);setState(seedState());}}}>reset</Btn>
+        <input ref={fileRef} type="file" accept=".json,application/json" onChange={importJSON} style={{display:"none"}}/>
       </div>
     </div>
     <DrawerStrip state={state} mutate={mutate}/>
