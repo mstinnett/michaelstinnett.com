@@ -1010,12 +1010,23 @@ function SitesTab({state,mutate}){
   const addShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.some(m=>m.shift===shiftId)?x:{...x,menu:[...x.menu,{shift:shiftId,rate:200}]})}));
   const rmShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.length<=1?x:{...x,menu:x.menu.filter(m=>m.shift!==shiftId)})}));
   const setTravel=(sid,patch)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,travel:Object.assign({},x.travel||TRAVEL_DEFAULT[x.reach]||TRAVEL_DEFAULT.local,patch)})}));
+  const setName=(sid,name)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,name})}));
+  const setReach=(sid,reach)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,reach,travel:TRAVEL_DEFAULT[reach]||TRAVEL_DEFAULT.local})}));   // reset travel to the reach default
+  const addSite=()=>mutate(s=>({...s,sites:[...s.sites,{id:"site"+Date.now(),name:"New site",reach:"local",menu:[{shift:"d7",rate:200}],travel:TRAVEL_DEFAULT.local}]}));
+  const rmSite=sid=>{const site=state.sites.find(x=>x.id===sid);
+    if(state.sites.length<=1){alert("Keep at least one site.");return;}
+    const nS=state.shifts.filter(x=>x.siteId===sid).length,nW=(state.windows||[]).filter(w=>w.siteId===sid).length;
+    if(!confirm(`Delete ${site.name}?`+((nS||nW)?` This also removes ${nS} shift(s) and ${nW} window(s) at this site.`:"")))return;
+    mutate(s=>({...s,sites:s.sites.filter(x=>x.id!==sid),shifts:s.shifts.filter(x=>x.siteId!==sid),windows:(s.windows||[]).filter(w=>w.siteId!==sid)}));};
   return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:760}}>
-    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>Each site's <b>menu</b> is the specific shifts it offers — pick from these on a day. Edit rates, add or remove shifts.</div>
+    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>Each site's <b>menu</b> is the specific shifts it offers — pick from these on a day. Edit name, reach, rates, travel; add or remove shifts and sites.</div>
     {state.sites.map(s=>{const have=new Set(s.menu.map(m=>m.shift)),avail=SHIFTS.filter(sh=>!have.has(sh.id));
       return <div key={s.id} style={{padding:"12px 0",borderBottom:`1px solid ${C.line2}`}}>
-      <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:8}}>
-        <b style={{fontSize:13.5}}>{s.name}</b><span style={{fontSize:10.5,color:C.mute}}>{REACH_LABEL[s.reach]}</span></div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+        <input value={s.name} onChange={e=>setName(s.id,e.target.value)} style={{...inp,maxWidth:210,fontWeight:700,padding:"4px 8px"}}/>
+        <select value={s.reach} onChange={e=>setReach(s.id,e.target.value)} style={{...inp,width:"auto",padding:"4px 6px",fontSize:11.5}}>
+          {["local","nm","rural_nm"].map(r=><option key={r} value={r}>{REACH_LABEL[r]}</option>)}</select>
+        <button onClick={()=>rmSite(s.id)} title="delete site" style={{...delBtn,marginLeft:"auto"}}>✕ delete</button></div>
       <div style={{display:"flex",flexDirection:"column",gap:6}}>{s.menu.map(m=>{const sh=SHIFT_BY[m.shift];
         return <div key={m.shift} style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,flexWrap:"wrap"}}>
           <span style={{minWidth:128}}><b>{sh.label}</b> <span style={{color:C.mute}}>· {sh.night?"Night":"Day"}</span></span>
@@ -1035,6 +1046,7 @@ function SitesTab({state,mutate}){
           <label style={{fontSize:10.5,color:C.gray}}>return<br/><input type="time" value={tv.returnTime} onChange={e=>setTravel(s.id,{returnTime:e.target.value})} style={{...inp,width:110,padding:"3px 6px"}}/></label>
         </div>;})()}
     </div>;})}
+    <button onClick={addSite} style={{...addBtn,marginTop:12}}>+ site</button>
   </div>;
 }
 function AddShift({avail,onAdd}){
