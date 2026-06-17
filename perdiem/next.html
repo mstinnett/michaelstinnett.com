@@ -135,7 +135,9 @@ function seedState(){
   // 2026 catch-up: per-month earned override for the pre-app months
   const monthOverrides={"2026-01":7600,"2026-02":9200,"2026-03":12400,"2026-04":10800,"2026-05":8800};
   const settings={wake:"07:00",bed:"20:00",schoolStart:"08:00",schoolEnd:"15:00",goal:220000};
-  return {sites,trips,calendars,shifts,monthOverrides,settings};
+  // a proposed window at a travel site: hold 7 days (incl. a weekend), work 2; a travel day bookends it
+  const windows=[{id:"w1",siteId:"santa_fe",type:"day",from:"2026-10-17",to:"2026-10-23",x:2}];
+  return {sites,trips,calendars,shifts,monthOverrides,settings,windows};
 }
 
 /* ════════ ENGINE ════════ */
@@ -189,6 +191,42 @@ function warnOf(sh,state){
   return null;
 }
 
+/* ─── windows: a held span where you'll work X of Y days (ratio sites) ─── */
+const winDates=w=>{const out=[];for(let d=pd(w.from);d<=pd(w.to);d=ad(d,1))out.push(ds(d));return out;};
+function windowBrackets(w,sIdx){            // provisional travel days outside the window, for remote sites
+  const site=sIdx[w.siteId];if(!site||site.reach==="local")return {before:[],after:[]};
+  const tv=site.travel||TRAVEL_DEFAULT[site.reach]||TRAVEL_DEFAULT.local,before=[],after=[];
+  for(let i=(tv.beforeDays||0);i>=1;i--)before.push(ds(ad(pd(w.from),-i)));
+  for(let i=1;i<=(tv.afterDays||0);i++)after.push(ds(ad(pd(w.to),i)));
+  return {before,after};
+}
+// date → {wid,kind:"span"|"travel"} for every day a window touches
+function winBand(windows,sIdx){
+  const map={};
+  (windows||[]).forEach(w=>{
+    winDates(w).forEach(dt=>{map[dt]={w,kind:"span"};});
+    const b=windowBrackets(w,sIdx);[...b.before,...b.after].forEach(dt=>{if(!map[dt])map[dt]={w,kind:"travel"};});
+  });
+  return map;
+}
+// the proposed-impact band: min/max kid-awake hours missed + provisional travel
+function windowBand(w,state,sIdx){
+  const site=sIdx[w.siteId],dates=winDates(w),Y=dates.length,X=clamp(w.x||1,1,Y);
+  const perDay=dates.map(dt=>shiftMissed({date:dt,siteId:w.siteId,type:w.type,coLocated:false},state,sIdx)).sort((a,b)=>a-b);
+  const lo=perDay.slice(0,X).reduce((a,b)=>a+b,0),hi=perDay.slice(Y-X).reduce((a,b)=>a+b,0);
+  const b=windowBrackets(w,sIdx);let travel=0;[...b.before,...b.after].forEach(dt=>{travel+=dayAwakeHours(dt,state);});
+  const r=x=>Math.round(x*10)/10;
+  return {Y,X,min:r(lo+travel),max:r(hi+travel),travel:r(travel),money:X*(site?shiftPay(site,w.type):0)};
+}
+// materialize a window into X scheduled shifts on its X lowest-impact days
+function scheduleWindow(state,sIdx,w){
+  const dates=winDates(w).map(dt=>({dt,m:shiftMissed({date:dt,siteId:w.siteId,type:w.type,coLocated:false},state,sIdx)}))
+    .sort((a,b)=>a.m-b.m).slice(0,clamp(w.x||1,1,winDates(w).length)).map(o=>o.dt);
+  const keep=state.shifts.filter(s=>!dates.includes(s.date));
+  const made=dates.map((dt,i)=>({id:"w"+w.id+"_"+i,date:dt,siteId:w.siteId,type:w.type,status:"scheduled",coLocated:false}));
+  return {...state,shifts:[...keep,...made],windows:state.windows.filter(x=>x.id!==w.id)};
+}
+
 /* year + month aggregates for the banner */
 function aggregate(state,sIdx,viewYM){
   const yr=String(YEAR);
@@ -204,12 +242,15 @@ function aggregate(state,sIdx,viewYM){
   // hours missed — current viewed month only (never annualized)
   const hrs={worked:0,scheduled:0,proposed:0};
   state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;hrs[bucketOf(sh)]+=missedOf(sh,state,sIdx);});
+  // proposed windows: money is pinned (X×rate); hours contribute their low end (a floor) for the window's month
+  (state.windows||[]).forEach(w=>{if(!w.from.startsWith(yr))return;const b=windowBand(w,state,sIdx);
+    proposed$+=b.money;if(mk(w.from)===viewYM)hrs.proposed+=b.min;});
   return {worked$,scheduled$,proposed$,hrs};
 }
 
 /* ════════ persistence + sanitize (light) ════════ */
 function load(){
-  try{const s=localStorage.getItem("perDiemNext");if(s){const o=JSON.parse(s);if(o&&o.shifts&&o.sites&&o.settings)return o;}}catch(e){}
+  try{const s=localStorage.getItem("perDiemNext");if(s){const o=JSON.parse(s);if(o&&o.shifts&&o.sites&&o.settings){o.windows=o.windows||[];o.trips=o.trips||[];return o;}}}catch(e){}
   return seedState();
 }
 
@@ -271,35 +312,45 @@ function monthCells(y,m){
 }
 function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to);}
 
-function DayCell({str,shift,state,sIdx,selected,today,onTap}){
+const siteCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
+function DayCell({str,shift,state,sIdx,selected,today,win,preview,onTap,onDown,onEnter}){
   if(!str)return <div style={{aspectRatio:"1"}}/>;
   const out=schoolOut(str,state),trip=tripOn(str,state.trips);
   let bg=C.panel;
   if(trip)bg=C.blockTrip;else if(out)bg=C.weekend;
+  if(win&&win.kind==="span")bg=C.sel;
+  if(preview)bg=C.sel;
   const cat=shift?shiftCat(sIdx[shift.siteId],shift.type):null;
   const status=shift?bucketOf(shift):null;
   const warn=shift?warnOf(shift,state):null;
   const day=+str.slice(8,10);
-  const ringCol=selected?C.ink:warn?C.warn:C.line2;
-  return <div onClick={()=>onTap(str)} style={{aspectRatio:"1",border:`1px solid ${ringCol}`,
-    borderWidth:selected||warn?2:1,borderRadius:8,background:bg,padding:"4px 5px",cursor:"pointer",position:"relative",
-    display:"flex",flexDirection:"column",overflow:"hidden"}}>
+  const ringCol=selected?C.ink:warn?C.warn:win?C.ocean:C.line2;
+  const spanFirst=win&&win.kind==="span"&&win.w.from===str;
+  return <div onClick={()=>onTap(str)}
+    onPointerDown={onDown?e=>onDown(str,e):undefined} onPointerEnter={onEnter?()=>onEnter(str):undefined}
+    style={{aspectRatio:"1",border:`${selected||warn||win?2:1}px ${win&&win.kind==="travel"?"dashed":"solid"} ${ringCol}`,
+    borderRadius:8,background:bg,padding:"4px 5px",cursor:"pointer",position:"relative",
+    display:"flex",flexDirection:"column",overflow:"hidden",touchAction:onDown?"none":"auto"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
       <span style={{fontSize:11,fontWeight:today?900:600,color:today?C.ink:C.gray}}>{day}</span>
-      {warn?<span title={warn} style={{fontSize:10,color:C.warn}}>⚠</span>:today&&<span style={{width:5,height:5,borderRadius:5,background:C.danger}}/>}
+      {warn?<span title={warn} style={{fontSize:10,color:C.warn}}>⚠</span>
+        :win&&win.kind==="travel"?<span title="travel day" style={{fontSize:9,color:C.ocean}}>✈</span>
+        :today?<span style={{width:5,height:5,borderRadius:5,background:C.danger}}/>:null}
     </div>
-    {shift&&<ShiftPill site={sIdx[shift.siteId]} cat={cat} status={status} co={shift.coLocated}/>}
+    {shift?<ShiftPill site={sIdx[shift.siteId]} cat={cat} status={status} co={shift.coLocated}/>
+      :spanFirst?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:C.ocean,border:`1.5px dashed ${C.ocean}`,
+        borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>{siteCode(sIdx[win.w.siteId])} ×{win.w.x}</div>
+      :win&&win.kind==="span"?<div style={{marginTop:"auto",height:3,borderRadius:2,background:C.ocean,opacity:0.4}}/>:null}
   </div>;
 }
 function ShiftPill({site,cat,status,co}){
   const filled=status!=="proposed";
   const col=status==="proposed"?C.ocean:status==="worked"?C.gray:C.ink;
-  const code=(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
   return <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:3,
     fontSize:9.5,fontWeight:800,padding:"2px 4px",borderRadius:5,
     border:`1.5px ${status==="proposed"?"dashed":"solid"} ${col}`,
     background:filled?col:"transparent",color:filled?C.bg:col,overflow:"hidden",whiteSpace:"nowrap"}}>
-    <span>{code}</span><span style={{opacity:0.85}}>{cat==="night"?"N":"D"}</span>
+    <span>{siteCode(site)}</span><span style={{opacity:0.85}}>{cat==="night"?"N":"D"}</span>
     {status==="worked"&&<span>✓</span>}{co&&<span title="co-located">⌂</span>}
   </div>;
 }
@@ -308,7 +359,7 @@ function ShiftPill({site,cat,status,co}){
 const CAL_MONTHS=Array.from({length:19},(_,i)=>{const m=5+i;return [2026+Math.floor(m/12),m%12];});
 const DowHeader=()=> <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
   {DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}</div>;
-function MonthGrid({y,m,state,sIdx,selected,onTap,label}){
+function MonthGrid({y,m,state,sIdx,selected,onTap,label,winBy,previewSet,onDown,onEnter}){
   const cells=monthCells(y,m);
   return <div style={{marginBottom:16}}>
     {label&&<div style={{position:"sticky",top:0,zIndex:1,background:C.panel,fontSize:12.5,fontWeight:800,
@@ -317,13 +368,23 @@ function MonthGrid({y,m,state,sIdx,selected,onTap,label}){
     <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
       {cells.map((str,i)=>{const shift=str?state.shifts.find(s=>s.date===str):null;
         return <DayCell key={i} str={str} shift={shift} state={state} sIdx={sIdx}
-          selected={str&&str===selected} today={str===TODAY_S} onTap={onTap}/>;})}
+          selected={str&&str===selected} today={str===TODAY_S}
+          win={str&&winBy?winBy[str]:null} preview={!!(str&&previewSet&&previewSet.has(str))}
+          onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
     </div>
   </div>;
 }
-function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo}){
-  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
+function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,onCreateWindow}){
+  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
   const step=n=>{let m=viewM+n,y=viewY;if(m<0){m=11;y--;}if(m>11){m=0;y++;}setView(y,m);};
+  const [drag,setDrag]=useState(null);
+  const previewSet=useMemo(()=>{if(!drag)return null;const a=drag.anchor<drag.over?drag.anchor:drag.over,b=drag.anchor<drag.over?drag.over:drag.anchor;
+    const set=new Set();for(let d=pd(a);d<=pd(b);d=ad(d,1))set.add(ds(d));return set;},[drag]);
+  useEffect(()=>{if(!drag)return;const up=()=>{const a=drag.anchor<drag.over?drag.anchor:drag.over,b=drag.anchor<drag.over?drag.over:drag.anchor;onCreateWindow(a,b);setDrag(null);};
+    window.addEventListener("pointerup",up);return ()=>window.removeEventListener("pointerup",up);},[drag,onCreateWindow]);
+  const onDown=tool==="window"?(str)=>setDrag({anchor:str,over:str}):undefined;
+  const onEnter=tool==="window"?(str)=>setDrag(d=>d?{...d,over:str}:d):undefined;
+  const gridProps={winBy,previewSet,onDown,onEnter};
   return <div style={{display:"flex",flexDirection:"column",minHeight:0,height:"100%"}}>
     {/* tools band */}
     <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap",flexShrink:0}}>
@@ -336,11 +397,13 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
         <Btn small onClick={()=>step(1)}>›</Btn>
       </div>}
     </div>
+    {tool==="window"&&<div style={{fontSize:10.5,color:C.ocean,padding:"4px 12px",background:C.panel2,borderBottom:`1px solid ${C.line2}`}}>
+      Drag across days to hold a window, then set “will work X of Y” in the readout.</div>}
     {/* grid — desktop scrolls every month as a row; phone shows one month + arrows */}
     <div style={{padding:"8px 12px",overflow:"auto",flex:1,minHeight:0}}>
       {mobile
-        ? <MonthGrid y={viewY} m={viewM} state={state} sIdx={sIdx} selected={selected} onTap={onTap}/>
-        : CAL_MONTHS.map(([y,m])=><MonthGrid key={y+"-"+m} y={y} m={m} state={state} sIdx={sIdx} selected={selected} onTap={onTap} label/>)}
+        ? <MonthGrid y={viewY} m={viewM} state={state} sIdx={sIdx} selected={selected} onTap={onTap} {...gridProps}/>
+        : CAL_MONTHS.map(([y,m])=><MonthGrid key={y+"-"+m} y={y} m={m} state={state} sIdx={sIdx} selected={selected} onTap={onTap} label {...gridProps}/>)}
     </div>
   </div>;
 }
@@ -423,6 +486,47 @@ function SitePicker({sites,value,onPick,pickType}){
   </div>;
 }
 
+/* ════════ WINDOW READOUT — the held "work X of Y" span ════════ */
+function WindowReadout({state,sIdx,wid,mutate,onScheduled}){
+  const w=state.windows.find(x=>x.id===wid);
+  if(!w)return null;
+  const site=sIdx[w.siteId],band=windowBand(w,state,sIdx),cat=shiftCat(site,w.type);
+  const setW=patch=>mutate(s=>({...s,windows:s.windows.map(x=>x.id===w.id?{...x,...patch}:x)}));
+  const del=()=>mutate(s=>({...s,windows:s.windows.filter(x=>x.id!==w.id)}));
+  const sched=()=>{mutate(s=>scheduleWindow(s,sIdx,w));onScheduled&&onScheduled();};
+  const setX=n=>setW({x:clamp(n,1,band.Y)});
+  return <div style={{padding:"14px"}}>
+    <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:10}}>
+      <span style={{fontSize:15,fontWeight:800}}>Window</span>
+      <span style={{fontSize:11.5,color:C.gray}}>{MON[pd(w.from).getMonth()]} {pd(w.from).getDate()}–{pd(w.to).getDate()} · {site.name}</span>
+      <span style={{fontSize:10.5,fontWeight:700,color:C.ocean,border:`1px solid ${C.ocean}`,borderRadius:12,padding:"1px 8px"}}>proposed</span>
+    </div>
+    <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
+      <div style={{flex:"1 1 280px"}}>
+        <Field label="Site"><select style={inp} value={w.siteId} onChange={e=>setW({siteId:e.target.value})}>
+          {state.sites.map(s=><option key={s.id} value={s.id}>{s.name} · {REACH_LABEL[s.reach]}</option>)}</select></Field>
+        <Field label="Shift"><div style={{display:"flex",gap:6,alignItems:"center"}}>
+          {["day","night"].map(t=><Btn key={t} on={cat===t} onClick={()=>setW({type:t})}>{t==="day"?"Day":"Night"}</Btn>)}
+          <span style={{fontSize:11,color:C.mute}}>{SHIFT_BY[resolveEntry(site,w.type).shift].label}</span></div></Field>
+        <Field label="Will work"><div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <Btn small onClick={()=>setX(band.X-1)} disabled={band.X<=1}>−</Btn>
+          <b style={{fontSize:15,minWidth:62,textAlign:"center"}}>{band.X} of {band.Y}</b>
+          <Btn small onClick={()=>setX(band.X+1)} disabled={band.X>=band.Y}>+</Btn>
+          <span style={{fontSize:11,color:C.mute}}>days held</span></div></Field>
+      </div>
+      <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
+        <Stat label="Earns" value={fmt$(band.money)} accent={C.juniper}/>
+        <Stat label="Hours missed" value={`${fmtH(band.min)}–${fmtH(band.max)}`} sub={band.travel>0?`incl. ~${fmtH(band.travel)} travel`:"range over placement"} accent={C.ocean}/>
+        <div style={{display:"flex",gap:6}}>
+          <Btn small onClick={del}>Delete</Btn>
+          <Btn small kind="prim" onClick={sched} title="materialize the X lowest-impact days as scheduled shifts">Schedule {band.X} →</Btn>
+        </div>
+      </div>
+    </div>
+    <div style={{fontSize:10.5,color:C.mute,marginTop:10}}>Scheduling places the {band.X} lowest-impact day{band.X>1?"s":""} and bookends travel; you can then adjust each shift. Drawing a shift over the window also replaces it.</div>
+  </div>;
+}
+
 /* ════════ DRAWER — calendars + trips visibility ════════ */
 function DrawerStrip({state,mutate}){
   const [open,setOpen]=useState(false);
@@ -494,6 +598,7 @@ function App(){
   const [tab,setTab]=useState("calendar");
   const [tool,setTool]=useState("select");
   const [selected,setSelected]=useState(TODAY_S);
+  const [selWid,setSelWid]=useState(null);
   const [[viewY,viewM],setVY]=useState([2026,5]);
   const [lastSite,setLastSite]=useState("boston");
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}});
@@ -512,25 +617,37 @@ function App(){
   const setView=(y,m)=>setVY([y,m]);
 
   const sIdx=useMemo(()=>siteIndex(state.sites),[state.sites]);
+  const winBy=useMemo(()=>winBand(state.windows,sIdx),[state.windows,sIdx]);
   const viewYM=`${viewY}-${String(viewM+1).padStart(2,"0")}`;
   const agg=useMemo(()=>aggregate(state,sIdx,viewYM),[state,sIdx,viewYM]);
 
+  // drawing a shift over a window replaces the window (no proposed/scheduled mixing)
+  const dropWinAt=(s,str)=>s.windows.filter(w=>!(str>=w.from&&str<=w.to));
   const onTap=str=>{
+    if(tool==="window")return;   // window tool builds via drag, not tap
     const ex=state.shifts.find(s=>s.date===str);
     if(tool==="propose"){
-      if(!ex)mutate(s=>({...s,shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"proposed",coLocated:false}]}));
+      if(!ex)mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"proposed",coLocated:false}]}));
     }else if(tool==="schedule"){
       // draw-to-schedule: replaces a proposed shift in place, or drops a fresh scheduled one
       if(ex)mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===ex.id?{...x,status:"scheduled"}:x)}));
-      else mutate(s=>({...s,shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"scheduled",coLocated:false}]}));
+      else mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"scheduled",coLocated:false}]}));
     }else if(tool==="erase"){
       if(ex&&ex.status==="proposed")mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));   // erase = proposed-only
     }
     setSelected(str);
+    setSelWid(winBy[str]?winBy[str].w.id:null);
     const d=pd(str);setVY([d.getFullYear(),d.getMonth()]);   // focus the banner's month on the tapped day
   };
-  // keep lastSite synced to the selected day's shift, so new proposals inherit context
-  useEffect(()=>{const sh=state.shifts.find(s=>s.date===selected);if(sh)setLastSite(sh.siteId);},[selected,state.shifts]);
+  const onCreateWindow=React.useCallback((from,to)=>{
+    const id="w"+Date.now(),span=Math.round((pd(to)-pd(from))/864e5)+1;
+    mutate(s=>({...s,windows:[...(s.windows||[]),{id,siteId:lastSite,type:"day",from,to,x:clamp(Math.round(span/2),1,span)}]}));
+    setSelWid(id);setSelected(from);const d=pd(from);setVY([d.getFullYear(),d.getMonth()]);
+  },[lastSite]);
+  // keep lastSite synced to the selected day's shift / window, so new draws inherit context
+  useEffect(()=>{const w=selWid&&(state.windows||[]).find(x=>x.id===selWid);
+    const sh=state.shifts.find(s=>s.date===selected);
+    if(w)setLastSite(w.siteId);else if(sh)setLastSite(sh.siteId);},[selected,selWid,state.shifts,state.windows]);
 
   const TABS=[["calendar","Calendar"],["setup","Trips & Calendars"],["sites","Sites"]];
   const themeIcon={system:"◐",light:"☀",dark:"☾"}[theme];
@@ -558,12 +675,15 @@ function App(){
         {/* phone: calendar over readout. tablet/desktop: calendar left, readout as a tall right panel. */}
         <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
           <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} viewY={viewY} viewM={viewM} setView={setView}
-            tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}/>
+            tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
+            winBy={winBy} onCreateWindow={onCreateWindow}/>
         </div>
         <div style={mobile
           ?{flex:"0 0 auto",maxHeight:"42%",overflow:"auto",borderTop:`1px solid ${C.line}`,background:C.panel}
           :{flex:"0 0 380px",overflow:"auto",borderLeft:`1px solid ${C.line}`,background:C.panel}}>
-          <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate}/>
+          {selWid&&state.windows.find(w=>w.id===selWid)
+            ? <WindowReadout state={state} sIdx={sIdx} wid={selWid} mutate={mutate} onScheduled={()=>setSelWid(null)}/>
+            : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate}/>}
         </div>
       </div>}
       {tab==="setup"&&<TripsCalsTab state={state} mutate={mutate}/>}
