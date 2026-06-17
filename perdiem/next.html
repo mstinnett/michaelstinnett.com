@@ -291,34 +291,43 @@ function ShiftPill({site,cat,status,co}){
   </div>;
 }
 
-function CalendarSurface({state,sIdx,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo}){
-  const cells=monthCells(viewY,viewM);
+// the month range the desktop scroll covers: June 2026 → December 2027
+const CAL_MONTHS=Array.from({length:19},(_,i)=>{const m=5+i;return [2026+Math.floor(m/12),m%12];});
+const DowHeader=()=> <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
+  {DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}</div>;
+function MonthGrid({y,m,state,sIdx,selected,onTap,label}){
+  const cells=monthCells(y,m);
+  return <div style={{marginBottom:16}}>
+    {label&&<div style={{position:"sticky",top:0,zIndex:1,background:C.panel,fontSize:12.5,fontWeight:800,
+      letterSpacing:"-0.01em",padding:"6px 2px 5px",borderBottom:`1px solid ${C.line2}`,marginBottom:6}}>{MONL[m]} {y}</div>}
+    <DowHeader/>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+      {cells.map((str,i)=>{const shift=str?state.shifts.find(s=>s.date===str):null;
+        return <DayCell key={i} str={str} shift={shift} state={state} sIdx={sIdx}
+          selected={str&&str===selected} today={str===TODAY_S} onTap={onTap}/>;})}
+    </div>
+  </div>;
+}
+function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo}){
   const tools=[["select","⌖","Select"],["propose","✎","Propose"],["erase","⌫","Erase"]];
   const step=n=>{let m=viewM+n,y=viewY;if(m<0){m=11;y--;}if(m>11){m=0;y++;}setView(y,m);};
-  return <div style={{display:"flex",flexDirection:"column",minHeight:0}}>
+  return <div style={{display:"flex",flexDirection:"column",minHeight:0,height:"100%"}}>
     {/* tools band */}
-    <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+    <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap",flexShrink:0}}>
       {tools.map(([id,ic,lab])=><Btn key={id} small on={tool===id} onClick={()=>setTool(id)}>{ic} {lab}</Btn>)}
       <span style={{width:1,height:18,background:C.line}}/>
       <Btn small disabled={!canUndo} onClick={onUndo}>↶ Undo</Btn>
-      <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+      {mobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
         <Btn small onClick={()=>step(-1)}>‹</Btn>
         <span style={{fontSize:13,fontWeight:800,minWidth:108,textAlign:"center"}}>{MONL[viewM]} {viewY}</span>
         <Btn small onClick={()=>step(1)}>›</Btn>
-      </div>
+      </div>}
     </div>
-    {/* grid */}
-    <div style={{padding:"8px 12px",overflow:"auto"}}>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
-        {DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
-        {cells.map((str,i)=>{
-          const shift=str?state.shifts.find(s=>s.date===str):null;
-          return <DayCell key={i} str={str} shift={shift} state={state} sIdx={sIdx}
-            selected={str&&str===selected} today={str===TODAY_S} onTap={onTap}/>;
-        })}
-      </div>
+    {/* grid — desktop scrolls every month as a row; phone shows one month + arrows */}
+    <div style={{padding:"8px 12px",overflow:"auto",flex:1,minHeight:0}}>
+      {mobile
+        ? <MonthGrid y={viewY} m={viewM} state={state} sIdx={sIdx} selected={selected} onTap={onTap}/>
+        : CAL_MONTHS.map(([y,m])=><MonthGrid key={y+"-"+m} y={y} m={m} state={state} sIdx={sIdx} selected={selected} onTap={onTap} label/>)}
     </div>
   </div>;
 }
@@ -485,12 +494,12 @@ function App(){
     if(tool==="propose"){
       const ex=state.shifts.find(s=>s.date===str);
       if(!ex)mutate(s=>({...s,shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"proposed",coLocated:false}]}));
-      setSelected(str);
     }else if(tool==="erase"){
       const ex=state.shifts.find(s=>s.date===str);
       if(ex&&ex.status==="proposed")mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));   // erase = proposed-only
-      setSelected(str);
-    }else setSelected(str);
+    }
+    setSelected(str);
+    const d=pd(str);setVY([d.getFullYear(),d.getMonth()]);   // focus the banner's month on the tapped day
   };
   // keep lastSite synced to the selected day's shift, so new proposals inherit context
   useEffect(()=>{const sh=state.shifts.find(s=>s.date===selected);if(sh)setLastSite(sh.siteId);},[selected,state.shifts]);
@@ -520,7 +529,7 @@ function App(){
       {tab==="calendar"&&<div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
         {/* phone: calendar over readout. tablet/desktop: calendar left, readout as a tall right panel. */}
         <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
-          <CalendarSurface state={state} sIdx={sIdx} viewY={viewY} viewM={viewM} setView={setView}
+          <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} viewY={viewY} viewM={viewM} setView={setView}
             tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}/>
         </div>
         <div style={mobile
