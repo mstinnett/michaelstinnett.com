@@ -94,6 +94,10 @@ const SHIFTS=[
 ];
 const SHIFT_BY=Object.fromEntries(SHIFTS.map(s=>[s.id,s]));
 const REACH_LABEL={local:"local",nm:"NM",rural_nm:"rural NM"};
+const LOC_NAME={boston:"Boston",santa_fe:"Santa Fe",abq:"Albuquerque",montana:"Montana",portland:"Portland"};
+const CAL_KINDS=["school","holiday","event","custom"];
+const WORK_FACTORS=[["colocate","co-locate (work locally)"],["commute","commute (leave to work)"],["closed","closed (no work)"]];
+const CAL_COLORS=[["juniper","var(--juniper)"],["ocean","var(--ocean)"],["ink","var(--ink)"],["gray","var(--gray)"],["clay","var(--bar)"]];
 // per-reach default travel bracket: days out before / back after the shift block
 const TRAVEL_DEFAULT={
   local:   {beforeDays:0,departTime:"06:00",afterDays:0,returnTime:"20:00"},
@@ -742,10 +746,20 @@ function DrawerStrip({state,mutate}){
 }
 
 /* ════════ SETUP TABS ════════ */
+const delBtn={fontFamily:MONO,fontSize:12,border:`1px solid ${C.line}`,background:C.panel,color:C.gray,borderRadius:5,cursor:"pointer",padding:"2px 7px"};
+const addBtn={fontFamily:MONO,fontSize:11.5,fontWeight:700,border:`1px dashed ${C.faint}`,background:"transparent",color:C.gray,borderRadius:6,cursor:"pointer",padding:"5px 10px"};
 function TripsCalsTab({state,mutate}){
   const s=state.settings;
   const setS=patch=>mutate(x=>({...x,settings:{...x.settings,...patch}}));
   const T=({label,k})=><Field label={label}><input type="time" style={inp} value={s[k]} onChange={e=>setS({[k]:e.target.value})}/></Field>;
+  const setCal=(id,patch)=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id===id?{...c,...patch}:c)}));
+  const setTrip=(id,patch)=>mutate(st=>({...st,trips:st.trips.map(t=>t.id===id?{...t,...patch}:t)}));
+  const rmItem=(key,id)=>mutate(st=>({...st,[key]:st[key].filter(x=>x.id!==id)}));
+  const setRange=(cid,i,patch)=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id!==cid?c:{...c,ranges:c.ranges.map((r,j)=>j===i?{...r,...patch}:r)})}));
+  const addRange=cid=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id!==cid?c:{...c,ranges:[...(c.ranges||[]),{from:TODAY_S,to:TODAY_S,label:""}]})}));
+  const rmRange=(cid,i)=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id!==cid?c:{...c,ranges:c.ranges.filter((r,j)=>j!==i)})}));
+  const addCal=()=>mutate(st=>({...st,calendars:[...st.calendars,{id:"c"+Date.now(),name:"New calendar",kind:"custom",color:"var(--gray)",visible:true,ranges:[]}]}));
+  const addTrip=()=>mutate(st=>({...st,trips:[...st.trips,{id:"t"+Date.now(),name:"New trip",from:TODAY_S,to:TODAY_S,loc:"boston",workFactor:"colocate",visible:true}]}));
   return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:720}}>
     <h3 style={{fontSize:13,fontWeight:800,marginBottom:10}}>Family day</h3>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10}}>
@@ -765,17 +779,48 @@ function TripsCalsTab({state,mutate}){
           <input type="number" placeholder="—" style={{...inp,padding:"4px 6px"}} value={Number.isFinite(v)?v:""} onChange={e=>setOv(e.target.value)}/>
         </label>;})}
     </div>
-    <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>Calendars</h3>
-    {state.calendars.map(c=><div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${C.line2}`}}>
-      <span style={{width:9,height:9,borderRadius:9,background:c.color}}/>
-      <b style={{fontSize:12.5}}>{c.name}</b><span style={{fontSize:10.5,color:C.mute}}>{c.kind} · {(c.ranges||[]).length} ranges</span>
-      <span style={{marginLeft:"auto"}}><Chip on={c.visible!==false} onClick={()=>mutate(st=>({...st,calendars:st.calendars.map(x=>x.id===c.id?{...x,visible:!(x.visible!==false)}:x)}))}>{c.visible!==false?"shown":"hidden"}</Chip></span>
+    <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>Calendars <span style={{fontSize:10.5,fontWeight:600,color:C.mute}}>· school breaks & holidays drive “kids home all day”</span></h3>
+    {state.calendars.map(c=><div key={c.id} style={{border:`1px solid ${C.line2}`,borderRadius:8,padding:"9px 10px",marginBottom:8}}>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:3}}>{CAL_COLORS.map(([n,v])=><button key={n} title={n} onClick={()=>setCal(c.id,{color:v})}
+          style={{width:16,height:16,borderRadius:9,background:v,border:c.color===v?`2px solid ${C.ink}`:`1px solid ${C.line}`,cursor:"pointer"}}/>)}</div>
+        <input value={c.name} onChange={e=>setCal(c.id,{name:e.target.value})} style={{...inp,flex:"1 1 120px",minWidth:0,padding:"4px 7px"}}/>
+        <select value={c.kind} onChange={e=>setCal(c.id,{kind:e.target.value})} style={{...inp,width:"auto",padding:"4px 6px",fontSize:11.5}}>
+          {CAL_KINDS.map(k=><option key={k} value={k}>{k}</option>)}</select>
+        <Chip on={c.visible!==false} onClick={()=>setCal(c.id,{visible:!(c.visible!==false)})}>{c.visible!==false?"shown":"hidden"}</Chip>
+        <button onClick={()=>rmItem("calendars",c.id)} title="delete calendar" style={delBtn}>✕</button>
+      </div>
+      <div style={{marginTop:7,display:"flex",flexDirection:"column",gap:5}}>
+        {(c.ranges||[]).map((r,i)=><div key={i} style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+          <input type="date" value={r.from} onChange={e=>setRange(c.id,i,{from:e.target.value})} style={{...inp,width:"auto",padding:"3px 5px",fontSize:11}}/>
+          <span style={{color:C.mute,fontSize:11}}>→</span>
+          <input type="date" value={r.to} onChange={e=>setRange(c.id,i,{to:e.target.value})} style={{...inp,width:"auto",padding:"3px 5px",fontSize:11}}/>
+          <input value={r.label||""} placeholder="label" onChange={e=>setRange(c.id,i,{label:e.target.value})} style={{...inp,flex:"1 1 100px",minWidth:0,padding:"3px 6px",fontSize:11}}/>
+          <button onClick={()=>rmRange(c.id,i)} title="remove range" style={delBtn}>✕</button>
+        </div>)}
+        <button onClick={()=>addRange(c.id)} style={addBtn}>+ date range</button>
+      </div>
     </div>)}
+    <button onClick={addCal} style={addBtn}>+ calendar</button>
     <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>Trips</h3>
-    {state.trips.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${C.line2}`}}>
-      <b style={{fontSize:12.5}}>✈ {t.name}</b><span style={{fontSize:10.5,color:C.mute}}>{t.from} → {t.to} · {t.workFactor}</span>
-      <span style={{marginLeft:"auto"}}><Chip on={t.visible!==false} onClick={()=>mutate(st=>({...st,trips:st.trips.map(x=>x.id===t.id?{...x,visible:!(x.visible!==false)}:x)}))}>{t.visible!==false?"shown":"hidden"}</Chip></span>
+    {state.trips.map(t=><div key={t.id} style={{border:`1px solid ${C.line2}`,borderRadius:8,padding:"9px 10px",marginBottom:8}}>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+        <span style={{fontSize:12}}>✈</span>
+        <input value={t.name} onChange={e=>setTrip(t.id,{name:e.target.value})} style={{...inp,flex:"1 1 120px",minWidth:0,padding:"4px 7px"}}/>
+        <Chip on={t.visible!==false} onClick={()=>setTrip(t.id,{visible:!(t.visible!==false)})}>{t.visible!==false?"shown":"hidden"}</Chip>
+        <button onClick={()=>rmItem("trips",t.id)} title="delete trip" style={delBtn}>✕</button>
+      </div>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+        <input type="date" value={t.from} onChange={e=>setTrip(t.id,{from:e.target.value})} style={{...inp,width:"auto",padding:"3px 5px",fontSize:11}}/>
+        <span style={{color:C.mute,fontSize:11}}>→</span>
+        <input type="date" value={t.to} onChange={e=>setTrip(t.id,{to:e.target.value})} style={{...inp,width:"auto",padding:"3px 5px",fontSize:11}}/>
+        <select value={t.loc} onChange={e=>setTrip(t.id,{loc:e.target.value})} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}>
+          {Object.keys(LOC_NAME).map(l=><option key={l} value={l}>{LOC_NAME[l]}</option>)}</select>
+        <select value={t.workFactor} onChange={e=>setTrip(t.id,{workFactor:e.target.value})} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}>
+          {WORK_FACTORS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+      </div>
     </div>)}
+    <button onClick={addTrip} style={addBtn}>+ trip</button>
   </div>;
 }
 function SitesTab({state,mutate}){
