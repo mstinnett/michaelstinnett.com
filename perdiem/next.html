@@ -599,7 +599,26 @@ function MonthStrip({y,m,state,sIdx,selected,onTap,cell,cg,wg,winBy,travelBy,pre
     </div>
   </div>;
 }
-function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,onCreateWindow}){
+/* desktop calendar filter + colour key */
+function CalFilter({state,mutate}){
+  const [open,setOpen]=useState(true);
+  const toggle=id=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id===id?{...c,visible:!(c.visible!==false)}:c)}));
+  const chip={fontFamily:MONO,fontSize:10.5,fontWeight:700,cursor:"pointer",borderRadius:13,padding:"2px 8px",display:"inline-flex",alignItems:"center",gap:5,background:C.panel};
+  const sw=col=><span style={{width:9,height:9,borderRadius:3,background:col,flexShrink:0}}/>;
+  const key=(col,lab)=><span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.gray}}>{sw(col)}{lab}</span>;
+  return <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap",padding:"0 12px 7px"}}>
+    <button onClick={()=>setOpen(o=>!o)} style={{border:"none",background:"transparent",color:C.mute,cursor:"pointer",fontFamily:MONO,
+      fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase"}}>{open?"▾":"▸"} calendars</button>
+    {open&&state.calendars.map(c=>{const on=c.visible!==false;
+      return <button key={c.id} onClick={()=>toggle(c.id)} title={`${(c.ranges||[]).length} ranges${c.out?` · out ${c.out.start}–${c.out.end}`:""}`}
+        style={{...chip,border:`1px solid ${on?c.color:C.line}`,opacity:on?1:0.45,color:C.ink}}>
+        {sw(c.color)}<span>{c.name}</span>{!on&&<span style={{color:C.mute}}>off</span>}</button>;})}
+    {open&&<span style={{width:1,height:14,background:C.line2,margin:"0 1px"}}/>}
+    {open&&key(C.shiftDay,"day")}{open&&key(C.shiftNight,"night")}{open&&key(C.blockTrip,"trip")}
+    {open&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.ocean}}>✈ travel</span>}
+  </div>;
+}
+function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,onCreateWindow}){
   const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
   const [cell,setCell]=useState(()=>{try{const v=+localStorage.getItem("perDiemZoom");return v>=12&&v<=42?v:18;}catch(e){return 18;}});   // strip zoom, remembered
   useEffect(()=>{try{localStorage.setItem("perDiemZoom",cell);}catch(e){}},[cell]);
@@ -639,6 +658,7 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
       </div>
       {tool==="window"&&<div style={{fontSize:10.5,color:C.ocean,padding:"0 12px 5px"}}>
         Drag across days to hold a window, then set “will work X of Y” in the readout.</div>}
+      {!mobile&&<CalFilter state={state} mutate={mutate}/>}
     </div>
     {/* desktop: each month a one-row strip (Lydia's dense view); phone: one month grid + arrows */}
     <div style={{padding:"8px 12px 40px"}}>
@@ -1136,7 +1156,7 @@ function App(){
       {tab==="calendar"&&<div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
         {/* phone: calendar over readout. tablet/desktop: calendar left, readout as a tall right panel. */}
         <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
-          <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} viewY={viewY} viewM={viewM} setView={setView}
+          <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} mutate={mutate} viewY={viewY} viewM={viewM} setView={setView}
             tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
             winBy={winBy} travelBy={travelBy} onCreateWindow={onCreateWindow}/>
         </div>
