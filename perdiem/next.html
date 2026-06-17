@@ -475,22 +475,22 @@ function monthCells(y,m){
 function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to);}
 
 const siteCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
-function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,box,onTap,onDown,onEnter}){
+function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,placing,box,onTap,onDown,onEnter}){
   if(!str)return <div style={box}/>;
   const allDay=homeAllDay(str,state),trip=tripOn(str,state.trips);
   const cals=visCals(state).filter(c=>calCovers(c,str)).slice(0,3);
   let bg=C.panel;
   if(trip)bg=C.blockTrip;else if(allDay)bg=C.weekend;
   if(win&&win.kind==="span")bg=C.sel;
-  if(preview)bg=C.sel;
-  const hatch=allDay&&!trip&&!win&&!preview;   // kids home all day → diagonal hatch for texture
+  if(preview||placing)bg=C.sel;
+  const hatch=allDay&&!trip&&!win&&!preview&&!placing;   // kids home all day → diagonal hatch for texture
   const cat=shift?shiftCat(sIdx[shift.siteId],shift.type):null;
   const status=shift?bucketOf(shift):null;
   const warn=shift?warnOf(shift,state):null;
   const showTravel=travel&&!shift;
   const tMissed=showTravel?travelMissed(str,travel,state,travelEditOf(state,str)):0;
   const day=+str.slice(8,10);
-  const ringCol=selected?C.ink:warn?C.warn:win?C.ocean:showTravel?C.ocean:C.line2;
+  const ringCol=placing?C.ocean:selected?C.ink:warn?C.warn:win?C.ocean:showTravel?C.ocean:C.line2;
   const spanFirst=win&&win.kind==="span"&&win.w.from===str;
   return <div onClick={()=>onTap(str)} data-date={str}
     onPointerDown={onDown?e=>onDown(str,e):undefined} onPointerEnter={onEnter?()=>onEnter(str):undefined}
@@ -533,7 +533,7 @@ function ShiftPill({site,cat,status,co}){
 const CAL_MONTHS=Array.from({length:19},(_,i)=>{const m=5+i;return [2026+Math.floor(m/12),m%12];});
 const DowHeader=()=> <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
   {DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}</div>;
-function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,previewSet,onDown,onEnter}){
+function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,previewSet,placing,onDown,onEnter}){
   const cells=monthCells(y,m);
   const box=mobile?{aspectRatio:"1"}:{height:90};   // square on phones; compact fixed rows on desktop
   return <div style={{marginBottom:16}}>
@@ -545,7 +545,7 @@ function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,pr
         return <DayCell key={i} str={str} shift={shift} state={state} sIdx={sIdx} box={box}
           selected={str&&str===selected} today={str===TODAY_S}
           win={str&&winBy?winBy[str]:null} travel={str&&travelBy?travelBy[str]:null} locked={str?monthLocked(state,str):false}
-          preview={!!(str&&previewSet&&previewSet.has(str))}
+          preview={!!(str&&previewSet&&previewSet.has(str))} placing={!!(str&&placing&&placing.has(str))}
           onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
     </div>
   </div>;
@@ -558,7 +558,7 @@ function StripHeader({cell,cg,wg}){
     <div style={{width:CAL_LBL,flexShrink:0}}/>
     {Array.from({length:STRIP_COLS},(_,ci)=><div key={ci} style={{width:cell,marginLeft:calMl(ci,cg,wg),textAlign:"center",fontSize:Math.max(7,Math.round(cell*0.4)),fontWeight:700,color:C.mute,flexShrink:0}}>{WK[ci%7]}</div>)}</div>;
 }
-function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,onTap,onDown,onEnter}){
+function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,placing,onTap,onDown,onEnter}){
   const base={width:cell,height:cell,marginLeft:ml,flexShrink:0,borderRadius:3,position:"relative",boxSizing:"border-box"};
   if(!str)return <div style={base}/>;
   const shift=state.shifts.find(s=>s.date===str);
@@ -566,15 +566,15 @@ function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,onTap,onD
   const cals=visCals(state).filter(c=>calCovers(c,str));
   let bg=C.panel,border=`1px solid ${C.line2}`,op=1,filled=false;
   if(trip)bg=C.blockTrip;else if(allDay)bg=C.weekend;
-  if(win&&win.kind==="span")bg=C.sel;if(preview)bg=C.sel;
+  if(win&&win.kind==="span")bg=C.sel;if(preview||placing)bg=C.sel;
   const warn=shift?warnOf(shift,state):null;
   if(shift){const cat=shiftCat(sIdx[shift.siteId],shift.type),status=bucketOf(shift),col=cat==="night"?C.shiftNight:C.shiftDay;
     if(status==="proposed")border=`1.5px dashed ${col}`;else{bg=col;border=`1px solid ${col}`;op=status==="worked"?0.6:1;filled=true;}}
   const showTravel=travel&&!shift,today=str===TODAY_S;
-  const ringCol=warn?C.warn:(win||showTravel)?C.ocean:null;
+  const ringCol=placing?C.ocean:warn?C.warn:(win||showTravel)?C.ocean:null;
   return <div data-date={str} title={str} onClick={()=>onTap(str)}
     onPointerDown={onDown?e=>onDown(str,e):undefined} onPointerEnter={onEnter?()=>onEnter(str):undefined}
-    style={{...base,background:bg,border:(ringCol&&!shift)?`1.5px ${(showTravel||(win&&win.kind==="travel"))?"dashed":"solid"} ${ringCol}`:border,
+    style={{...base,background:bg,border:placing?`1.5px dashed ${C.ocean}`:(ringCol&&!shift)?`1.5px ${(showTravel||(win&&win.kind==="travel"))?"dashed":"solid"} ${ringCol}`:border,
       outline:selected?`2px solid ${C.ink}`:"none",outlineOffset:-1,opacity:locked?0.4:op,touchAction:onDown?"none":"auto",cursor:"pointer",
       display:"flex",alignItems:"center",justifyContent:"center"}}>
     {cell>=22&&<span style={{fontSize:Math.max(8,Math.round(cell*0.4)),fontWeight:700,color:filled?"#fff":C.gray,lineHeight:1,position:"relative",zIndex:1}}>{+str.slice(8,10)}</span>}
@@ -584,7 +584,7 @@ function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,onTap,onD
       {cals.slice(0,3).map((c,i)=><span key={i} style={{flex:1,background:c.color}}/>)}</div>}
   </div>;
 }
-function MonthStrip({y,m,state,sIdx,selected,onTap,cell,cg,wg,winBy,travelBy,previewSet,onDown,onEnter}){
+function MonthStrip({y,m,state,sIdx,selected,onTap,cell,cg,wg,winBy,travelBy,previewSet,placing,onDown,onEnter}){
   const cells=monthCells(y,m);
   return <div style={{display:"flex",alignItems:"center",marginBottom:CAL_RG}}>
     <div style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
@@ -595,7 +595,7 @@ function MonthStrip({y,m,state,sIdx,selected,onTap,cell,cg,wg,winBy,travelBy,pre
       {Array.from({length:STRIP_COLS},(_,ci)=>{const str=cells[ci]||null;
         return <StripCell key={ci} str={str} cell={cell} ml={calMl(ci,cg,wg)} state={state} sIdx={sIdx}
           selected={!!(str&&str===selected)} win={str&&winBy?winBy[str]:null} travel={str&&travelBy?travelBy[str]:null}
-          preview={!!(str&&previewSet&&previewSet.has(str))} onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
+          preview={!!(str&&previewSet&&previewSet.has(str))} placing={!!(str&&placing&&placing.has(str))} onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
     </div>
   </div>;
 }
@@ -618,8 +618,8 @@ function CalFilter({state,mutate}){
     {open&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.ocean}}>✈ travel</span>}
   </div>;
 }
-function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,onCreateWindow,onCreateTrip}){
-  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["trip","▱","Trip"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
+function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,placing,onCreateWindow}){
+  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
   const [cell,setCell]=useState(()=>{try{const v=+localStorage.getItem("perDiemZoom");return v>=12&&v<=42?v:18;}catch(e){return 18;}});   // strip zoom, remembered
   useEffect(()=>{try{localStorage.setItem("perDiemZoom",cell);}catch(e){}},[cell]);
   const cg=Math.max(1,Math.round(cell/9)),wg=Math.max(2,Math.round(cell/3));
@@ -631,14 +631,12 @@ function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setT
     // track the finger across days: on touch, pointerenter doesn't fire on siblings, so hit-test by point
     const move=e=>{const el=document.elementFromPoint(e.clientX,e.clientY),hit=el&&el.closest&&el.closest("[data-date]");
       if(hit){const dt=hit.getAttribute("data-date");setDrag(d=>(d&&d.over!==dt)?{...d,over:dt}:d);}};
-    const up=()=>{const a=drag.anchor<drag.over?drag.anchor:drag.over,b=drag.anchor<drag.over?drag.over:drag.anchor;
-      (drag.kind==="trip"?onCreateTrip:onCreateWindow)(a,b);setDrag(null);};
+    const up=()=>{const a=drag.anchor<drag.over?drag.anchor:drag.over,b=drag.anchor<drag.over?drag.over:drag.anchor;onCreateWindow(a,b);setDrag(null);};
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
-    return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[drag,onCreateWindow,onCreateTrip]);
-  const drawTool=tool==="window"||tool==="trip";
-  const onDown=drawTool?(str)=>setDrag({anchor:str,over:str,kind:tool}):undefined;
-  const onEnter=drawTool?(str)=>setDrag(d=>d?{...d,over:str}:d):undefined;
-  const gridProps={mobile,winBy,travelBy,previewSet,onDown,onEnter};
+    return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[drag,onCreateWindow]);
+  const onDown=tool==="window"?(str)=>setDrag({anchor:str,over:str}):undefined;
+  const onEnter=tool==="window"?(str)=>setDrag(d=>d?{...d,over:str}:d):undefined;
+  const gridProps={mobile,winBy,travelBy,previewSet,placing,onDown,onEnter};
   // the parent pane is the scroll container; the tools header sticks to its top
   return <div>
     <div style={{position:"sticky",top:0,zIndex:3,background:C.panel2,borderBottom:`1px solid ${C.line2}`}}>
@@ -660,8 +658,6 @@ function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setT
       </div>
       {tool==="window"&&<div style={{fontSize:10.5,color:C.ocean,padding:"0 12px 5px"}}>
         Drag across days to hold a window, then set “will work X of Y” in the readout.</div>}
-      {tool==="trip"&&<div style={{fontSize:10.5,color:C.ocean,padding:"0 12px 5px"}}>
-        Drag across days to place a trip; tap a trip to edit it.</div>}
       {!mobile&&<CalFilter state={state} mutate={mutate}/>}
     </div>
     {/* desktop: each month a one-row strip (Lydia's dense view); phone: one month grid + arrows */}
@@ -906,10 +902,9 @@ function TravelReadout({state,sIdx,dateStr,info,head,awake,mutate}){
 }
 
 /* ════════ DRAWER — calendars + trips visibility ════════ */
-function DrawerStrip({state,mutate,goAddTrip,goAddCal}){
+function DrawerStrip({state,mutate,goAddTrip,goAddCal,onGrabTrip}){
   const [open,setOpen]=useState(false);
   const toggleCal=id=>mutate(s=>({...s,calendars:s.calendars.map(c=>c.id===id?{...c,visible:!c.visible}:c)}));
-  const toggleTrip=id=>mutate(s=>({...s,trips:s.trips.map(t=>t.id===id?{...t,visible:t.visible===false}:t)}));
   const mini={fontFamily:MONO,fontSize:10,fontWeight:700,cursor:"pointer",borderRadius:12,padding:"2px 8px",border:`1px dashed ${C.faint}`,background:"transparent",color:C.gray};
   return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexShrink:0}}>
     <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 12px",cursor:"pointer"}}>
@@ -922,7 +917,12 @@ function DrawerStrip({state,mutate,goAddTrip,goAddCal}){
       {state.calendars.map(c=><Chip key={c.id} on={c.visible!==false} dot={c.color} onClick={()=>toggleCal(c.id)}>{c.name}</Chip>)}
       <button onClick={goAddCal} style={mini} title="add a calendar in Trips & Calendars">+ calendar</button>
       <span style={{width:1,height:14,background:C.line}}/>
-      {state.trips.map(t=><Chip key={t.id} on={t.visible!==false} dot={C.ocean} onClick={()=>toggleTrip(t.id)}>✈ {t.name}</Chip>)}
+      <span style={{fontSize:9.5,color:C.mute}}>drag a trip onto the calendar →</span>
+      {state.trips.map(t=>{const on=t.visible!==false;
+        return <button key={t.id} onPointerDown={e=>{e.preventDefault();onGrabTrip(t,e);}} title="drag onto the calendar to place · click to show/hide"
+          style={{fontFamily:MONO,fontSize:10.5,fontWeight:700,cursor:"grab",borderRadius:20,padding:"3px 9px",touchAction:"none",
+            border:`1px solid ${on?C.ocean:C.line}`,opacity:on?1:0.5,background:on?C.panel:"transparent",color:C.ink,display:"inline-flex",alignItems:"center",gap:5}}>
+          <span style={{width:8,height:8,borderRadius:8,background:C.ocean}}/>✈ {t.name}</button>;})}
       <button onClick={goAddTrip} style={mini} title="add a trip in Trips & Calendars">+ trip</button>
     </div>}
   </div>;
@@ -1106,6 +1106,7 @@ function App(){
   const [lastSite,setLastSite]=useState("boston");
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}});
   const [mobile,setMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width:760px)").matches);
+  const [tripDrag,setTripDrag]=useState(null);   // grabbing a trip from the drawer to place on the calendar
 
   useEffect(()=>{try{localStorage.setItem("perDiemNext",JSON.stringify(state));}catch(e){}},[state]);
   useEffect(()=>{const m=window.matchMedia&&window.matchMedia("(max-width:760px)");if(!m)return;
@@ -1128,7 +1129,7 @@ function App(){
   // drawing a shift over a window replaces the window (no proposed/scheduled mixing)
   const dropWinAt=(s,str)=>s.windows.filter(w=>!(str>=w.from&&str<=w.to));
   const onTap=str=>{
-    if(tool==="window"||tool==="trip")return;   // window/trip tools build via drag, not tap
+    if(tool==="window")return;   // window tool builds via drag, not tap
     if(monthLocked(state,str)){setSelected(str);setSelWid(null);setSelTid(null);const d0=pd(str);setVY([d0.getFullYear(),d0.getMonth()]);return;}   // frozen month
     const ex=state.shifts.find(s=>s.date===str);
     if(tool==="propose"){
@@ -1151,13 +1152,19 @@ function App(){
     mutate(s=>({...s,windows:[...(s.windows||[]),{id,siteId:lastSite,type:"day",from,to,x:clamp(Math.round(span/2),1,span)}]}));
     setSelWid(id);setSelTid(null);setSelected(from);const d=pd(from);setVY([d.getFullYear(),d.getMonth()]);
   },[lastSite]);
-  const onCreateTrip=React.useCallback((from,to)=>{
-    if(from===to){const ex=(state.trips||[]).find(t=>from>=t.from&&from<=t.to);   // tap on an existing trip → select it
-      if(ex){setSelTid(ex.id);setSelWid(null);setSelected(from);return;}}
-    const id="t"+Date.now();
-    mutate(s=>({...s,trips:[...(s.trips||[]),{id,name:"New trip",from,to,loc:"boston",workFactor:"colocate",visible:true}]}));
-    setSelTid(id);setSelWid(null);setSelected(from);const d=pd(from);setVY([d.getFullYear(),d.getMonth()]);
-  },[state.trips]);
+  // grab a trip from the drawer and drop it on a day: sets its start, keeps its duration; edits sync with the tab
+  const placeTrip=(id,from,dur)=>{mutate(s=>({...s,trips:s.trips.map(t=>t.id===id?{...t,from,to:ds(ad(pd(from),Math.max(0,dur))),visible:true}:t)}));
+    setSelTid(id);setSelWid(null);setSelected(from);const d=pd(from);setVY([d.getFullYear(),d.getMonth()]);};
+  const toggleTripVis=id=>mutate(s=>({...s,trips:s.trips.map(t=>t.id===id?{...t,visible:t.visible===false}:t)}));
+  const beginTripDrag=(t,e)=>setTripDrag({id:t.id,name:t.name,dur:Math.round((pd(t.to)-pd(t.from))/864e5),sx:e.clientX,sy:e.clientY,x:e.clientX,y:e.clientY,over:null,moved:false});
+  useEffect(()=>{if(!tripDrag)return;
+    const move=e=>setTripDrag(d=>{if(!d)return d;const el=document.elementFromPoint(e.clientX,e.clientY),hit=el&&el.closest&&el.closest("[data-date]");
+      return {...d,x:e.clientX,y:e.clientY,over:hit?hit.getAttribute("data-date"):null,moved:d.moved||Math.hypot(e.clientX-d.sx,e.clientY-d.sy)>4};});
+    const up=()=>{const d=tripDrag;if(d){if(d.moved&&d.over)placeTrip(d.id,d.over,d.dur);else if(!d.moved)toggleTripVis(d.id);}setTripDrag(null);};
+    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
+    return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[tripDrag]);
+  const placingSet=useMemo(()=>{if(!tripDrag||!tripDrag.moved||!tripDrag.over)return null;
+    const set=new Set();for(let i=0;i<=tripDrag.dur;i++)set.add(ds(ad(pd(tripDrag.over),i)));return set;},[tripDrag]);
   const goAddTrip=()=>{const id="t"+Date.now();mutate(s=>({...s,trips:[...s.trips,{id,name:"New trip",from:selected||TODAY_S,to:selected||TODAY_S,loc:"boston",workFactor:"colocate",visible:true}]}));setTab("setup");};
   const goAddCal=()=>{mutate(s=>({...s,calendars:[...s.calendars,{id:"c"+Date.now(),name:"New calendar",kind:"custom",color:"var(--gray)",visible:true,ranges:[]}]}));setTab("setup");};
   // keep lastSite synced to the selected day's shift / window, so new draws inherit context
@@ -1186,6 +1193,9 @@ function App(){
     {toast&&<div style={{position:"fixed",bottom:mobile?70:18,left:"50%",transform:"translateX(-50%)",zIndex:400,
       background:C.ink,color:C.bg,fontSize:12,fontWeight:600,padding:"8px 14px",borderRadius:6,maxWidth:"90vw",textAlign:"center",
       boxShadow:"0 8px 24px rgba(0,0,0,.25)"}}>{toast}</div>}
+    {tripDrag&&tripDrag.moved&&<div style={{position:"fixed",left:tripDrag.x+12,top:tripDrag.y+12,zIndex:500,pointerEvents:"none",
+      background:C.ocean,color:"#fff",fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:6,boxShadow:"0 6px 18px rgba(0,0,0,.3)"}}>
+      ✈ {tripDrag.name}{tripDrag.over?` → ${MON[pd(tripDrag.over).getMonth()]} ${pd(tripDrag.over).getDate()}`:""}</div>}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
       <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM <span style={{fontSize:10,color:C.mute,fontWeight:700}}>next · stage 1</span></span>
       <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
@@ -1198,7 +1208,7 @@ function App(){
         <input ref={fileRef} type="file" accept=".json,application/json" onChange={importJSON} style={{display:"none"}}/>
       </div>
     </div>
-    <DrawerStrip state={state} mutate={mutate} goAddTrip={goAddTrip} goAddCal={goAddCal}/>
+    <DrawerStrip state={state} mutate={mutate} goAddTrip={goAddTrip} goAddCal={goAddCal} onGrabTrip={beginTripDrag}/>
     {/* tabs */}
     <div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
       {TABS.map(([id,label])=><button key={id} onClick={()=>setTab(id)}
@@ -1213,7 +1223,7 @@ function App(){
         <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
           <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} mutate={mutate} viewY={viewY} viewM={viewM} setView={setView}
             tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
-            winBy={winBy} travelBy={travelBy} onCreateWindow={onCreateWindow} onCreateTrip={onCreateTrip}/>
+            winBy={winBy} travelBy={travelBy} placing={placingSet} onCreateWindow={onCreateWindow}/>
         </div>
         <div style={mobile
           ?{flex:"0 0 auto",maxHeight:"42%",overflow:"auto",borderTop:`1px solid ${C.line}`,background:C.panel}
