@@ -110,6 +110,7 @@ function seedState(){
   const trips=[
     {id:"t1",name:"Santa Fe summer",from:"2026-08-01",to:"2026-08-21",loc:"santa_fe",workFactor:"colocate",visible:true},
     {id:"t2",name:"Montana cabin",  from:"2026-07-04",to:"2026-07-12",loc:"montana", workFactor:"commute", visible:true},
+    {id:"t3",name:"Japan",          from:"2026-09-12",to:"2026-09-26",loc:"boston",  workFactor:"closed",   visible:true},
   ];
   const calendars=[
     {id:"jun",name:"Juni (BISB)",kind:"school",color:"var(--juniper)",visible:true,
@@ -177,6 +178,16 @@ function shiftMissed(shift,state,sIdx){
 }
 const isWorked=sh=>sh.status==="scheduled"&&sh.date<TODAY_S;
 const bucketOf=sh=>sh.status==="proposed"?"proposed":(sh.date<TODAY_S?"worked":"scheduled");
+// worked shifts can carry hand-edited actuals; otherwise fall back to the planned value
+const missedOf=(sh,state,sIdx)=>(isWorked(sh)&&Number.isFinite(sh.actualMissed))?sh.actualMissed:shiftMissed(sh,state,sIdx);
+const payOf=(sh,sIdx)=>(isWorked(sh)&&Number.isFinite(sh.actualPay))?sh.actualPay:shiftPay(sIdx[sh.siteId],sh.type);
+// soft warnings — never block, just flag an odd state in a colour
+function warnOf(sh,state){
+  const trip=(state.trips||[]).find(t=>t.visible!==false&&t.workFactor==="closed"&&sh.date>=t.from&&sh.date<=t.to);
+  if(trip)return "on a closed trip ("+trip.name+")";
+  if(sh.status==="proposed"&&sh.date<TODAY_S)return "proposed but already in the past";
+  return null;
+}
 
 /* year + month aggregates for the banner */
 function aggregate(state,sIdx,viewYM){
@@ -184,7 +195,7 @@ function aggregate(state,sIdx,viewYM){
   const pay=sh=>shiftPay(sIdx[sh.siteId],sh.type);
   // $ — worked uses month overrides where present, else summed past-scheduled pay
   const workedByMonth={};
-  state.shifts.forEach(sh=>{if(isWorked(sh)){const m=mk(sh.date);workedByMonth[m]=(workedByMonth[m]||0)+(sh.actualPay!=null?sh.actualPay:pay(sh));}});
+  state.shifts.forEach(sh=>{if(isWorked(sh)){const m=mk(sh.date);workedByMonth[m]=(workedByMonth[m]||0)+payOf(sh,sIdx);}});
   const months=new Set([...Object.keys(workedByMonth),...Object.keys(state.monthOverrides||{})].filter(m=>m.startsWith(yr)));
   let worked$=0;months.forEach(m=>{const ov=(state.monthOverrides||{})[m];worked$+=(ov!=null?ov:(workedByMonth[m]||0));});
   let scheduled$=0,proposed$=0;
@@ -192,7 +203,7 @@ function aggregate(state,sIdx,viewYM){
     if(b==="scheduled")scheduled$+=pay(sh);else if(b==="proposed")proposed$+=pay(sh);});
   // hours missed — current viewed month only (never annualized)
   const hrs={worked:0,scheduled:0,proposed:0};
-  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;hrs[bucketOf(sh)]+=shiftMissed(sh,state,sIdx);});
+  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;hrs[bucketOf(sh)]+=missedOf(sh,state,sIdx);});
   return {worked$,scheduled$,proposed$,hrs};
 }
 
@@ -267,13 +278,15 @@ function DayCell({str,shift,state,sIdx,selected,today,onTap}){
   if(trip)bg=C.blockTrip;else if(out)bg=C.weekend;
   const cat=shift?shiftCat(sIdx[shift.siteId],shift.type):null;
   const status=shift?bucketOf(shift):null;
+  const warn=shift?warnOf(shift,state):null;
   const day=+str.slice(8,10);
-  return <div onClick={()=>onTap(str)} style={{aspectRatio:"1",border:`1px solid ${selected?C.ink:C.line2}`,
-    borderWidth:selected?2:1,borderRadius:8,background:bg,padding:"4px 5px",cursor:"pointer",position:"relative",
+  const ringCol=selected?C.ink:warn?C.warn:C.line2;
+  return <div onClick={()=>onTap(str)} style={{aspectRatio:"1",border:`1px solid ${ringCol}`,
+    borderWidth:selected||warn?2:1,borderRadius:8,background:bg,padding:"4px 5px",cursor:"pointer",position:"relative",
     display:"flex",flexDirection:"column",overflow:"hidden"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
       <span style={{fontSize:11,fontWeight:today?900:600,color:today?C.ink:C.gray}}>{day}</span>
-      {today&&<span style={{width:5,height:5,borderRadius:5,background:C.danger}}/>}
+      {warn?<span title={warn} style={{fontSize:10,color:C.warn}}>⚠</span>:today&&<span style={{width:5,height:5,borderRadius:5,background:C.danger}}/>}
     </div>
     {shift&&<ShiftPill site={sIdx[shift.siteId]} cat={cat} status={status} co={shift.coLocated}/>}
   </div>;
@@ -309,7 +322,7 @@ function MonthGrid({y,m,state,sIdx,selected,onTap,label}){
   </div>;
 }
 function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo}){
-  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["erase","⌫","Erase"]];
+  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
   const step=n=>{let m=viewM+n,y=viewY;if(m<0){m=11;y--;}if(m>11){m=0;y++;}setView(y,m);};
   return <div style={{display:"flex",flexDirection:"column",minHeight:0,height:"100%"}}>
     {/* tools band */}
@@ -335,7 +348,7 @@ function CalendarSurface({state,sIdx,mobile,viewY,viewM,setView,tool,setTool,sel
 /* ════════ READOUT — the per-day picker/editor ════════ */
 function Readout({state,sIdx,selected,mutate}){
   if(!selected)return <div style={{padding:"16px 14px",color:C.mute,fontSize:12.5}}>
-    Tap a day to read or edit it. <b>Propose</b> tool + tap adds a shift; <b>Erase</b> removes a proposed one.</div>;
+    Tap a day to read or edit it. <b>Propose</b> adds a shift; <b>Schedule</b> commits it (or draws a fresh one); <b>Erase</b> removes a proposed one.</div>;
   const shift=state.shifts.find(s=>s.date===selected);
   const out=schoolOut(selected,state),awake=dayAwakeHours(selected,state),trip=tripOn(selected,state.trips);
   const d=pd(selected);
@@ -358,10 +371,13 @@ function Readout({state,sIdx,selected,mutate}){
     <SitePicker sites={state.sites} value={state.sites[0].id} onPick={(sid,ty)=>addShift(sid,ty)} pickType/>
   </div>;
 
-  const site=sIdx[shift.siteId],cat=shiftCat(site,shift.type),pay=shiftPay(site,shift.type),
-    missed=shiftMissed(shift,state,sIdx),worked=isWorked(shift),remote=site.reach!=="local";
+  const site=sIdx[shift.siteId],cat=shiftCat(site,shift.type),plannedPay=shiftPay(site,shift.type),
+    plannedMissed=shiftMissed(shift,state,sIdx),worked=isWorked(shift),remote=site.reach!=="local",warn=warnOf(shift,state);
   const status=bucketOf(shift);
+  const showPay=worked?payOf(shift,sIdx):plannedPay,showMissed=worked?missedOf(shift,state,sIdx):plannedMissed;
+  const edited=worked&&(Number.isFinite(shift.actualPay)||Number.isFinite(shift.actualMissed));
   return <div style={{padding:"14px"}}>{head}
+    {warn&&<div style={{fontSize:11.5,fontWeight:700,color:C.warn,marginBottom:9,display:"flex",alignItems:"center",gap:5}}>⚠ {warn}</div>}
     <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
       <div style={{flex:"1 1 280px"}}>
         <Field label="Site"><select style={inp} value={shift.siteId} onChange={e=>setShift({siteId:e.target.value})}>
@@ -378,10 +394,19 @@ function Readout({state,sIdx,selected,mutate}){
         {remote&&<label style={{display:"flex",alignItems:"center",gap:7,fontSize:12,marginTop:2,cursor:"pointer"}}>
           <input type="checkbox" checked={!!shift.coLocated} onChange={e=>setShift({coLocated:e.target.checked})}/>
           Co-located — kids are here, no hours missed</label>}
+        {worked&&<div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.line2}`}}>
+          <div style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:6}}>Actuals — what really happened</div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+            <label style={{fontSize:11}}>earned $<br/><input type="number" style={{...inp,width:96}} value={Math.round(showPay)}
+              onChange={e=>setShift({actualPay:e.target.value===""?undefined:+e.target.value})}/></label>
+            <label style={{fontSize:11}}>hours missed<br/><input type="number" step="0.5" style={{...inp,width:96}} value={showMissed}
+              onChange={e=>setShift({actualMissed:e.target.value===""?undefined:+e.target.value})}/></label>
+            {edited&&<Btn small onClick={()=>setShift({actualPay:undefined,actualMissed:undefined})}>reset to planned</Btn>}
+          </div></div>}
       </div>
       <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
-        <Stat label="Earns" value={fmt$(pay)} accent={C.juniper}/>
-        <Stat label="Hours missed" value={shift.coLocated?"0h":fmtH(missed)} accent={missed>0&&!shift.coLocated?C.danger:C.gray}/>
+        <Stat label={worked?"Earned":"Earns"} value={fmt$(showPay)} sub={edited&&Number.isFinite(shift.actualPay)?"actual":null} accent={C.juniper}/>
+        <Stat label="Hours missed" value={shift.coLocated?"0h":fmtH(showMissed)} sub={edited&&Number.isFinite(shift.actualMissed)?"actual":null} accent={showMissed>0&&!shift.coLocated?C.danger:C.gray}/>
         <Btn small onClick={del}>Delete</Btn>
       </div>
     </div>
@@ -491,11 +516,14 @@ function App(){
   const agg=useMemo(()=>aggregate(state,sIdx,viewYM),[state,sIdx,viewYM]);
 
   const onTap=str=>{
+    const ex=state.shifts.find(s=>s.date===str);
     if(tool==="propose"){
-      const ex=state.shifts.find(s=>s.date===str);
       if(!ex)mutate(s=>({...s,shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"proposed",coLocated:false}]}));
+    }else if(tool==="schedule"){
+      // draw-to-schedule: replaces a proposed shift in place, or drops a fresh scheduled one
+      if(ex)mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===ex.id?{...x,status:"scheduled"}:x)}));
+      else mutate(s=>({...s,shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"scheduled",coLocated:false}]}));
     }else if(tool==="erase"){
-      const ex=state.shifts.find(s=>s.date===str);
       if(ex&&ex.status==="proposed")mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));   // erase = proposed-only
     }
     setSelected(str);
