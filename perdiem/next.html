@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1C1917">
+<meta name="description" content="Per Diem — draw proposed shifts, schedule them, see the family cost.">
+<title>Per Diem · next</title>
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" as="script">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none;}
+  input,textarea,select{user-select:text;-webkit-user-select:text;font-family:inherit;}
+  html,body,#root{height:100%;}
+  :root{
+    --bg:#F7F6F4;--panel:#FFFFFF;--panel2:#FBFAF8;--ink:#1C1A18;--gray:#6B6660;--mute:#A6A09A;
+    --line:#E6E3E0;--line2:#EFEDEA;--faint:#D5D1CD;
+    --juniper:#3E7D63;--ocean:#356C88;--danger:#9E5C46;
+    --weekend:#F1EFEC;--sel:#EFEAE1;--block-trip:#E6EEF3;--block-fam:#E6F0E9;
+    --warn:#B07A4E;--bar:#C7C1B9;
+  }
+  :root[data-theme="dark"]{
+    --bg:#141310;--panel:#221F1B;--panel2:#1A1714;--ink:#F0ECE6;--gray:#B2ABA1;--mute:#7E776C;
+    --line:#4A4239;--line2:#373028;--faint:#5A5147;
+    --juniper:#7CC79C;--ocean:#6FB6D6;--danger:#E0AFA3;
+    --weekend:#1B1916;--sel:#332D25;--block-trip:#1F3039;--block-fam:#21342B;
+    --warn:#E0AFA3;--bar:#6C6358;
+  }
+  body{overflow:hidden;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;}
+  #loader{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;background:var(--bg);font-family:'SF Mono','JetBrains Mono',monospace;}
+  #loader span{font-size:13px;font-weight:600;color:var(--gray);}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--faint);border-radius:4px;}
+</style>
+<script>
+  (function(){try{var t=localStorage.getItem('perDiemTheme')||'system';
+    var d=t==='dark'||(t==='system'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme',d?'dark':'light');}catch(e){}})();
+</script>
+</head>
+<body>
+<div id="root"><div id="loader"><span>PER DIEM · next</span></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const {useState,useMemo,useRef,useEffect}=React;
+
+/* ════════════════════════════════════════════════════════════
+   PER DIEM — redesign, Stage 1: Frame + readout + kid engine.
+   Draw-first surface. State axis: Proposed → Scheduled → Worked.
+   The calendar is the work surface; the readout below it is the
+   per-day picker/editor. Hours-missed comes from one engine wired
+   to Wake / Bed / School-Start / School-End.
+   ════════════════════════════════════════════════════════════ */
+
+const V=k=>`var(--${k})`;
+const C={ink:V("ink"),bg:V("bg"),panel:V("panel"),panel2:V("panel2"),line:V("line"),line2:V("line2"),
+  gray:V("gray"),mute:V("mute"),faint:V("faint"),ocean:V("ocean"),juniper:V("juniper"),danger:V("danger"),
+  weekend:V("weekend"),sel:V("sel"),blockTrip:V("block-trip"),blockFam:V("block-fam"),warn:V("warn"),bar:V("bar")};
+const MONO="'SF Mono','JetBrains Mono','Fira Code',ui-monospace,monospace";
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONL=["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+const TODAY=new Date(2026,5,17);   // ctx: 2026-06-17
+const TODAY_S=`2026-06-17`;
+const YEAR=2026;
+
+/* ─── dates ─── */
+const ds=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const pd=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
+const ad=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r;};
+const mk=s=>s.slice(0,7);                         // month key YYYY-MM
+const fmt$=v=>"$"+Math.round(v).toLocaleString();
+const fmtK=v=>"$"+(Math.round(v/100)/10).toLocaleString()+"k";
+const fmtH=v=>(Math.round(v*10)/10)+"h";
+const parseHM=t=>{const m=/^(\d{1,2}):(\d{2})$/.exec(String(t||""));return m?Math.min(24,(+m[1])+(+m[2])/60):0;};
+const hm=h=>`${String(Math.floor(h)).padStart(2,"0")}:${String(Math.round((h%1)*60)).padStart(2,"0")}`;
+const ovl=(a,b,c,d)=>Math.max(0,Math.min(b,d)-Math.max(a,c));   // overlap of [a,b] & [c,d]
+const clamp=(x,lo,hi)=>Math.max(lo,Math.min(hi,x));
+
+/* ─── shift catalog: a shift is (start, duration); night = overnight start ─── */
+const SHIFTS=[
+  {id:"d7", start:"07:00",hours:8, night:false,label:"7a · 8h"},
+  {id:"d6", start:"06:00",hours:8, night:false,label:"6a · 8h"},
+  {id:"D7", start:"07:00",hours:12,night:false,label:"7a · 12h"},
+  {id:"n22",start:"22:00",hours:8, night:true, label:"10p · 8h"},
+  {id:"n23",start:"23:00",hours:8, night:true, label:"11p · 8h"},
+  {id:"N19",start:"19:00",hours:12,night:true, label:"7p · 12h"},
+];
+const SHIFT_BY=Object.fromEntries(SHIFTS.map(s=>[s.id,s]));
+const REACH_LABEL={local:"local",nm:"NM",rural_nm:"rural NM"};
+// per-reach default travel bracket: days out before / back after the shift block
+const TRAVEL_DEFAULT={
+  local:   {beforeDays:0,departTime:"06:00",afterDays:0,returnTime:"20:00"},
+  nm:      {beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"22:00"},
+  rural_nm:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"},
+};
+
+/* ════════ SEED ════════ */
+function seedState(){
+  const sites=[
+    {id:"boston",  name:"Boston ED",     reach:"local",   menu:[{shift:"d7",rate:245},{shift:"n22",rate:290}], travel:TRAVEL_DEFAULT.local},
+    {id:"santa_fe",name:"Santa Fe ED",   reach:"nm",      menu:[{shift:"d7",rate:170},{shift:"N19",rate:210}], travel:{beforeDays:1,departTime:"16:00",afterDays:0,returnTime:"22:00"}},
+    {id:"abq",     name:"Albuquerque ED",reach:"nm",      menu:[{shift:"d7",rate:285},{shift:"n23",rate:305}], travel:{beforeDays:1,departTime:"15:00",afterDays:0,returnTime:"21:00"}},
+    {id:"gallup",  name:"Silver City ED",reach:"rural_nm",menu:[{shift:"D7",rate:300},{shift:"N19",rate:335}], travel:{beforeDays:1,departTime:"11:00",afterDays:1,returnTime:"13:00"}},
+  ];
+  const trips=[
+    {id:"t1",name:"Santa Fe summer",from:"2026-08-01",to:"2026-08-21",loc:"santa_fe",workFactor:"colocate",visible:true},
+    {id:"t2",name:"Montana cabin",  from:"2026-07-04",to:"2026-07-12",loc:"montana", workFactor:"commute", visible:true},
+  ];
+  const calendars=[
+    {id:"jun",name:"Juni (BISB)",kind:"school",color:"var(--juniper)",visible:true,
+     ranges:[{from:"2026-06-18",to:"2026-08-23",label:"Summer"},{from:"2026-11-25",to:"2026-11-27",label:"Thanksgiving"},
+       {from:"2026-12-21",to:"2027-01-03",label:"Winter Break"}]},
+    {id:"oce",name:"Ocean (SolBe)",kind:"school",color:"var(--ocean)",visible:true,
+     ranges:[{from:"2026-08-22",to:"2026-08-31",label:"Between schools"}]},
+    {id:"hol",name:"Holidays",kind:"holiday",color:"var(--ink)",visible:true,
+     ranges:[{from:"2026-07-04",to:"2026-07-04",label:"July 4"},{from:"2026-09-07",to:"2026-09-07",label:"Labor Day"},
+       {from:"2026-11-26",to:"2026-11-26",label:"Thanksgiving"},{from:"2026-12-25",to:"2026-12-25",label:"Christmas"}]},
+  ];
+  // Lydia's real S-PHY shifts → Boston, scheduled. Past ones read as worked.
+  const LYDIA=[["2026-06-03","day"],["2026-06-05","day"],["2026-06-06","day"],["2026-06-09","day"],
+    ["2026-06-13","day"],["2026-06-15","day"],["2026-06-16","day"],["2026-06-23","night"],["2026-06-24","night"],
+    ["2026-06-27","day"],["2026-06-30","day"],["2026-07-07","day"],["2026-07-08","day"],["2026-07-30","day"]];
+  let n=0;
+  const shifts=LYDIA.map(([date,t])=>({id:"L"+(++n),date,siteId:"boston",type:t,status:"scheduled",coLocated:false}));
+  // a couple of proposed shifts at travel sites, to show the readout's reach/co-location affordances
+  shifts.push({id:"P1",date:"2026-07-14",siteId:"abq",   type:"day",  status:"proposed",coLocated:false});
+  shifts.push({id:"P2",date:"2026-07-15",siteId:"abq",   type:"day",  status:"proposed",coLocated:false});
+  shifts.push({id:"P3",date:"2026-08-12",siteId:"santa_fe",type:"day",status:"proposed",coLocated:false});
+  // 2026 catch-up: per-month earned override for the pre-app months
+  const monthOverrides={"2026-01":7600,"2026-02":9200,"2026-03":12400,"2026-04":10800,"2026-05":8800};
+  const settings={wake:"07:00",bed:"20:00",schoolStart:"08:00",schoolEnd:"15:00",goal:220000};
+  return {sites,trips,calendars,shifts,monthOverrides,settings};
+}
+
+/* ════════ ENGINE ════════ */
+const siteIndex=sites=>Object.fromEntries(sites.map(s=>[s.id,s]));
+function resolveEntry(site,type){
+  const menu=site.menu||[];
+  if(type==="day")  return menu.find(e=>!SHIFT_BY[e.shift].night)||menu[0];
+  if(type==="night")return menu.find(e=> SHIFT_BY[e.shift].night)||menu[0];
+  return menu.find(e=>e.shift===type)||menu[0];
+}
+const shiftCat=(site,type)=>SHIFT_BY[resolveEntry(site,type).shift].night?"night":"day";
+function shiftInterval(site,type){            // [startHour, endHour] within the day
+  const e=resolveEntry(site,type),sh=SHIFT_BY[e.shift]||SHIFT_BY.d7,start=parseHM(sh.start);
+  return [start,start+sh.hours];
+}
+function shiftPay(site,type){const e=resolveEntry(site,type),sh=SHIFT_BY[e.shift]||SHIFT_BY.d7;return e.rate*sh.hours;}
+
+const isWeekend=str=>{const g=pd(str).getDay();return g===0||g===6;};
+const calCovers=(cal,str)=>(cal.ranges||[]).some(r=>str>=r.from&&str<=r.to);
+function schoolOut(str,state){     // kids home all day: weekend, holiday, or a school-calendar break
+  if(isWeekend(str))return true;
+  return (state.calendars||[]).some(c=>c.visible!==false&&(c.kind==="school"||c.kind==="holiday")&&calCovers(c,str));
+}
+// kid-home-&-awake intervals for a date, from settings
+function homeAwake(str,state){
+  const s=state.settings,wake=parseHM(s.wake),bed=parseHM(s.bed);
+  if(bed<=wake)return [];
+  if(schoolOut(str,state))return [[wake,bed]];
+  const ss=clamp(parseHM(s.schoolStart),wake,bed),se=clamp(parseHM(s.schoolEnd),ss,bed);
+  return [[wake,ss],[se,bed]].filter(([a,b])=>b>a);
+}
+const dayAwakeHours=(str,state)=>homeAwake(str,state).reduce((t,[a,b])=>t+(b-a),0);
+// hours a single shift misses: its interval ∩ the kid-home-awake band (0 if co-located)
+function shiftMissed(shift,state,sIdx){
+  const site=sIdx[shift.siteId];if(!site)return 0;
+  if(shift.coLocated)return 0;
+  const [a,b]=shiftInterval(site,shift.type),aw=homeAwake(shift.date,state);
+  let t=0;for(const [x,y] of aw)t+=ovl(a,Math.min(b,24),x,y);
+  return Math.round(t*10)/10;
+}
+const isWorked=sh=>sh.status==="scheduled"&&sh.date<TODAY_S;
+const bucketOf=sh=>sh.status==="proposed"?"proposed":(sh.date<TODAY_S?"worked":"scheduled");
+
+/* year + month aggregates for the banner */
+function aggregate(state,sIdx,viewYM){
+  const yr=String(YEAR);
+  const pay=sh=>shiftPay(sIdx[sh.siteId],sh.type);
+  // $ — worked uses month overrides where present, else summed past-scheduled pay
+  const workedByMonth={};
+  state.shifts.forEach(sh=>{if(isWorked(sh)){const m=mk(sh.date);workedByMonth[m]=(workedByMonth[m]||0)+(sh.actualPay!=null?sh.actualPay:pay(sh));}});
+  const months=new Set([...Object.keys(workedByMonth),...Object.keys(state.monthOverrides||{})].filter(m=>m.startsWith(yr)));
+  let worked$=0;months.forEach(m=>{const ov=(state.monthOverrides||{})[m];worked$+=(ov!=null?ov:(workedByMonth[m]||0));});
+  let scheduled$=0,proposed$=0;
+  state.shifts.forEach(sh=>{if(!sh.date.startsWith(yr))return;const b=bucketOf(sh);
+    if(b==="scheduled")scheduled$+=pay(sh);else if(b==="proposed")proposed$+=pay(sh);});
+  // hours missed — current viewed month only (never annualized)
+  const hrs={worked:0,scheduled:0,proposed:0};
+  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;hrs[bucketOf(sh)]+=shiftMissed(sh,state,sIdx);});
+  return {worked$,scheduled$,proposed$,hrs};
+}
+
+/* ════════ persistence + sanitize (light) ════════ */
+function load(){
+  try{const s=localStorage.getItem("perDiemNext");if(s){const o=JSON.parse(s);if(o&&o.shifts&&o.sites&&o.settings)return o;}}catch(e){}
+  return seedState();
+}
+
+/* ════════ small UI atoms ════════ */
+const Btn=({children,onClick,kind,on,small,disabled,title})=>{
+  const base={fontFamily:MONO,fontWeight:700,cursor:disabled?"default":"pointer",borderRadius:6,
+    fontSize:small?11:12.5,padding:small?"4px 8px":"6px 11px",letterSpacing:"-0.01em",
+    border:`1px solid ${on?C.ink:C.line}`,opacity:disabled?0.4:1,
+    background:on?C.ink:(kind==="prim"?C.ink:C.panel),color:on?C.bg:(kind==="prim"?C.bg:C.ink)};
+  return <button title={title} style={base} disabled={disabled} onClick={disabled?undefined:onClick}>{children}</button>;
+};
+const Chip=({children,on,onClick,dot})=> <button onClick={onClick} style={{fontFamily:MONO,fontSize:10.5,fontWeight:700,
+  cursor:"pointer",borderRadius:20,padding:"3px 9px",border:`1px solid ${on?C.ink:C.line}`,opacity:on?1:0.5,
+  background:on?C.panel:"transparent",color:C.ink,display:"inline-flex",alignItems:"center",gap:5}}>
+  {dot&&<span style={{width:8,height:8,borderRadius:8,background:dot}}/>}{children}</button>;
+const Field=({label,children})=> <label style={{display:"block",marginBottom:9}}>
+  <div style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:3}}>{label}</div>
+  {children}</label>;
+const inp={fontFamily:MONO,fontSize:13,padding:"6px 8px",border:`1px solid ${C.line}`,borderRadius:6,background:C.panel,color:C.ink,width:"100%"};
+const Stat=({label,value,sub,accent})=> <div style={{minWidth:78}}>
+  <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute}}>{label}</div>
+  <div style={{fontSize:16,fontWeight:800,color:accent||C.ink,letterSpacing:"-0.02em",fontVariantNumeric:"tabular-nums"}}>{value}</div>
+  {sub&&<div style={{fontSize:10,color:C.gray}}>{sub}</div>}</div>;
+
+/* ════════ BANNER — Worked / Scheduled / Proposed × $ / hours ════════ */
+function Banner({agg,goal,viewYM,mobile}){
+  const projected=agg.worked$+agg.scheduled$;
+  const pct=goal>0?clamp(projected/goal,0,1):0;
+  const wpct=goal>0?clamp(agg.worked$/goal,0,1):0;
+  const my=MON[+viewYM.slice(5,7)-1];
+  return <div style={{borderBottom:`1px solid ${C.line}`,background:C.panel,padding:"9px 14px",flexShrink:0}}>
+    <div style={{display:"flex",gap:mobile?14:22,flexWrap:"wrap",alignItems:"flex-end"}}>
+      <Stat label="Worked $" value={fmtK(agg.worked$)} sub={`${YEAR} to date`}/>
+      <Stat label="Scheduled $" value={fmtK(agg.scheduled$)} sub="committed ahead" accent={C.ink}/>
+      <Stat label="Proposed $" value={fmtK(agg.proposed$)} sub="if it lands" accent={C.ocean}/>
+      <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
+      <Stat label={`Missed · ${my}`} value={fmtH(agg.hrs.worked)} sub="worked"/>
+      <Stat label="·" value={fmtH(agg.hrs.scheduled)} sub="scheduled"/>
+      <Stat label="·" value={fmtH(agg.hrs.proposed)} sub="proposed" accent={C.ocean}/>
+      <div style={{flex:1,minWidth:160}}>
+        <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:3}}>
+          Goal {fmtK(goal)} · projected {fmtK(projected)}</div>
+        <div style={{height:8,borderRadius:5,background:C.line2,position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",inset:0,width:`${pct*100}%`,background:C.bar}}/>
+          <div style={{position:"absolute",inset:0,width:`${wpct*100}%`,background:C.juniper}}/>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+/* ════════ CALENDAR work surface ════════ */
+function monthCells(y,m){
+  const lead=new Date(y,m,1).getDay(),dim=new Date(y,m+1,0).getDate(),cells=[];
+  for(let i=0;i<lead;i++)cells.push(null);
+  for(let d=1;d<=dim;d++)cells.push(ds(new Date(y,m,d)));
+  while(cells.length%7)cells.push(null);
+  return cells;
+}
+function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to);}
+
+function DayCell({str,shift,state,sIdx,selected,today,onTap}){
+  if(!str)return <div style={{aspectRatio:"1"}}/>;
+  const out=schoolOut(str,state),trip=tripOn(str,state.trips);
+  let bg=C.panel;
+  if(trip)bg=C.blockTrip;else if(out)bg=C.weekend;
+  const cat=shift?shiftCat(sIdx[shift.siteId],shift.type):null;
+  const status=shift?bucketOf(shift):null;
+  const day=+str.slice(8,10);
+  return <div onClick={()=>onTap(str)} style={{aspectRatio:"1",border:`1px solid ${selected?C.ink:C.line2}`,
+    borderWidth:selected?2:1,borderRadius:8,background:bg,padding:"4px 5px",cursor:"pointer",position:"relative",
+    display:"flex",flexDirection:"column",overflow:"hidden"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <span style={{fontSize:11,fontWeight:today?900:600,color:today?C.ink:C.gray}}>{day}</span>
+      {today&&<span style={{width:5,height:5,borderRadius:5,background:C.danger}}/>}
+    </div>
+    {shift&&<ShiftPill site={sIdx[shift.siteId]} cat={cat} status={status} co={shift.coLocated}/>}
+  </div>;
+}
+function ShiftPill({site,cat,status,co}){
+  const filled=status!=="proposed";
+  const col=status==="proposed"?C.ocean:status==="worked"?C.gray:C.ink;
+  const code=(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
+  return <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:3,
+    fontSize:9.5,fontWeight:800,padding:"2px 4px",borderRadius:5,
+    border:`1.5px ${status==="proposed"?"dashed":"solid"} ${col}`,
+    background:filled?col:"transparent",color:filled?C.bg:col,overflow:"hidden",whiteSpace:"nowrap"}}>
+    <span>{code}</span><span style={{opacity:0.85}}>{cat==="night"?"N":"D"}</span>
+    {status==="worked"&&<span>✓</span>}{co&&<span title="co-located">⌂</span>}
+  </div>;
+}
+
+function CalendarSurface({state,sIdx,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo}){
+  const cells=monthCells(viewY,viewM);
+  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["erase","⌫","Erase"]];
+  const step=n=>{let m=viewM+n,y=viewY;if(m<0){m=11;y--;}if(m>11){m=0;y++;}setView(y,m);};
+  return <div style={{display:"flex",flexDirection:"column",minHeight:0}}>
+    {/* tools band */}
+    <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexWrap:"wrap"}}>
+      {tools.map(([id,ic,lab])=><Btn key={id} small on={tool===id} onClick={()=>setTool(id)}>{ic} {lab}</Btn>)}
+      <span style={{width:1,height:18,background:C.line}}/>
+      <Btn small disabled={!canUndo} onClick={onUndo}>↶ Undo</Btn>
+      <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+        <Btn small onClick={()=>step(-1)}>‹</Btn>
+        <span style={{fontSize:13,fontWeight:800,minWidth:108,textAlign:"center"}}>{MONL[viewM]} {viewY}</span>
+        <Btn small onClick={()=>step(1)}>›</Btn>
+      </div>
+    </div>
+    {/* grid */}
+    <div style={{padding:"8px 12px",overflow:"auto"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
+        {DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+        {cells.map((str,i)=>{
+          const shift=str?state.shifts.find(s=>s.date===str):null;
+          return <DayCell key={i} str={str} shift={shift} state={state} sIdx={sIdx}
+            selected={str&&str===selected} today={str===TODAY_S} onTap={onTap}/>;
+        })}
+      </div>
+    </div>
+  </div>;
+}
+
+/* ════════ READOUT — the per-day picker/editor ════════ */
+function Readout({state,sIdx,selected,mutate}){
+  if(!selected)return <div style={{padding:"16px 14px",color:C.mute,fontSize:12.5}}>
+    Tap a day to read or edit it. <b>Propose</b> tool + tap adds a shift; <b>Erase</b> removes a proposed one.</div>;
+  const shift=state.shifts.find(s=>s.date===selected);
+  const out=schoolOut(selected,state),awake=dayAwakeHours(selected,state),trip=tripOn(selected,state.trips);
+  const d=pd(selected);
+  const dayLabel=`${DOW[d.getDay()]} ${MON[d.getMonth()]} ${d.getDate()}`;
+  const setShift=patch=>mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===shift.id?{...x,...patch}:x)}));
+  const addShift=(siteId,type)=>mutate(s=>({...s,shifts:[...s.shifts.filter(x=>x.date!==selected),
+    {id:"s"+Date.now(),date:selected,siteId,type,status:"proposed",coLocated:false}]}));
+  const del=()=>mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==shift.id)}));
+
+  const head=<div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:10}}>
+    <span style={{fontSize:15,fontWeight:800}}>{dayLabel}</span>
+    <span style={{fontSize:10.5,fontWeight:700,color:out?C.juniper:C.gray,border:`1px solid ${C.line}`,borderRadius:12,padding:"1px 8px"}}>
+      {out?"kids home all day":"school day"}</span>
+    <span style={{fontSize:11,color:C.gray}}>kids home & awake <b style={{color:C.ink}}>{fmtH(awake)}</b></span>
+    {trip&&<span style={{fontSize:10.5,color:C.ocean}}>✈ {trip.name} ({trip.workFactor})</span>}
+  </div>;
+
+  if(!shift)return <div style={{padding:"14px"}}>{head}
+    <div style={{fontSize:11.5,color:C.gray,marginBottom:8}}>No shift here. Add one:</div>
+    <SitePicker sites={state.sites} value={state.sites[0].id} onPick={(sid,ty)=>addShift(sid,ty)} pickType/>
+  </div>;
+
+  const site=sIdx[shift.siteId],cat=shiftCat(site,shift.type),pay=shiftPay(site,shift.type),
+    missed=shiftMissed(shift,state,sIdx),worked=isWorked(shift),remote=site.reach!=="local";
+  const status=bucketOf(shift);
+  return <div style={{padding:"14px"}}>{head}
+    <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
+      <div style={{flex:"1 1 280px"}}>
+        <Field label="Site"><select style={inp} value={shift.siteId} onChange={e=>setShift({siteId:e.target.value})}>
+          {state.sites.map(s=><option key={s.id} value={s.id}>{s.name} · {REACH_LABEL[s.reach]}</option>)}</select></Field>
+        <Field label="Shift"><div style={{display:"flex",gap:6}}>
+          {["day","night"].map(t=><Btn key={t} on={cat===t} onClick={()=>setShift({type:t})}>{t==="day"?"Day":"Night"}</Btn>)}
+          <span style={{alignSelf:"center",fontSize:11,color:C.mute}}>{SHIFT_BY[resolveEntry(site,shift.type).shift].label}</span>
+        </div></Field>
+        <Field label="Status"><div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <Btn on={status==="proposed"} onClick={()=>setShift({status:"proposed"})}>Proposed</Btn>
+          <Btn on={status!=="proposed"} onClick={()=>setShift({status:"scheduled"})}>Scheduled</Btn>
+          {worked&&<span style={{fontSize:10.5,fontWeight:800,color:C.gray}}>✓ worked (past)</span>}
+        </div></Field>
+        {remote&&<label style={{display:"flex",alignItems:"center",gap:7,fontSize:12,marginTop:2,cursor:"pointer"}}>
+          <input type="checkbox" checked={!!shift.coLocated} onChange={e=>setShift({coLocated:e.target.checked})}/>
+          Co-located — kids are here, no hours missed</label>}
+      </div>
+      <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
+        <Stat label="Earns" value={fmt$(pay)} accent={C.juniper}/>
+        <Stat label="Hours missed" value={shift.coLocated?"0h":fmtH(missed)} accent={missed>0&&!shift.coLocated?C.danger:C.gray}/>
+        <Btn small onClick={del}>Delete</Btn>
+      </div>
+    </div>
+  </div>;
+}
+function SitePicker({sites,value,onPick,pickType}){
+  const [sid,setSid]=useState(value),[ty,setTy]=useState("day");
+  return <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
+    <div style={{flex:"1 1 200px"}}><Field label="Site"><select style={inp} value={sid} onChange={e=>setSid(e.target.value)}>
+      {sites.map(s=><option key={s.id} value={s.id}>{s.name} · {REACH_LABEL[s.reach]}</option>)}</select></Field></div>
+    {pickType&&<div style={{display:"flex",gap:6,marginBottom:9}}>
+      {["day","night"].map(t=><Btn key={t} on={ty===t} onClick={()=>setTy(t)}>{t==="day"?"Day":"Night"}</Btn>)}</div>}
+    <Btn kind="prim" small onClick={()=>onPick(sid,ty)} title="add proposed shift">+ Propose</Btn>
+  </div>;
+}
+
+/* ════════ DRAWER — calendars + trips visibility ════════ */
+function DrawerStrip({state,mutate}){
+  const [open,setOpen]=useState(false);
+  const toggleCal=id=>mutate(s=>({...s,calendars:s.calendars.map(c=>c.id===id?{...c,visible:!c.visible}:c)}));
+  const toggleTrip=id=>mutate(s=>({...s,trips:s.trips.map(t=>t.id===id?{...t,visible:t.visible===false}:t)}));
+  return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,flexShrink:0}}>
+    <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 12px",cursor:"pointer"}}>
+      <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute}}>
+        {open?"▾":"▸"} Calendars & trips</span>
+      {!open&&<span style={{fontSize:10.5,color:C.gray}}>
+        {state.calendars.filter(c=>c.visible!==false).length} cal · {state.trips.filter(t=>t.visible!==false).length} trips shown</span>}
+    </div>
+    {open&&<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"2px 12px 9px"}}>
+      {state.calendars.map(c=><Chip key={c.id} on={c.visible!==false} dot={c.color} onClick={()=>toggleCal(c.id)}>{c.name}</Chip>)}
+      {state.trips.map(t=><Chip key={t.id} on={t.visible!==false} dot={C.ocean} onClick={()=>toggleTrip(t.id)}>✈ {t.name}</Chip>)}
+    </div>}
+  </div>;
+}
+
+/* ════════ SETUP TABS ════════ */
+function TripsCalsTab({state,mutate}){
+  const s=state.settings;
+  const setS=patch=>mutate(x=>({...x,settings:{...x.settings,...patch}}));
+  const T=({label,k})=><Field label={label}><input type="time" style={inp} value={s[k]} onChange={e=>setS({[k]:e.target.value})}/></Field>;
+  return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:720}}>
+    <h3 style={{fontSize:13,fontWeight:800,marginBottom:10}}>Family day</h3>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10}}>
+      <T label="Wake up" k="wake"/><T label="School start" k="schoolStart"/><T label="School end" k="schoolEnd"/><T label="Bed time" k="bed"/>
+    </div>
+    <div style={{fontSize:11,color:C.gray,margin:"4px 0 18px"}}>
+      Hours missed = a shift's overlap with the time kids are home and awake. On school days that's before {s.schoolStart} and after {s.schoolEnd}; on days off, the whole {s.wake}–{s.bed} window.</div>
+    <h3 style={{fontSize:13,fontWeight:800,marginBottom:10}}>Earnings goal</h3>
+    <Field label={`${YEAR} total money earned`}><input type="number" style={{...inp,maxWidth:200}} value={s.goal} onChange={e=>setS({goal:+e.target.value||0})}/></Field>
+    <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>Calendars</h3>
+    {state.calendars.map(c=><div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${C.line2}`}}>
+      <span style={{width:9,height:9,borderRadius:9,background:c.color}}/>
+      <b style={{fontSize:12.5}}>{c.name}</b><span style={{fontSize:10.5,color:C.mute}}>{c.kind} · {(c.ranges||[]).length} ranges</span>
+      <span style={{marginLeft:"auto"}}><Chip on={c.visible!==false} onClick={()=>mutate(st=>({...st,calendars:st.calendars.map(x=>x.id===c.id?{...x,visible:!(x.visible!==false)}:x)}))}>{c.visible!==false?"shown":"hidden"}</Chip></span>
+    </div>)}
+    <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>Trips</h3>
+    {state.trips.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${C.line2}`}}>
+      <b style={{fontSize:12.5}}>✈ {t.name}</b><span style={{fontSize:10.5,color:C.mute}}>{t.from} → {t.to} · {t.workFactor}</span>
+      <span style={{marginLeft:"auto"}}><Chip on={t.visible!==false} onClick={()=>mutate(st=>({...st,trips:st.trips.map(x=>x.id===t.id?{...x,visible:!(x.visible!==false)}:x)}))}>{t.visible!==false?"shown":"hidden"}</Chip></span>
+    </div>)}
+  </div>;
+}
+function SitesTab({state,mutate}){
+  const setRate=(sid,shift,rate)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,menu:x.menu.map(m=>m.shift===shift?{...m,rate}:m)})}));
+  return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:720}}>
+    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>Site setup is mostly unchanged from today — rates shown here; full editor comes back later.</div>
+    {state.sites.map(s=><div key={s.id} style={{padding:"10px 0",borderBottom:`1px solid ${C.line2}`}}>
+      <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6}}>
+        <b style={{fontSize:13.5}}>{s.name}</b><span style={{fontSize:10.5,color:C.mute}}>{REACH_LABEL[s.reach]}</span></div>
+      <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>{s.menu.map(m=>{const sh=SHIFT_BY[m.shift];
+        return <label key={m.shift} style={{fontSize:11.5}}>
+          <span style={{color:C.gray}}>{sh.night?"Night":"Day"} ({sh.label}) $/hr </span>
+          <input type="number" value={m.rate} onChange={e=>setRate(s.id,m.shift,+e.target.value||0)}
+            style={{...inp,width:76,display:"inline-block",padding:"3px 6px"}}/>
+          <span style={{color:C.mute}}> = {fmt$(m.rate*sh.hours)}/shift</span></label>;})}</div>
+    </div>)}
+  </div>;
+}
+
+/* ════════ APP ════════ */
+function App(){
+  const [state,setState]=useState(load);
+  const past=useRef([]);
+  const [canUndo,setCanUndo]=useState(false);
+  const [tab,setTab]=useState("calendar");
+  const [tool,setTool]=useState("select");
+  const [selected,setSelected]=useState(TODAY_S);
+  const [[viewY,viewM],setVY]=useState([2026,5]);
+  const [lastSite,setLastSite]=useState("boston");
+  const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}});
+  const [mobile,setMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width:760px)").matches);
+
+  useEffect(()=>{try{localStorage.setItem("perDiemNext",JSON.stringify(state));}catch(e){}},[state]);
+  useEffect(()=>{const m=window.matchMedia&&window.matchMedia("(max-width:760px)");if(!m)return;
+    const h=()=>setMobile(m.matches);m.addEventListener&&m.addEventListener("change",h);return ()=>m.removeEventListener&&m.removeEventListener("change",h);},[]);
+  useEffect(()=>{const mq=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)");
+    const apply=()=>{const eff=theme==="system"?((mq&&mq.matches)?"dark":"light"):theme;document.documentElement.setAttribute("data-theme",eff);};
+    apply();try{localStorage.setItem("perDiemTheme",theme);}catch(e){}
+    if(theme==="system"&&mq&&mq.addEventListener){mq.addEventListener("change",apply);return ()=>mq.removeEventListener("change",apply);}},[theme]);
+
+  const mutate=updater=>setState(s=>{past.current.push(s);if(past.current.length>50)past.current.shift();setCanUndo(true);return updater(s);});
+  const undo=()=>{if(!past.current.length)return;const prev=past.current.pop();setCanUndo(past.current.length>0);setState(prev);};
+  const setView=(y,m)=>setVY([y,m]);
+
+  const sIdx=useMemo(()=>siteIndex(state.sites),[state.sites]);
+  const viewYM=`${viewY}-${String(viewM+1).padStart(2,"0")}`;
+  const agg=useMemo(()=>aggregate(state,sIdx,viewYM),[state,sIdx,viewYM]);
+
+  const onTap=str=>{
+    if(tool==="propose"){
+      const ex=state.shifts.find(s=>s.date===str);
+      if(!ex)mutate(s=>({...s,shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"proposed",coLocated:false}]}));
+      setSelected(str);
+    }else if(tool==="erase"){
+      const ex=state.shifts.find(s=>s.date===str);
+      if(ex&&ex.status==="proposed")mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));   // erase = proposed-only
+      setSelected(str);
+    }else setSelected(str);
+  };
+  // keep lastSite synced to the selected day's shift, so new proposals inherit context
+  useEffect(()=>{const sh=state.shifts.find(s=>s.date===selected);if(sh)setLastSite(sh.siteId);},[selected,state.shifts]);
+
+  const TABS=[["calendar","Calendar"],["setup","Trips & Calendars"],["sites","Sites"]];
+  const themeIcon={system:"◐",light:"☀",dark:"☾"}[theme];
+  const cycle=()=>setTheme(t=>t==="system"?"light":t==="light"?"dark":"system");
+
+  return <div style={{fontFamily:MONO,color:C.ink,height:"100%",display:"flex",flexDirection:"column",background:C.bg}}>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
+      <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM <span style={{fontSize:10,color:C.mute,fontWeight:700}}>next · stage 1</span></span>
+      <div style={{display:"flex",gap:5,alignItems:"center"}}>
+        <Btn small onClick={cycle}>{themeIcon} {theme}</Btn>
+        <Btn small onClick={()=>{if(confirm("Reset to seed data?")){past.current=[];setCanUndo(false);setState(seedState());}}}>reset</Btn>
+      </div>
+    </div>
+    <DrawerStrip state={state} mutate={mutate}/>
+    {/* tabs */}
+    <div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
+      {TABS.map(([id,label])=><button key={id} onClick={()=>setTab(id)}
+        style={{fontFamily:MONO,fontSize:12.5,fontWeight:800,padding:"9px 14px",border:"none",cursor:"pointer",background:"transparent",
+          color:tab===id?C.ink:C.mute,borderBottom:tab===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
+      <span style={{marginLeft:"auto",alignSelf:"center",fontSize:9.5,color:C.mute,padding:"0 14px"}}>today {TODAY_S}</span>
+    </div>
+    {tab==="calendar"&&<Banner agg={agg} goal={state.settings.goal} viewYM={viewYM} mobile={mobile}/>}
+    <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      {tab==="calendar"&&<>
+        <div style={{flex:"1 1 60%",minHeight:0,overflow:"auto"}}>
+          <CalendarSurface state={state} sIdx={sIdx} viewY={viewY} viewM={viewM} setView={setView}
+            tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}/>
+        </div>
+        <div style={{flex:"0 0 auto",maxHeight:"42%",overflow:"auto",borderTop:`1px solid ${C.line}`,background:C.panel}}>
+          <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate}/>
+        </div>
+      </>}
+      {tab==="setup"&&<TripsCalsTab state={state} mutate={mutate}/>}
+      {tab==="sites"&&<SitesTab state={state} mutate={mutate}/>}
+    </div>
+  </div>;
+}
+class Boundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(err){return {err};}
+  componentDidCatch(e,i){console.error("crash",e,i);}
+  render(){if(!this.state.err)return this.props.children;
+    return <div style={{fontFamily:MONO,maxWidth:440,margin:"12vh auto",padding:"0 20px",textAlign:"center",color:C.ink}}>
+      <div style={{fontSize:16,fontWeight:800,marginBottom:8}}>Something went sideways.</div>
+      <button onClick={()=>{try{localStorage.removeItem("perDiemNext");}catch(_){}location.reload();}}
+        style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${C.ink}`,background:C.ink,color:C.bg}}>Reset & reload</button>
+    </div>;}
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Boundary><App/></Boundary>);
+</script>
+</body>
+</html>
