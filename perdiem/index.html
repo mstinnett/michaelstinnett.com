@@ -280,27 +280,36 @@ function shiftClusters(state,sIdx){
   }
   return out;
 }
-// date → {kind:"depart"|"return", time, siteId, status} for every travel day (skips real shift days)
+// stable key for a cluster's travel day, so coarse/time/moved overrides survive recompute
+const DATE_RE2=/^\d{4}-\d{2}-\d{2}$/;
+const travelKey=(c,kind,i)=>`${c.siteId}|${kind}|${kind==="depart"?c.from:c.to}|${i}`;
+// effective-date → {kind, time, siteId, status, key, defDate} for every travel day (skips real shift days)
 function travelBand(state,sIdx){
-  const map={},shiftDates=new Set(state.shifts.map(s=>s.date));
+  const map={},shiftDates=new Set(state.shifts.map(s=>s.date)),edits=state.travelEdits||{};
   shiftClusters(state,sIdx).forEach(c=>{
     const site=sIdx[c.siteId],tv=site.travel||TRAVEL_DEFAULT[site.reach]||TRAVEL_DEFAULT.local;
-    const put=(dt,o)=>{if(!map[dt]&&!shiftDates.has(dt))map[dt]={...o,siteId:c.siteId,status:c.status};};
-    for(let i=(tv.beforeDays||0);i>=1;i--)put(ds(ad(pd(c.from),-i)),{kind:"depart",time:tv.departTime});
-    for(let i=1;i<=(tv.afterDays||0);i++)put(ds(ad(pd(c.to),i)),{kind:"return",time:tv.returnTime});
+    const put=(kind,i,defDate,time)=>{const key=travelKey(c,kind,i),e=edits[key],
+      eff=(e&&DATE_RE2.test(e.date))?e.date:defDate;
+      if(!map[eff]&&!shiftDates.has(eff))map[eff]={kind,time,siteId:c.siteId,status:c.status,key,defDate};};
+    for(let i=(tv.beforeDays||0);i>=1;i--)put("depart",i,ds(ad(pd(c.from),-i)),tv.departTime);
+    for(let i=1;i<=(tv.afterDays||0);i++)put("return",i,ds(ad(pd(c.to),i)),tv.returnTime);
   });
   return map;
 }
-// hours a travel day costs: coarse half/whole override, else exact (awake time after departure / before return)
-function travelMissed(dateStr,info,state,edit){
+// hours a travel day costs at its (possibly moved) date: coarse half/whole, else exact
+function travelMissed(dateStr,info,state){
+  const edit=(state.travelEdits||{})[info.key]||{};
   const aw=homeAwake(dateStr,state),full=aw.reduce((t,[a,b])=>t+(b-a),0);
-  if(edit&&edit.coarse==="whole")return Math.round(full*10)/10;
-  if(edit&&edit.coarse==="half")return Math.round(full*5)/10;
-  const time=parseHM((edit&&edit.time)||info.time);
+  if(edit.coarse==="whole")return Math.round(full*10)/10;
+  if(edit.coarse==="half")return Math.round(full*5)/10;
+  const time=parseHM(edit.time||info.time);
   let t=0;for(const [a,b] of aw)t+=info.kind==="depart"?ovl(a,b,time,24):ovl(a,b,0,time);
   return Math.round(t*10)/10;
 }
-const travelEditOf=(state,dt)=>(state.travelEdits||{})[dt];
+// move a travel day to a new date (or clear the override when back at default)
+const moveTravelEdit=(s,key,date,defDate)=>{const te={...(s.travelEdits||{})},cur={...(te[key]||{})};
+  if(!date||date===defDate)delete cur.date;else cur.date=date;
+  if(Object.keys(cur).length)te[key]=cur;else delete te[key];return {...s,travelEdits:te};};
 // a month with a 2026 catch-up override is frozen: its days can't hold shifts
 const monthLocked=(state,dateStr)=>Number.isFinite((state.monthOverrides||{})[mk(dateStr)]);
 
@@ -327,7 +336,7 @@ function aggregate(state,sIdx,viewYM){
     proposed$+=b.money;if(mk(w.from)===viewYM){hrs.proposed+=b.min;m$.proposed+=b.money;mN.proposed+=b.X;}});
   // travel days add their hours to the bucket of their cluster (proposed → proposed; else worked/scheduled by date)
   const tb=travelBand(state,sIdx);
-  Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;const info=tb[dt],miss=travelMissed(dt,info,state,travelEditOf(state,dt));
+  Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;const info=tb[dt],miss=travelMissed(dt,info,state);
     hrs[info.status==="proposed"?"proposed":(dt<TODAY_S?"worked":"scheduled")]+=miss;});
   return {worked$,scheduled$,proposed$,hrs,month:m$,monthN:mN};
 }
@@ -443,7 +452,7 @@ const Stat=({label,value,sub,accent})=> <div style={{minWidth:78}}>
 
 /* ════════ BANNER — annual: Worked / Scheduled / Proposed $ + goal pace ════════ */
 function Banner({agg,goal,mobile}){
-  const projected=agg.worked$+agg.scheduled$;
+  const projected=agg.worked$+agg.scheduled$,allLand=agg.worked$+agg.scheduled$+agg.proposed$;
   const pct=goal>0?clamp(projected/goal,0,1):0;
   const wpct=goal>0?clamp(agg.worked$/goal,0,1):0;
   const goalBar=<div style={{height:mobile?5:8,borderRadius:5,background:C.line2,position:"relative",overflow:"hidden"}}>
@@ -455,6 +464,7 @@ function Banner({agg,goal,mobile}){
       <span><b style={{fontSize:13.5}}>{fmtK(agg.worked$)}</b> <span style={{color:C.mute}}>worked</span></span>
       <span><b style={{fontSize:12.5}}>{fmtK(agg.scheduled$)}</b> <span style={{color:C.mute}}>sched</span></span>
       <span style={{color:C.ocean}}><b style={{fontSize:12.5}}>{fmtK(agg.proposed$)}</b> <span style={{color:C.mute}}>prop</span></span>
+      <span><b style={{fontSize:13.5}}>{fmtK(allLand)}</b> <span style={{color:C.mute}}>all</span></span>
     </div>
     <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
       <div style={{flex:1}}>{goalBar}</div>
@@ -467,6 +477,8 @@ function Banner({agg,goal,mobile}){
       <Stat label="Worked $" value={fmtK(agg.worked$)} sub="to date"/>
       <Stat label="Scheduled $" value={fmtK(agg.scheduled$)} sub="committed ahead" accent={C.ink}/>
       <Stat label="Proposed $" value={fmtK(agg.proposed$)} sub="if it lands" accent={C.ocean}/>
+      <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
+      <Stat label="Total $" value={fmtK(allLand)} sub="all three land"/>
       <div style={{flex:1,minWidth:160}}>
         <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:3}}>
           Goal {fmtK(goal)} · projected {fmtK(projected)}</div>
@@ -509,7 +521,7 @@ function monthCells(y,m){
 function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to);}
 
 const siteCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
-function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,placing,box,selTrip,selWin,onEdge,onTap,onDown,onEnter}){
+function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,placing,box,selTrip,selWin,onEdge,onGrabTravel,onTap,onDown,onEnter}){
   if(!str)return <div style={box}/>;
   const allDay=homeAllDay(str,state),trip=tripOn(str,state.trips);
   const cals=visCals(state).filter(c=>calCovers(c,str)).slice(0,3);
@@ -522,16 +534,17 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
   const status=shift?bucketOf(shift):null;
   const warn=shift?warnOf(shift,state):null;
   const showTravel=travel&&!shift;
-  const tMissed=showTravel?travelMissed(str,travel,state,travelEditOf(state,str)):0;
+  const tMissed=showTravel?travelMissed(str,travel,state):0;
   const day=+str.slice(8,10);
   const ringCol=placing?C.ocean:selected?C.ink:warn?C.warn:win?C.ocean:showTravel?C.ocean:C.line2;
   const spanFirst=win&&win.kind==="span"&&win.w.from===str;
+  const grabTravel=showTravel&&onGrabTravel;
   return <div onClick={()=>onTap(str)} data-date={str}
-    onPointerDown={onDown?e=>onDown(str,e):undefined} onPointerEnter={onEnter?()=>onEnter(str):undefined}
+    onPointerDown={onDown?(e=>onDown(str,e)):(grabTravel?(e=>onGrabTravel(travel,e)):undefined)} onPointerEnter={onEnter?()=>onEnter(str):undefined}
     style={{...box,border:`${selected||warn||win||showTravel?2:1}px ${(win&&win.kind==="travel")?"dashed":"solid"} ${ringCol}`,
     borderRadius:8,background:bg,backgroundImage:hatch?`repeating-linear-gradient(45deg,${C.line2} 0,${C.line2} 1px,transparent 1px,transparent 6px)`:undefined,
-    padding:"4px 5px",cursor:"pointer",position:"relative",opacity:locked?0.5:1,
-    display:"flex",flexDirection:"column",overflow:"hidden",touchAction:onDown?"none":"auto"}}>
+    padding:"4px 5px",cursor:grabTravel?"grab":"pointer",position:"relative",opacity:locked?0.5:1,
+    display:"flex",flexDirection:"column",overflow:"hidden",touchAction:(onDown||grabTravel)?"none":"auto"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
       <span style={{fontSize:11,fontWeight:today?900:600,color:today?C.ink:C.gray}}>{day}</span>
       <div style={{display:"flex",gap:2,alignItems:"center"}}>
@@ -571,7 +584,7 @@ function ShiftPill({site,cat,status,co}){
 const CAL_MONTHS=Array.from({length:19},(_,i)=>{const m=5+i;return [2026+Math.floor(m/12),m%12];});
 const DowHeader=()=> <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
   {DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}</div>;
-function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,previewSet,placing,selTrip,selWin,onEdge,onDown,onEnter}){
+function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,previewSet,placing,selTrip,selWin,onEdge,onGrabTravel,onDown,onEnter}){
   const cells=monthCells(y,m);
   const box=mobile?{aspectRatio:"1"}:{height:90};   // square on phones; compact fixed rows on desktop
   return <div style={{marginBottom:16}}>
@@ -584,7 +597,7 @@ function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,pr
           selected={str&&str===selected} today={str===TODAY_S}
           win={str&&winBy?winBy[str]:null} travel={str&&travelBy?travelBy[str]:null} locked={str?monthLocked(state,str):false}
           preview={!!(str&&previewSet&&previewSet.has(str))} placing={!!(str&&placing&&placing.has(str))}
-          selTrip={selTrip} selWin={selWin} onEdge={onEdge} onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
+          selTrip={selTrip} selWin={selWin} onEdge={onEdge} onGrabTravel={onGrabTravel} onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
     </div>
   </div>;
 }
@@ -599,7 +612,7 @@ function StripHeader({cell,cg,wg}){
 const Nub=({side,onDown})=><span onPointerDown={onDown} style={{position:"absolute",top:0,bottom:0,[side]:-4,width:11,zIndex:7,
   cursor:"ew-resize",touchAction:"none",display:"flex",alignItems:"center",justifyContent:"center"}}>
   <span style={{width:3,minHeight:9,height:"58%",borderRadius:2,background:C.ink,boxShadow:`0 0 0 1.5px ${C.bg}`}}/></span>;
-function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,placing,selTrip,selWin,onEdge,onTap,onDown,onEnter}){
+function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,placing,selTrip,selWin,onEdge,onGrabTravel,onTap,onDown,onEnter}){
   const base={width:cell,height:cell,marginLeft:ml,flexShrink:0,borderRadius:3,position:"relative",boxSizing:"border-box"};
   if(!str)return <div style={base}/>;
   const shift=state.shifts.find(s=>s.date===str);
@@ -613,10 +626,11 @@ function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,placing,s
     if(status==="proposed")border=`1.5px dashed ${col}`;else{bg=col;border=`1px solid ${col}`;op=status==="worked"?0.6:1;filled=true;}}
   const showTravel=travel&&!shift,today=str===TODAY_S;
   const ringCol=placing?C.ocean:warn?C.warn:(win||showTravel)?C.ocean:null;
+  const grabTravel=showTravel&&onGrabTravel;
   return <div data-date={str} title={str} onClick={()=>onTap(str)}
-    onPointerDown={onDown?e=>onDown(str,e):undefined} onPointerEnter={onEnter?()=>onEnter(str):undefined}
+    onPointerDown={onDown?(e=>onDown(str,e)):(grabTravel?(e=>onGrabTravel(travel,e)):undefined)} onPointerEnter={onEnter?()=>onEnter(str):undefined}
     style={{...base,background:bg,border:placing?`1.5px dashed ${C.ocean}`:(ringCol&&!shift)?`1.5px ${(showTravel||(win&&win.kind==="travel"))?"dashed":"solid"} ${ringCol}`:border,
-      outline:selected?`2px solid ${C.ink}`:"none",outlineOffset:-1,opacity:locked?0.4:op,touchAction:onDown?"none":"auto",cursor:"pointer",
+      outline:selected?`2px solid ${C.ink}`:"none",outlineOffset:-1,opacity:locked?0.4:op,touchAction:(onDown||grabTravel)?"none":"auto",cursor:grabTravel?"grab":"pointer",
       display:"flex",alignItems:"center",justifyContent:"center"}}>
     {cell>=22&&<span style={{fontSize:Math.max(8,Math.round(cell*0.4)),fontWeight:700,color:filled?"#fff":C.gray,lineHeight:1,position:"relative",zIndex:1}}>{+str.slice(8,10)}</span>}
     {showTravel&&<span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:Math.max(9,Math.round(cell*0.5)),color:C.ocean,lineHeight:1}}>✈</span>}
@@ -629,7 +643,7 @@ function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,placing,s
     {selWin&&selWin.to===str&&<Nub side="right" onDown={e=>onEdge("window",selWin.id,"end",e)}/>}
   </div>;
 }
-function MonthStrip({y,m,state,sIdx,selected,onTap,cell,cg,wg,winBy,travelBy,previewSet,placing,selTrip,selWin,onEdge,onDown,onEnter}){
+function MonthStrip({y,m,state,sIdx,selected,onTap,cell,cg,wg,winBy,travelBy,previewSet,placing,selTrip,selWin,onEdge,onGrabTravel,onDown,onEnter}){
   const cells=monthCells(y,m);
   return <div style={{display:"flex",alignItems:"center",marginBottom:CAL_RG}}>
     <div style={{width:CAL_LBL,flexShrink:0,textAlign:"right",paddingRight:8}}>
@@ -641,7 +655,7 @@ function MonthStrip({y,m,state,sIdx,selected,onTap,cell,cg,wg,winBy,travelBy,pre
         return <StripCell key={ci} str={str} cell={cell} ml={calMl(ci,cg,wg)} state={state} sIdx={sIdx}
           selected={!!(str&&str===selected)} win={str&&winBy?winBy[str]:null} travel={str&&travelBy?travelBy[str]:null}
           preview={!!(str&&previewSet&&previewSet.has(str))} placing={!!(str&&placing&&placing.has(str))}
-          selTrip={selTrip} selWin={selWin} onEdge={onEdge} onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
+          selTrip={selTrip} selWin={selWin} onEdge={onEdge} onGrabTravel={onGrabTravel} onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
     </div>
   </div>;
 }
@@ -664,7 +678,7 @@ function CalFilter({state,mutate}){
     {open&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.ocean}}>✈ travel</span>}
   </div>;
 }
-function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,placing,onCreateWindow,selTid,selWid,onEdge}){
+function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,placing,onCreateWindow,selTid,selWid,onEdge,onGrabTravel}){
   const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
   const selTrip=selTid&&(state.trips||[]).find(t=>t.id===selTid)||null;
   const selWin=selWid&&(state.windows||[]).find(w=>w.id===selWid)||null;
@@ -684,7 +698,7 @@ function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setT
     return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[drag,onCreateWindow]);
   const onDown=tool==="window"?(str)=>setDrag({anchor:str,over:str}):undefined;
   const onEnter=tool==="window"?(str)=>setDrag(d=>d?{...d,over:str}:d):undefined;
-  const gridProps={mobile,winBy,travelBy,previewSet,placing,onDown,onEnter,selTrip,selWin,onEdge};
+  const gridProps={mobile,winBy,travelBy,previewSet,placing,onDown,onEnter,selTrip,selWin,onEdge,onGrabTravel:tool==="select"?onGrabTravel:undefined};
   // the parent pane is the scroll container; the tools header sticks to its top
   return <div>
     <div style={{position:"sticky",top:0,zIndex:3,background:C.panel2,borderBottom:`1px solid ${C.line2}`}}>
@@ -919,16 +933,25 @@ function TripReadout({state,tid,mutate,onClose}){
 
 /* ════════ TRAVEL READOUT — a real travel day: exact time + coarse feel ════════ */
 function TravelReadout({state,sIdx,dateStr,info,head,awake,mutate}){
-  const edit=travelEditOf(state,dateStr)||{};
-  const setEdit=patch=>mutate(s=>{const te={...(s.travelEdits||{})};const next={...(te[dateStr]||{}),...patch};
+  const edit=(state.travelEdits||{})[info.key]||{};
+  const setEdit=patch=>mutate(s=>{const te={...(s.travelEdits||{})};const next={...(te[info.key]||{}),...patch};
     Object.keys(next).forEach(k=>{if(next[k]==null)delete next[k];});
-    if(Object.keys(next).length)te[dateStr]=next;else delete te[dateStr];return {...s,travelEdits:te};});
-  const missed=travelMissed(dateStr,info,state,edit),site=sIdx[info.siteId];
+    if(Object.keys(next).length)te[info.key]=next;else delete te[info.key];return {...s,travelEdits:te};});
+  const moveBy=n=>{const nd=ds(ad(pd(dateStr),n));if(state.shifts.some(x=>x.date===nd))return;mutate(s=>moveTravelEdit(s,info.key,nd,info.defDate));};
+  const missed=travelMissed(dateStr,info,state),site=sIdx[info.siteId];
   const feel=edit.coarse||"exact";
   const time=edit.time||info.time;
+  const moved=DATE_RE2.test(edit.date)&&edit.date!==info.defDate;
   return <div style={{padding:"14px"}}>{head}
-    <div style={{fontSize:11.5,fontWeight:700,color:C.ocean,marginBottom:10}}>
+    <div style={{fontSize:11.5,fontWeight:700,color:C.ocean,marginBottom:8}}>
       ✈ Travel day — {info.kind==="depart"?"leaving for":"home from"} {site?site.name:"a trip"}</div>
+    <Field label="When"><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+      <Btn small onClick={()=>moveBy(-1)}>◀ earlier</Btn>
+      <span style={{fontSize:11.5,fontWeight:700,minWidth:96,textAlign:"center"}}>{MON[pd(dateStr).getMonth()]} {pd(dateStr).getDate()}</span>
+      <Btn small onClick={()=>moveBy(1)}>later ▶</Btn>
+      {moved&&<Btn small onClick={()=>mutate(s=>moveTravelEdit(s,info.key,null,info.defDate))}>reset</Btn>}
+      <span style={{fontSize:10,color:C.mute}}>drag it on the calendar too</span>
+    </div></Field>
     <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
       <div style={{flex:"1 1 280px"}}>
         <Field label="How it feels"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
@@ -1224,8 +1247,19 @@ function App(){
     const up=()=>{const d=tripDrag;if(d){if(d.moved&&d.over)placeTrip(d.id,d.over,d.dur);else if(!d.moved)toggleTripVis(d.id);}setTripDrag(null);};
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
     return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[tripDrag]);
-  const placingSet=useMemo(()=>{if(!tripDrag||!tripDrag.moved||!tripDrag.over)return null;
-    const set=new Set();for(let i=0;i<=tripDrag.dur;i++)set.add(ds(ad(pd(tripDrag.over),i)));return set;},[tripDrag]);
+  // drag a travel day to another (empty) day — stores a per-trip date override
+  const [travelDrag,setTravelDrag]=useState(null);
+  const beginTravelDrag=(info,e)=>{e.stopPropagation();setTravelDrag({key:info.key,defDate:info.defDate,sx:e.clientX,sy:e.clientY,x:e.clientX,y:e.clientY,over:null,moved:false});};
+  useEffect(()=>{if(!travelDrag)return;
+    const move=e=>setTravelDrag(d=>{if(!d)return d;const el=document.elementFromPoint(e.clientX,e.clientY),hit=el&&el.closest&&el.closest("[data-date]");
+      return {...d,x:e.clientX,y:e.clientY,over:hit?hit.getAttribute("data-date"):null,moved:d.moved||Math.hypot(e.clientX-d.sx,e.clientY-d.sy)>4};});
+    const up=()=>{const d=travelDrag;if(d&&d.moved&&d.over&&!state.shifts.some(x=>x.date===d.over))mutate(s=>moveTravelEdit(s,d.key,d.over,d.defDate));setTravelDrag(null);};
+    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
+    return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[travelDrag]);
+  const placingSet=useMemo(()=>{
+    if(tripDrag&&tripDrag.moved&&tripDrag.over){const set=new Set();for(let i=0;i<=tripDrag.dur;i++)set.add(ds(ad(pd(tripDrag.over),i)));return set;}
+    if(travelDrag&&travelDrag.moved&&travelDrag.over)return new Set([travelDrag.over]);
+    return null;},[tripDrag,travelDrag]);
   // edge-resize a selected trip or window by dragging its end handle; one undo entry per resize
   const [edgeDrag,setEdgeDrag]=useState(null);
   const beginEdge=(kind,id,edge,e)=>{e.stopPropagation();past.current.push(state);if(past.current.length>50)past.current.shift();setCanUndo(true);setEdgeDrag({kind,id,edge});};
@@ -1298,7 +1332,7 @@ function App(){
           <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} mutate={mutate} viewY={viewY} viewM={viewM} setView={setView}
             tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
             winBy={winBy} travelBy={travelBy} placing={placingSet} onCreateWindow={onCreateWindow}
-            selTid={selTid} selWid={selWid} onEdge={beginEdge}/>
+            selTid={selTid} selWid={selWid} onEdge={beginEdge} onGrabTravel={beginTravelDrag}/>
         </div>
         <div style={mobile
           ?{flex:"0 0 auto",maxHeight:"42%",overflow:"auto",borderTop:`1px solid ${C.line}`,background:C.panel}
