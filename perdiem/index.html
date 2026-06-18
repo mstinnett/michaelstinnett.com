@@ -726,7 +726,7 @@ function ShiftSelect({site,type,coarse,compact,onChange}){
 }
 
 /* ════════ READOUT — the per-day picker/editor ════════ */
-function Readout({state,sIdx,selected,mutate,mobile,setSelected}){
+function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
   if(!selected)return <div style={{padding:"16px 14px",color:C.mute,fontSize:12.5}}>
     Tap a day to read or edit it. <b>Propose</b> adds a shift; <b>Schedule</b> commits it (or draws a fresh one); <b>Erase</b> removes a proposed one.</div>;
   const shift=state.shifts.find(s=>s.date===selected);
@@ -761,7 +761,7 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected}){
   if(!shift&&tinfo)return <TravelReadout state={state} sIdx={sIdx} dateStr={selected} info={tinfo} head={head} awake={awake} mutate={mutate} setSelected={setSelected}/>;
 
   if(!shift)return <div style={{padding:"14px"}}>{head}
-    <AddDayPanel sites={state.sites} onShift={addShiftAs} onTravel={()=>addDay("travel")} onAway={()=>addDay("away")}/>
+    <AddDayPanel sites={state.sites} onShift={addShiftAs} onTravel={()=>addDay("travel")} onAway={()=>addDay("away")} onWindow={()=>onAddWindow&&onAddWindow(selected)}/>
   </div>;
 
   const site=sIdx[shift.siteId],cat=shiftCat(site,shift.type),plannedPay=shiftPay(site,shift.type),
@@ -837,7 +837,7 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected}){
   </div>;
 }
 // everything you can add to an empty day, right in the info box
-function AddDayPanel({sites,onShift,onTravel,onAway}){
+function AddDayPanel({sites,onShift,onTravel,onAway,onWindow}){
   const [sid,setSid]=useState(sites[0].id),[ty,setTy]=useState("day");
   return <div>
     <div style={{fontSize:11.5,color:C.gray,marginBottom:8}}>Add to this day:</div>
@@ -850,6 +850,7 @@ function AddDayPanel({sites,onShift,onTravel,onAway}){
     <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
       <Btn kind="prim" small onClick={()=>onShift(sid,ty,"proposed")}>+ Propose shift</Btn>
       <Btn small onClick={()=>onShift(sid,ty,"scheduled")}>+ Schedule shift</Btn>
+      <Btn small onClick={onWindow}>▭ Window</Btn>
       <span style={{width:1,height:18,background:C.line,margin:"0 2px"}}/>
       <Btn small onClick={onTravel}>✈ Travel day</Btn>
       <Btn small onClick={onAway}>☾ Day away</Btn>
@@ -879,6 +880,11 @@ function WindowReadout({state,sIdx,wid,mutate,onScheduled}){
         <Field label="Shift"><div style={{display:"flex",gap:6,alignItems:"center"}}>
           {["day","night"].map(t=><Btn key={t} on={cat===t} onClick={()=>setW({type:t})}>{t==="day"?"Day":"Night"}</Btn>)}
           <span style={{fontSize:11,color:C.mute}}>{entryLabel(resolveEntry(site,w.type))}</span></div></Field>
+        <Field label="Span (the held days)"><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+          <input type="date" value={w.from} onChange={e=>setW(e.target.value<=w.to?{from:e.target.value}:{from:w.to})} style={{...inp,width:"auto",padding:"3px 6px"}}/>
+          <span style={{color:C.mute,fontSize:11}}>→</span>
+          <input type="date" value={w.to} onChange={e=>setW(e.target.value>=w.from?{to:e.target.value}:{to:w.from})} style={{...inp,width:"auto",padding:"3px 6px"}}/>
+          <span style={{fontSize:11,color:C.mute}}>{band.Y} days</span></div></Field>
         <Field label="Will work"><div style={{display:"flex",gap:8,alignItems:"center"}}>
           <Btn small onClick={()=>setX(band.X-1)} disabled={band.X<=1}>−</Btn>
           <b style={{fontSize:15,minWidth:62,textAlign:"center"}}>{band.X} of {band.Y}</b>
@@ -1229,6 +1235,10 @@ function App(){
     setSelWid(id);setSelTid(null);setSelected(from);const d=pd(from);setVY([d.getFullYear(),d.getMonth()]);
     setTool("select");   // window is one-shot — revert to select so the next drag doesn't make another
   },[lastSite]);
+  // create a window from the info box (no drag): a default span starting on the selected day
+  const addWindowAt=date=>{let from=date<TODAY_S?TODAY_S:date;const to=ds(ad(pd(from),4)),id="w"+Date.now();
+    mutate(s=>({...s,windows:[...(s.windows||[]),{id,siteId:lastSite,type:"day",from,to,x:2}]}));
+    setSelWid(id);setSelTid(null);setSelected(from);const d=pd(from);setVY([d.getFullYear(),d.getMonth()]);};
   // grab a trip from the drawer and drop it on a day: sets its start, keeps its duration; edits sync with the tab
   const placeTrip=(id,from,dur)=>{mutate(s=>({...s,trips:s.trips.map(t=>t.id===id?{...t,from,to:ds(ad(pd(from),Math.max(0,dur))),visible:true}:t)}));
     setSelTid(id);setSelWid(null);setSelected(from);const d=pd(from);setVY([d.getFullYear(),d.getMonth()]);};
@@ -1363,7 +1373,7 @@ function App(){
                 ? <WindowReadout state={state} sIdx={sIdx} wid={selWid} mutate={mutate} onScheduled={()=>setSelWid(null)}/>
                 : selTid&&(state.trips||[]).find(t=>t.id===selTid)
                 ? <TripReadout state={state} tid={selTid} mutate={mutate} onClose={()=>setSelTid(null)}/>
-                : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate} mobile={mobile} setSelected={setSelected}/>}
+                : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate} mobile={mobile} setSelected={setSelected} onAddWindow={addWindowAt}/>}
             </div>}
         </div>
       </>}
