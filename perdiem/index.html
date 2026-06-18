@@ -746,7 +746,7 @@ function Readout({state,sIdx,selected,mutate,mobile}){
   if(mobile)return <div style={{padding:"9px 12px"}}>
     <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
       <b style={{fontSize:14}}>{MON[d.getMonth()]} {d.getDate()}</b>
-      <span style={{fontSize:9.5,color:out?C.juniper:C.mute}}>{out?"home":"school"}</span>
+      <span style={{fontSize:9.5,color:allDay?C.juniper:C.mute}}>{allDay?"home":"school"}</span>
       {warn&&<span title={warn} style={{fontSize:11,color:C.warn}}>⚠</span>}
       <div style={{marginLeft:"auto",display:"flex",gap:5}}>
         <Btn small on={status==="proposed"} onClick={toProp}>Prop</Btn>
