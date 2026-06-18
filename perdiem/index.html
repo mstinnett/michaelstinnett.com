@@ -426,6 +426,9 @@ const Stat=({label,value,sub,accent})=> <div style={{minWidth:78}}>
   <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute}}>{label}</div>
   <div style={{fontSize:16,fontWeight:800,color:accent||C.ink,letterSpacing:"-0.02em",fontVariantNumeric:"tabular-nums"}}>{value}</div>
   {sub&&<div style={{fontSize:10,color:C.gray}}>{sub}</div>}</div>;
+const MenuItem=({children,on,onClick})=><button onClick={onClick} style={{fontFamily:MONO,fontSize:13,fontWeight:on?800:600,textAlign:"left",
+  border:"none",background:on?C.sel:"transparent",color:C.ink,borderRadius:6,cursor:"pointer",padding:"8px 10px",width:"100%",display:"block"}}>{children}</button>;
+const menuHdr={fontSize:9,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",color:C.mute,padding:"4px 10px 4px"};
 
 /* ════════ BANNER — annual: Worked / Scheduled / Proposed $ + goal pace ════════ */
 function Banner({agg,goal,mobile}){
@@ -469,12 +472,12 @@ function MonthBar({agg,viewYM,mobile}){
   const my=`${MON[+viewYM.slice(5,7)-1]} ${viewYM.slice(0,4)}`,m=agg.month,h=agg.hrs,n=agg.monthN||{worked:0,scheduled:0,proposed:0};
   const totMiss=Math.round((h.worked+h.scheduled+h.proposed)*10)/10,tot$=m.worked+m.scheduled+m.proposed;
   const totN=n.worked+n.scheduled+n.proposed;
-  if(mobile)return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"4px 12px",flexShrink:0,
-    display:"flex",alignItems:"baseline",gap:8,fontSize:10.5,fontVariantNumeric:"tabular-nums",flexWrap:"wrap"}}>
-    <b style={{fontSize:11}}>{my}</b>
-    <span><b>{totN}</b> <span style={{color:C.mute}}>shifts</span></span>
-    <span><b>{fmtK(tot$)}</b> <span style={{color:C.mute}}>total $</span></span>
-    <span style={{marginLeft:"auto",color:C.gray}}>miss <b style={{color:C.ink}}>{Math.round(totMiss)}</b>h</span>
+  if(mobile)return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"5px 12px",flexShrink:0,
+    display:"flex",alignItems:"baseline",gap:8,fontSize:11,fontVariantNumeric:"tabular-nums",flexWrap:"wrap"}}>
+    <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color:C.mute}}>{my}</span>
+    <span><b style={{fontSize:13.5}}>{fmtK(tot$)}</b> <span style={{color:C.mute}}>total $</span></span>
+    <span><b style={{fontSize:12.5}}>{totN}</b> <span style={{color:C.mute}}>shifts</span></span>
+    <span style={{marginLeft:"auto",color:C.gray}}>miss <b style={{color:C.ink,fontSize:12.5}}>{Math.round(totMiss)}</b>h</span>
   </div>;
   return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"7px 14px",flexShrink:0}}>
     <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-end"}}>
@@ -1004,8 +1007,9 @@ function ImportICS({onImport}){
     </div>}
   </div>;
 }
-function TripsCalsTab({state,mutate}){
+function TripsCalsTab({state,mutate,only}){
   const s=state.settings;
+  const show=sec=>!only||only===sec;
   const setS=patch=>mutate(x=>({...x,settings:{...x.settings,...patch}}));
   const T=({label,k})=><Field label={label}><input type="time" style={inp} value={s[k]} onChange={e=>setS({[k]:e.target.value})}/></Field>;
   const setCal=(id,patch)=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id===id?{...c,...patch}:c)}));
@@ -1019,13 +1023,13 @@ function TripsCalsTab({state,mutate}){
     mutate(st=>({...st,calendars:[...st.calendars,{id:"c"+Date.now(),name:name||"Imported",kind:"school",color:"var(--juniper)",visible:true,ranges}]}));};
   const addTrip=()=>mutate(st=>({...st,trips:[...st.trips,{id:"t"+Date.now(),name:"New trip",from:TODAY_S,to:TODAY_S,loc:"boston",workFactor:"colocate",visible:true}]}));
   return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:720}}>
-    <h3 style={{fontSize:13,fontWeight:800,marginBottom:10}}>Family day</h3>
+    {show("family")&&<><h3 style={{fontSize:13,fontWeight:800,marginBottom:10}}>Family day</h3>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10}}>
       <T label="Wake up" k="wake"/><T label="School start" k="schoolStart"/><T label="School end" k="schoolEnd"/><T label="Bed time" k="bed"/>
     </div>
     <div style={{fontSize:11,color:C.gray,margin:"4px 0 18px"}}>
-      Hours missed = a shift's overlap with the time kids are home and awake. On school days that's before {s.schoolStart} and after {s.schoolEnd}; on days off, the whole {s.wake}–{s.bed} window.</div>
-    <h3 style={{fontSize:13,fontWeight:800,marginBottom:10}}>Earnings goal</h3>
+      Hours missed = a shift's overlap with the time kids are home and awake. On school days that's before {s.schoolStart} and after {s.schoolEnd}; on days off, the whole {s.wake}–{s.bed} window.</div></>}
+    {show("earnings")&&<><h3 style={{fontSize:13,fontWeight:800,marginBottom:10}}>Earnings goal</h3>
     <Field label={`${YEAR} total money earned`}><input type="number" style={{...inp,maxWidth:200}} value={s.goal} onChange={e=>setS({goal:+e.target.value||0})}/></Field>
     <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>2026 catch-up</h3>
     <div style={{fontSize:11,color:C.gray,marginBottom:10}}>Enter what you already earned in a past month instead of re-entering every shift. A month with a value is <b>frozen</b> on the calendar (🔒) and its override is authoritative.</div>
@@ -1036,8 +1040,8 @@ function TripsCalsTab({state,mutate}){
           <span style={{color:Number.isFinite(v)?C.ink:C.mute,fontWeight:Number.isFinite(v)?800:600}}>{Number.isFinite(v)?"🔒 ":""}{mn}</span>
           <input type="number" placeholder="—" style={{...inp,padding:"4px 6px"}} value={Number.isFinite(v)?v:""} onChange={e=>setOv(e.target.value)}/>
         </label>;})}
-    </div>
-    <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>Calendars <span style={{fontSize:10.5,fontWeight:600,color:C.mute}}>· school breaks & holidays drive “kids home all day”</span></h3>
+    </div></>}
+    {show("family")&&<><h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>Calendars <span style={{fontSize:10.5,fontWeight:600,color:C.mute}}>· school breaks & holidays drive “kids home all day”</span></h3>
     {state.calendars.map(c=><div key={c.id} style={{border:`1px solid ${C.line2}`,borderRadius:8,padding:"9px 10px",marginBottom:8}}>
       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
         <div style={{display:"flex",gap:3}}>{CAL_COLORS.map(([n,v])=><button key={n} title={n} onClick={()=>setCal(c.id,{color:v})}
@@ -1072,8 +1076,8 @@ function TripsCalsTab({state,mutate}){
     <div style={{display:"flex",gap:8,alignItems:"flex-start",flexWrap:"wrap",marginTop:2}}>
       <button onClick={addCal} style={addBtn}>+ calendar</button>
       <ImportICS onImport={importCal}/>
-    </div>
-    <h3 style={{fontSize:13,fontWeight:800,margin:"18px 0 10px"}}>Trips</h3>
+    </div></>}
+    {show("trips")&&<><h3 style={{fontSize:13,fontWeight:800,margin:"0 0 10px"}}>Trips</h3>
     {state.trips.map(t=><div key={t.id} style={{border:`1px solid ${C.line2}`,borderRadius:8,padding:"9px 10px",marginBottom:8}}>
       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
         <span style={{fontSize:12}}>✈</span>
@@ -1089,7 +1093,7 @@ function TripsCalsTab({state,mutate}){
           {WORK_FACTORS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
       </div>
     </div>)}
-    <button onClick={addTrip} style={addBtn}>+ trip</button>
+    <button onClick={addTrip} style={addBtn}>+ trip</button></>}
   </div>;
 }
 function SitesTab({state,mutate}){
@@ -1157,7 +1161,9 @@ function App(){
   const [state,setState]=useState(load);
   const past=useRef([]);
   const [canUndo,setCanUndo]=useState(false);
-  const [tab,setTab]=useState("calendar");
+  const [panel,setPanel]=useState(null);     // null = calendar; else "trips"|"sites"|"earnings"|"family"
+  const [menu,setMenu]=useState(false);      // hamburger overlay
+  const [collapsed,setCollapsed]=useState(false);   // info box collapsed
   const [tool,setTool]=useState("select");
   const [selected,setSelected]=useState(TODAY_S);
   const [selWid,setSelWid]=useState(null);
@@ -1259,14 +1265,14 @@ function App(){
     const up=()=>setEdgeDrag(null);
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
     return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[edgeDrag]);
-  const goAddTrip=()=>{const id="t"+Date.now();mutate(s=>({...s,trips:[...s.trips,{id,name:"New trip",from:selected||TODAY_S,to:selected||TODAY_S,loc:"boston",workFactor:"colocate",visible:true}]}));setTab("setup");};
-  const goAddCal=()=>{mutate(s=>({...s,calendars:[...s.calendars,{id:"c"+Date.now(),name:"New calendar",kind:"custom",color:"var(--gray)",visible:true,ranges:[]}]}));setTab("setup");};
   // keep lastSite synced to the selected day's shift / window, so new draws inherit context
   useEffect(()=>{const w=selWid&&(state.windows||[]).find(x=>x.id===selWid);
     const sh=state.shifts.find(s=>s.date===selected);
     if(w)setLastSite(w.siteId);else if(sh)setLastSite(sh.siteId);},[selected,selWid,state.shifts,state.windows]);
 
-  const TABS=[["calendar","Calendar"],["setup","Trips & Calendars"],["sites","Sites"]];
+  const MENU_SECTIONS=[["trips","✈ Trips"],["sites","⌂ Sites"],["earnings","$ Earnings settings"],["family","☺ Family time settings"]];
+  const PANEL_TITLE={trips:"Trips",sites:"Sites",earnings:"Earnings settings",family:"Family time settings"};
+  const openPanel=p=>{setPanel(p);setMenu(false);};
   const themeIcon={system:"◐",light:"☀",dark:"☾"}[theme];
   const cycle=()=>setTheme(t=>t==="system"?"light":t==="light"?"dark":"system");
   const fileRef=useRef();
@@ -1292,48 +1298,75 @@ function App(){
       ✈ {tripDrag.name}{tripDrag.over?` → ${MON[pd(tripDrag.over).getMonth()]} ${pd(tripDrag.over).getDate()}`:""}</div>}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
       <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM</span>
-      <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
-        <Btn small onClick={cycle}>{themeIcon} {theme}</Btn>
-        <span style={{width:1,height:16,background:C.line}}/>
-        <Btn small kind="prim" onClick={share}>share link</Btn>
-        <Btn small onClick={exportJSON}>export</Btn>
-        <Btn small onClick={()=>fileRef.current.click()}>import</Btn>
-        <Btn small onClick={()=>{if(confirm("Reset to seed data?")){past.current=[];setCanUndo(false);setState(seedState());}}}>reset</Btn>
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <span style={{fontSize:9.5,color:C.mute}}>today {TODAY_S}</span>
+        <Btn small onClick={()=>setMenu(true)}>☰ Menu</Btn>
         <input ref={fileRef} type="file" accept=".json,application/json" onChange={importJSON} style={{display:"none"}}/>
       </div>
     </div>
-    <DrawerStrip state={state} mutate={mutate} goAddTrip={goAddTrip} goAddCal={goAddCal} onGrabTrip={beginTripDrag}/>
-    {/* tabs */}
-    <div style={{display:"flex",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
-      {TABS.map(([id,label])=><button key={id} onClick={()=>setTab(id)}
-        style={{fontFamily:MONO,fontSize:12.5,fontWeight:800,padding:"9px 14px",border:"none",cursor:"pointer",background:"transparent",
-          color:tab===id?C.ink:C.mute,borderBottom:tab===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
-      <span style={{marginLeft:"auto",alignSelf:"center",fontSize:9.5,color:C.mute,padding:"0 14px"}}>today {TODAY_S}</span>
-    </div>
-    {tab==="calendar"&&<Banner agg={agg} goal={state.settings.goal} mobile={mobile}/>}
-    {tab==="calendar"&&<MonthBar agg={agg} viewYM={viewYM} mobile={mobile}/>}
-    <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-      {tab==="calendar"&&<div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
-        {/* phone: calendar over readout. tablet/desktop: calendar left, readout as a tall right panel. */}
-        <div style={{flex:mobile?"1 1 60%":"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
-          <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} mutate={mutate} viewY={viewY} viewM={viewM} setView={setView}
-            tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
-            winBy={winBy} travelBy={travelBy} placing={placingSet} onCreateWindow={onCreateWindow}
-            selTid={selTid} selWid={selWid} onEdge={beginEdge} onGrabTravel={beginTravelDrag}/>
+    {menu&&<div onClick={()=>setMenu(false)} style={{position:"fixed",inset:0,zIndex:600,background:"rgba(0,0,0,.35)",display:"flex",justifyContent:"flex-end"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:300,maxWidth:"86vw",height:"100%",background:C.panel,boxShadow:"-8px 0 24px rgba(0,0,0,.25)",overflow:"auto",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderBottom:`1px solid ${C.line2}`}}>
+          <b style={{fontSize:14}}>Menu</b>
+          <button onClick={()=>setMenu(false)} style={{fontFamily:MONO,fontSize:14,border:"none",background:"transparent",color:C.gray,cursor:"pointer"}}>✕</button></div>
+        <div style={{padding:"8px 10px"}}>
+          <MenuItem on={panel===null} onClick={()=>openPanel(null)}>▦ Calendar</MenuItem>
+          {MENU_SECTIONS.map(([id,label])=><MenuItem key={id} on={panel===id} onClick={()=>openPanel(id)}>{label}</MenuItem>)}
         </div>
-        <div style={mobile
-          ?{flex:"0 0 auto",maxHeight:"42%",overflow:"auto",borderTop:`1px solid ${C.line}`,background:C.panel}
-          :{flex:"0 0 380px",overflow:"auto",borderLeft:`1px solid ${C.line}`,background:C.panel}}>
-          {selWid&&state.windows.find(w=>w.id===selWid)
-            ? <WindowReadout state={state} sIdx={sIdx} wid={selWid} mutate={mutate} onScheduled={()=>setSelWid(null)}/>
-            : selTid&&(state.trips||[]).find(t=>t.id===selTid)
-            ? <TripReadout state={state} tid={selTid} mutate={mutate} onClose={()=>setSelTid(null)}/>
-            : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate} mobile={mobile} setSelected={setSelected}/>}
+        <div style={{borderTop:`1px solid ${C.line2}`,padding:"8px 10px"}}>
+          <div style={menuHdr}>Data</div>
+          <MenuItem onClick={()=>{share();setMenu(false);}}>Share link</MenuItem>
+          <MenuItem onClick={()=>{exportJSON();setMenu(false);}}>Export JSON</MenuItem>
+          <MenuItem onClick={()=>fileRef.current.click()}>Import JSON</MenuItem>
         </div>
-      </div>}
-      {tab==="setup"&&<TripsCalsTab state={state} mutate={mutate}/>}
-      {tab==="sites"&&<SitesTab state={state} mutate={mutate}/>}
-    </div>
+        <div style={{borderTop:`1px solid ${C.line2}`,padding:"8px 10px"}}>
+          <div style={menuHdr}>System</div>
+          <MenuItem onClick={cycle}>Theme — {theme} {themeIcon}</MenuItem>
+          <MenuItem onClick={()=>{if(confirm("Reset to seed data?")){past.current=[];setCanUndo(false);setState(seedState());setMenu(false);}}}>Reset to sample data</MenuItem>
+        </div>
+      </div>
+    </div>}
+    {panel
+      ? <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0}}>
+            <button onClick={()=>setPanel(null)} style={{fontFamily:MONO,fontSize:12.5,fontWeight:700,border:`1px solid ${C.line}`,background:C.panel,color:C.ink,borderRadius:6,cursor:"pointer",padding:"4px 9px"}}>‹ Calendar</button>
+            <b style={{fontSize:13.5}}>{PANEL_TITLE[panel]}</b></div>
+          <div style={{flex:1,minHeight:0,overflow:"auto"}}>
+            {panel==="sites"?<SitesTab state={state} mutate={mutate}/>:<TripsCalsTab state={state} mutate={mutate} only={panel}/>}
+          </div>
+        </div>
+      : <>
+        <DrawerStrip state={state} mutate={mutate} goAddTrip={()=>openPanel("trips")} goAddCal={()=>openPanel("family")} onGrabTrip={beginTripDrag}/>
+        <Banner agg={agg} goal={state.settings.goal} mobile={mobile}/>
+        <MonthBar agg={agg} viewYM={viewYM} mobile={mobile}/>
+        <div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
+          <div style={{flex:mobile?(collapsed?"1 1 auto":"1 1 60%"):"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
+            <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} mutate={mutate} viewY={viewY} viewM={viewM} setView={setView}
+              tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
+              winBy={winBy} travelBy={travelBy} placing={placingSet} onCreateWindow={onCreateWindow}
+              selTid={selTid} selWid={selWid} onEdge={beginEdge} onGrabTravel={beginTravelDrag}/>
+          </div>
+          {/* info box — collapsible; a thin bar when collapsed */}
+          {collapsed
+            ? <div onClick={()=>setCollapsed(false)} style={mobile
+                ?{flex:"0 0 auto",borderTop:`1px solid ${C.line}`,background:C.panel2,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:700,color:C.gray,display:"flex",alignItems:"center",gap:6}
+                :{flex:"0 0 24px",borderLeft:`1px solid ${C.line}`,background:C.panel2,cursor:"pointer",writingMode:"vertical-rl",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.gray,gap:6}}>
+                ‹ info box{selected?` · ${MON[pd(selected).getMonth()]} ${pd(selected).getDate()}`:""}</div>
+            : <div style={mobile
+                ?{flex:"0 0 auto",maxHeight:"42%",overflow:"auto",borderTop:`1px solid ${C.line}`,background:C.panel}
+                :{flex:"0 0 380px",overflow:"auto",borderLeft:`1px solid ${C.line}`,background:C.panel,position:"relative"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6,padding:"5px 10px 0"}}>
+                {selected&&<button onClick={()=>setSelected(null)} title="deselect" style={{fontFamily:MONO,fontSize:11,fontWeight:700,border:`1px solid ${C.line}`,background:C.panel,color:C.gray,borderRadius:5,cursor:"pointer",padding:"2px 7px"}}>no date</button>}
+                <button onClick={()=>setCollapsed(true)} title="collapse" style={{fontFamily:MONO,fontSize:12,fontWeight:700,border:`1px solid ${C.line}`,background:C.panel,color:C.gray,borderRadius:5,cursor:"pointer",padding:"2px 8px"}}>{mobile?"▾ hide":"› hide"}</button>
+              </div>
+              {selWid&&state.windows.find(w=>w.id===selWid)
+                ? <WindowReadout state={state} sIdx={sIdx} wid={selWid} mutate={mutate} onScheduled={()=>setSelWid(null)}/>
+                : selTid&&(state.trips||[]).find(t=>t.id===selTid)
+                ? <TripReadout state={state} tid={selTid} mutate={mutate} onClose={()=>setSelTid(null)}/>
+                : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate} mobile={mobile} setSelected={setSelected}/>}
+            </div>}
+        </div>
+      </>}
   </div>;
 }
 class Boundary extends React.Component{
