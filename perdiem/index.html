@@ -309,17 +309,19 @@ function aggregate(state,sIdx,viewYM){
   let scheduled$=0,proposed$=0;
   state.shifts.forEach(sh=>{if(!sh.date.startsWith(yr))return;const b=bucketOf(sh);
     if(b==="scheduled")scheduled$+=pay(sh);else if(b==="proposed")proposed$+=pay(sh);});
-  // hours missed — current viewed month only (never annualized)
+  // hours missed — current viewed month only (never annualized) + the viewed month's money
   const hrs={worked:0,scheduled:0,proposed:0};
-  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;hrs[bucketOf(sh)]+=missedOf(sh,state,sIdx);});
+  const m$={worked:0,scheduled:0,proposed:0};
+  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;const b=bucketOf(sh);hrs[b]+=missedOf(sh,state,sIdx);m$[b]+=pay(sh);});
+  if(Number.isFinite((state.monthOverrides||{})[viewYM]))m$.worked=state.monthOverrides[viewYM];   // a catch-up month's worked $ = its override
   // proposed windows: money is pinned (X×rate); hours contribute their low end (a floor) for the window's month
   (state.windows||[]).forEach(w=>{if(!w.from.startsWith(yr))return;const b=windowBand(w,state,sIdx);
-    proposed$+=b.money;if(mk(w.from)===viewYM)hrs.proposed+=b.min;});
+    proposed$+=b.money;if(mk(w.from)===viewYM){hrs.proposed+=b.min;m$.proposed+=b.money;}});
   // travel days add their hours to the bucket of their cluster (proposed → proposed; else worked/scheduled by date)
   const tb=travelBand(state,sIdx);
   Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;const info=tb[dt],miss=travelMissed(dt,info,state,travelEditOf(state,dt));
     hrs[info.status==="proposed"?"proposed":(dt<TODAY_S?"worked":"scheduled")]+=miss;});
-  return {worked$,scheduled$,proposed$,hrs};
+  return {worked$,scheduled$,proposed$,hrs,month:m$};
 }
 
 /* ════════ persistence + sanitize ════════
@@ -423,43 +425,61 @@ const Stat=({label,value,sub,accent})=> <div style={{minWidth:78}}>
   <div style={{fontSize:16,fontWeight:800,color:accent||C.ink,letterSpacing:"-0.02em",fontVariantNumeric:"tabular-nums"}}>{value}</div>
   {sub&&<div style={{fontSize:10,color:C.gray}}>{sub}</div>}</div>;
 
-/* ════════ BANNER — Worked / Scheduled / Proposed × $ / hours ════════ */
-function Banner({agg,goal,viewYM,mobile}){
+/* ════════ BANNER — annual: Worked / Scheduled / Proposed $ + goal pace ════════ */
+function Banner({agg,goal,mobile}){
   const projected=agg.worked$+agg.scheduled$;
   const pct=goal>0?clamp(projected/goal,0,1):0;
   const wpct=goal>0?clamp(agg.worked$/goal,0,1):0;
-  const my=MON[+viewYM.slice(5,7)-1];
   const goalBar=<div style={{height:mobile?5:8,borderRadius:5,background:C.line2,position:"relative",overflow:"hidden"}}>
     <div style={{position:"absolute",inset:0,width:`${pct*100}%`,background:C.bar}}/>
     <div style={{position:"absolute",inset:0,width:`${wpct*100}%`,background:C.juniper}}/></div>;
-  if(mobile){
-    const h1=Math.round(agg.hrs.worked),h2=Math.round(agg.hrs.scheduled),h3=Math.round(agg.hrs.proposed);
-    return <div style={{borderBottom:`1px solid ${C.line}`,background:C.panel,padding:"5px 12px",flexShrink:0}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:11,fontVariantNumeric:"tabular-nums"}}>
-        <span><b style={{fontSize:13.5}}>{fmtK(agg.worked$)}</b> <span style={{color:C.mute}}>worked</span></span>
-        <span><b style={{fontSize:12.5}}>{fmtK(agg.scheduled$)}</b> <span style={{color:C.mute}}>sched</span></span>
-        <span style={{color:C.ocean}}><b style={{fontSize:12.5}}>{fmtK(agg.proposed$)}</b> <span style={{color:C.mute}}>prop</span></span>
-      </div>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
-        <div style={{flex:1}}>{goalBar}</div>
-        <span style={{fontSize:9.5,color:C.mute,whiteSpace:"nowrap"}}>{my} miss {h1}/{h2}/<span style={{color:C.ocean}}>{h3}</span>h</span>
-      </div>
-    </div>;
-  }
+  if(mobile)return <div style={{borderBottom:`1px solid ${C.line}`,background:C.panel,padding:"5px 12px",flexShrink:0}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:11,fontVariantNumeric:"tabular-nums"}}>
+      <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color:C.mute}}>{YEAR}</span>
+      <span><b style={{fontSize:13.5}}>{fmtK(agg.worked$)}</b> <span style={{color:C.mute}}>worked</span></span>
+      <span><b style={{fontSize:12.5}}>{fmtK(agg.scheduled$)}</b> <span style={{color:C.mute}}>sched</span></span>
+      <span style={{color:C.ocean}}><b style={{fontSize:12.5}}>{fmtK(agg.proposed$)}</b> <span style={{color:C.mute}}>prop</span></span>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
+      <div style={{flex:1}}>{goalBar}</div>
+      <span style={{fontSize:9.5,color:C.mute,whiteSpace:"nowrap"}}>goal {fmtK(goal)}</span>
+    </div>
+  </div>;
   return <div style={{borderBottom:`1px solid ${C.line}`,background:C.panel,padding:"9px 14px",flexShrink:0}}>
     <div style={{display:"flex",gap:22,flexWrap:"wrap",alignItems:"flex-end"}}>
-      <Stat label="Worked $" value={fmtK(agg.worked$)} sub={`${YEAR} to date`}/>
+      <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>{YEAR}</span>
+      <Stat label="Worked $" value={fmtK(agg.worked$)} sub="to date"/>
       <Stat label="Scheduled $" value={fmtK(agg.scheduled$)} sub="committed ahead" accent={C.ink}/>
       <Stat label="Proposed $" value={fmtK(agg.proposed$)} sub="if it lands" accent={C.ocean}/>
-      <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
-      <Stat label={`Missed · ${my}`} value={fmtH(agg.hrs.worked)} sub="worked"/>
-      <Stat label="·" value={fmtH(agg.hrs.scheduled)} sub="scheduled"/>
-      <Stat label="·" value={fmtH(agg.hrs.proposed)} sub="proposed" accent={C.ocean}/>
       <div style={{flex:1,minWidth:160}}>
         <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:3}}>
           Goal {fmtK(goal)} · projected {fmtK(projected)}</div>
         {goalBar}
       </div>
+    </div>
+  </div>;
+}
+/* ════════ MONTH BAR — the focused month's $ + hours missed ════════ */
+function MonthBar({agg,viewYM,mobile}){
+  const my=`${MON[+viewYM.slice(5,7)-1]} ${viewYM.slice(0,4)}`,m=agg.month,h=agg.hrs;
+  const totMiss=Math.round((h.worked+h.scheduled+h.proposed)*10)/10;
+  if(mobile)return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"4px 12px",flexShrink:0,
+    display:"flex",alignItems:"baseline",gap:8,fontSize:10.5,fontVariantNumeric:"tabular-nums",flexWrap:"wrap"}}>
+    <b style={{fontSize:11}}>{my}</b>
+    <span>{fmtK(m.worked)}<span style={{color:C.mute}}>·w</span> {fmtK(m.scheduled)}<span style={{color:C.mute}}>·s</span> <span style={{color:C.ocean}}>{fmtK(m.proposed)}<span style={{color:C.mute}}>·p</span></span></span>
+    <span style={{marginLeft:"auto",color:C.gray}}>miss {Math.round(h.worked)}/{Math.round(h.scheduled)}/<span style={{color:C.ocean}}>{Math.round(h.proposed)}</span>h</span>
+  </div>;
+  return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"7px 14px",flexShrink:0}}>
+    <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-end"}}>
+      <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>{my}</span>
+      <Stat label="Worked $" value={fmtK(m.worked)}/>
+      <Stat label="Scheduled $" value={fmtK(m.scheduled)} accent={C.ink}/>
+      <Stat label="Proposed $" value={fmtK(m.proposed)} accent={C.ocean}/>
+      <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
+      <Stat label="Missed" value={fmtH(h.worked)} sub="worked"/>
+      <Stat label="·" value={fmtH(h.scheduled)} sub="scheduled"/>
+      <Stat label="·" value={fmtH(h.proposed)} sub="proposed" accent={C.ocean}/>
+      <Stat label="·" value={fmtH(totMiss)} sub="total"/>
     </div>
   </div>;
 }
@@ -1249,7 +1269,8 @@ function App(){
           color:tab===id?C.ink:C.mute,borderBottom:tab===id?`2px solid ${C.ink}`:"2px solid transparent",marginBottom:-1}}>{label}</button>)}
       <span style={{marginLeft:"auto",alignSelf:"center",fontSize:9.5,color:C.mute,padding:"0 14px"}}>today {TODAY_S}</span>
     </div>
-    {tab==="calendar"&&<Banner agg={agg} goal={state.settings.goal} viewYM={viewYM} mobile={mobile}/>}
+    {tab==="calendar"&&<Banner agg={agg} goal={state.settings.goal} mobile={mobile}/>}
+    {tab==="calendar"&&<MonthBar agg={agg} viewYM={viewYM} mobile={mobile}/>}
     <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       {tab==="calendar"&&<div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
         {/* phone: calendar over readout. tablet/desktop: calendar left, readout as a tall right panel. */}
