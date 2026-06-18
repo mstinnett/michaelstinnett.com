@@ -167,11 +167,12 @@ function resolveEntry(site,type){
 const isCat=t=>t==="day"||t==="night";              // coarse type vs a specific catalog id
 const shiftCat=(site,type)=>SHIFT_BY[resolveEntry(site,type).shift].night?"night":"day";
 const specificType=(site,type)=>isCat(type)?resolveEntry(site,type).shift:type;   // coarse → representative specific shift
+const entryHours=e=>Number.isFinite(e&&e.hours)?e.hours:(SHIFT_BY[e&&e.shift]||SHIFT_BY.d7).hours;   // per-menu-entry editable duration
 function shiftInterval(site,type){            // [startHour, endHour] within the day
   const e=resolveEntry(site,type),sh=SHIFT_BY[e.shift]||SHIFT_BY.d7,start=parseHM(sh.start);
-  return [start,start+sh.hours];
+  return [start,start+entryHours(e)];
 }
-function shiftPay(site,type){const e=resolveEntry(site,type),sh=SHIFT_BY[e.shift]||SHIFT_BY.d7;return e.rate*sh.hours;}
+function shiftPay(site,type){const e=resolveEntry(site,type);return (+e.rate||0)*entryHours(e);}
 
 const isWeekend=str=>{const g=pd(str).getDay();return g===0||g===6;};
 const calCovers=(cal,str)=>(cal.ranges||[]).some(r=>str>=r.from&&str<=r.to);
@@ -420,6 +421,14 @@ const Field=({label,children})=> <label style={{display:"block",marginBottom:9}}
   <div style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:3}}>{label}</div>
   {children}</label>;
 const inp={fontFamily:MONO,fontSize:13,padding:"6px 8px",border:`1px solid ${C.line}`,borderRadius:6,background:C.panel,color:C.ink,width:"100%"};
+// number input you can actually clear and retype — no stuck 0 (commits on change, 0 only on blur-while-empty)
+function NumInput({value,onChange,style,min,step}){
+  const [s,setS]=useState(String(value));
+  useEffect(()=>{setS(cur=>(+cur===+value?cur:String(value)));},[value]);   // sync external changes without clobbering mid-edit
+  return <input type="number" inputMode="decimal" min={min} step={step} value={s} style={style}
+    onChange={e=>{const v=e.target.value;setS(v);if(v!==""&&v!=="-"&&!isNaN(+v))onChange(+v);}}
+    onBlur={()=>{if(s===""||isNaN(+s)){setS(String(value));}}}/>;
+}
 const Stat=({label,value,sub,accent})=> <div style={{minWidth:78}}>
   <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute}}>{label}</div>
   <div style={{fontSize:16,fontWeight:800,color:accent||C.ink,letterSpacing:"-0.02em",fontVariantNumeric:"tabular-nums"}}>{value}</div>
@@ -1069,6 +1078,7 @@ function TripsCalsTab({state,mutate}){
 }
 function SitesTab({state,mutate}){
   const setRate=(sid,shift,rate)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,menu:x.menu.map(m=>m.shift===shift?{...m,rate}:m)})}));
+  const setHours=(sid,shift,hours)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,menu:x.menu.map(m=>m.shift===shift?{...m,hours:Math.max(0.5,hours)}:m)})}));
   const addShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.some(m=>m.shift===shiftId)?x:{...x,menu:[...x.menu,{shift:shiftId,rate:200}]})}));
   const rmShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.length<=1?x:{...x,menu:x.menu.filter(m=>m.shift!==shiftId)})}));
   const setTravel=(sid,patch)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,travel:Object.assign({},x.travel||TRAVEL_DEFAULT[x.reach]||TRAVEL_DEFAULT.local,patch)})}));
@@ -1089,12 +1099,13 @@ function SitesTab({state,mutate}){
         <select value={s.reach} onChange={e=>setReach(s.id,e.target.value)} style={{...inp,width:"auto",padding:"4px 6px",fontSize:11.5}}>
           {["local","nm","rural_nm"].map(r=><option key={r} value={r}>{REACH_LABEL[r]}</option>)}</select>
         <button onClick={()=>rmSite(s.id)} title="delete site" style={{...delBtn,marginLeft:"auto"}}>✕ delete</button></div>
-      <div style={{display:"flex",flexDirection:"column",gap:6}}>{s.menu.map(m=>{const sh=SHIFT_BY[m.shift];
-        return <div key={m.shift} style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,flexWrap:"wrap"}}>
-          <span style={{minWidth:128}}><b>{sh.label}</b> <span style={{color:C.mute}}>· {sh.night?"Night":"Day"}</span></span>
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>{s.menu.map(m=>{const sh=SHIFT_BY[m.shift],hrs=entryHours(m),start=(sh.label.split(" · ")[0]);
+        return <div key={m.shift} style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,flexWrap:"wrap"}}>
+          <span style={{minWidth:74}}><b>{start}</b> <span style={{color:C.mute}}>{sh.night?"Night":"Day"}</span></span>
+          <NumInput value={hrs} min="0.5" step="0.5" onChange={v=>setHours(s.id,m.shift,v)} style={{...inp,width:54,padding:"3px 6px"}}/><span style={{color:C.gray,marginLeft:-2}}>h</span>
           <span style={{color:C.gray}}>$/hr</span>
-          <input type="number" value={m.rate} onChange={e=>setRate(s.id,m.shift,+e.target.value||0)} style={{...inp,width:76,padding:"3px 6px"}}/>
-          <span style={{color:C.mute}}>= {fmt$(m.rate*sh.hours)}/shift</span>
+          <NumInput value={m.rate} min="0" onChange={v=>setRate(s.id,m.shift,v)} style={{...inp,width:72,padding:"3px 6px"}}/>
+          <span style={{color:C.mute}}>= {fmt$((+m.rate||0)*hrs)}/shift</span>
           {s.menu.length>1&&<button onClick={()=>rmShift(s.id,m.shift)} title="remove shift"
             style={{fontFamily:MONO,fontSize:12,border:`1px solid ${C.line}`,background:C.panel,color:C.gray,borderRadius:5,cursor:"pointer",padding:"2px 7px"}}>✕</button>}
         </div>;})}</div>
@@ -1102,9 +1113,9 @@ function SitesTab({state,mutate}){
       {s.reach!=="local"&&(()=>{const tv=s.travel||TRAVEL_DEFAULT[s.reach]||TRAVEL_DEFAULT.local;
         return <div style={{marginTop:10,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
           <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>Travel</span>
-          <label style={{fontSize:10.5,color:C.gray}}>days out<br/><input type="number" min="0" max="3" value={tv.beforeDays} onChange={e=>setTravel(s.id,{beforeDays:Math.max(0,+e.target.value||0)})} style={{...inp,width:54,padding:"3px 6px"}}/></label>
+          <label style={{fontSize:10.5,color:C.gray}}>days out<br/><NumInput value={tv.beforeDays} min="0" onChange={v=>setTravel(s.id,{beforeDays:Math.max(0,Math.round(v))})} style={{...inp,width:54,padding:"3px 6px"}}/></label>
           <label style={{fontSize:10.5,color:C.gray}}>depart<br/><input type="time" value={tv.departTime} onChange={e=>setTravel(s.id,{departTime:e.target.value})} style={{...inp,width:110,padding:"3px 6px"}}/></label>
-          <label style={{fontSize:10.5,color:C.gray}}>days back<br/><input type="number" min="0" max="3" value={tv.afterDays} onChange={e=>setTravel(s.id,{afterDays:Math.max(0,+e.target.value||0)})} style={{...inp,width:54,padding:"3px 6px"}}/></label>
+          <label style={{fontSize:10.5,color:C.gray}}>days back<br/><NumInput value={tv.afterDays} min="0" onChange={v=>setTravel(s.id,{afterDays:Math.max(0,Math.round(v))})} style={{...inp,width:54,padding:"3px 6px"}}/></label>
           <label style={{fontSize:10.5,color:C.gray}}>return<br/><input type="time" value={tv.returnTime} onChange={e=>setTravel(s.id,{returnTime:e.target.value})} style={{...inp,width:110,padding:"3px 6px"}}/></label>
         </div>;})()}
     </div>;})}
