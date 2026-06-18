@@ -20,7 +20,7 @@
     --juniper:#3E7D63;--ocean:#356C88;--danger:#9E5C46;
     --weekend:#F1EFEC;--sel:#EFEAE1;--block-trip:#E6EEF3;--block-fam:#E6F0E9;
     --warn:#B07A4E;--bar:#C7C1B9;
-    --shift-day:#7A8C5E;--shift-night:#3B4A6B;
+    --shift-day:#7A8C5E;--shift-night:#3B4A6B;--away:#13315C;--away-soft:#DCE4EF;
   }
   :root[data-theme="dark"]{
     --bg:#141310;--panel:#221F1B;--panel2:#1A1714;--ink:#F0ECE6;--gray:#B2ABA1;--mute:#7E776C;
@@ -28,7 +28,7 @@
     --juniper:#7CC79C;--ocean:#6FB6D6;--danger:#E0AFA3;
     --weekend:#1B1916;--sel:#332D25;--block-trip:#1F3039;--block-fam:#21342B;
     --warn:#E0AFA3;--bar:#6C6358;
-    --shift-day:#A9BD86;--shift-night:#8FA6CE;
+    --shift-day:#A9BD86;--shift-night:#8FA6CE;--away:#6E8FC0;--away-soft:#243349;
   }
   body{overflow:hidden;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;}
   #loader{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;background:var(--bg);font-family:'SF Mono','JetBrains Mono',monospace;}
@@ -63,7 +63,7 @@ const V=k=>`var(--${k})`;
 const C={ink:V("ink"),bg:V("bg"),panel:V("panel"),panel2:V("panel2"),line:V("line"),line2:V("line2"),
   gray:V("gray"),mute:V("mute"),faint:V("faint"),ocean:V("ocean"),juniper:V("juniper"),danger:V("danger"),
   weekend:V("weekend"),sel:V("sel"),blockTrip:V("block-trip"),blockFam:V("block-fam"),warn:V("warn"),bar:V("bar"),
-  shiftDay:V("shift-day"),shiftNight:V("shift-night")};
+  shiftDay:V("shift-day"),shiftNight:V("shift-night"),away:V("away"),awaySoft:V("away-soft")};
 const MONO="'SF Mono','JetBrains Mono','Fira Code',ui-monospace,monospace";
 const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const MONL=["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -153,7 +153,8 @@ function seedState(){
   const settings={wake:"07:00",bed:"20:00",schoolStart:"08:00",schoolEnd:"15:00",goal:220000};
   // a proposed window at a travel site: hold 7 days (incl. a weekend), work 2; a travel day bookends it
   const windows=[{id:"w1",siteId:"santa_fe",type:"day",from:"2026-10-17",to:"2026-10-23",x:2}];
-  return {sites,trips,calendars,shifts,monthOverrides,settings,windows,travelMigrated:true};
+  const aways=[{id:"a1",date:"2026-09-28",kind:"travel"},{id:"a2",date:"2026-07-13",kind:"away"}];   // manually-placed demo days
+  return {sites,trips,calendars,shifts,monthOverrides,settings,windows,aways,travelMigrated:true};
 }
 
 /* ════════ ENGINE ════════ */
@@ -265,51 +266,26 @@ function scheduleWindow(state,sIdx,w){
   return {...state,shifts:[...keep,...made],windows:state.windows.filter(x=>x.id!==w.id)};
 }
 
-/* ─── travel days: bookends around any remote shift cluster, editable ─── */
-function shiftClusters(state,sIdx){
-  const groups={};
-  // any non-co-located remote shift incurs travel; group by site + status (proposed vs scheduled)
-  state.shifts.filter(s=>!s.coLocated&&sIdx[s.siteId]&&sIdx[s.siteId].reach!=="local")
-    .forEach(s=>{const k=s.siteId+"|"+(s.status==="scheduled"?"scheduled":"proposed");(groups[k]=groups[k]||[]).push(s.date);});
-  const out=[];
-  for(const k in groups){
-    const [siteId,status]=k.split("|"),dates=groups[k].slice().sort();let run=null;
-    dates.forEach(dt=>{if(run&&Math.round((pd(dt)-pd(run.to))/864e5)===1)run.to=dt;
-      else {if(run)out.push(run);run={siteId,status,from:dt,to:dt};}});
-    if(run)out.push(run);
-  }
-  return out;
-}
-// stable key for a cluster's travel day, so coarse/time/moved overrides survive recompute
+/* ─── away days: manually-placed, one per day — "travel" (✈, editable) or "away" (full day, recharge) ─── */
 const DATE_RE2=/^\d{4}-\d{2}-\d{2}$/;
-const travelKey=(c,kind,i)=>`${c.siteId}|${kind}|${kind==="depart"?c.from:c.to}|${i}`;
-// effective-date → {kind, time, siteId, status, key, defDate} for every travel day (skips real shift days)
-function travelBand(state,sIdx){
-  const map={},shiftDates=new Set(state.shifts.map(s=>s.date)),edits=state.travelEdits||{};
-  shiftClusters(state,sIdx).forEach(c=>{
-    const site=sIdx[c.siteId],tv=site.travel||TRAVEL_DEFAULT[site.reach]||TRAVEL_DEFAULT.local;
-    const put=(kind,i,defDate,time)=>{const key=travelKey(c,kind,i),e=edits[key],
-      eff=(e&&DATE_RE2.test(e.date))?e.date:defDate;
-      if(!map[eff]&&!shiftDates.has(eff))map[eff]={kind,time,siteId:c.siteId,status:c.status,key,defDate};};
-    for(let i=(tv.beforeDays||0);i>=1;i--)put("depart",i,ds(ad(pd(c.from),-i)),tv.departTime);
-    for(let i=1;i<=(tv.afterDays||0);i++)put("return",i,ds(ad(pd(c.to),i)),tv.returnTime);
-  });
+// date → {id, kind:"travel"|"away", coarse} for every placed away day (skips real shift days)
+function travelBand(state){
+  const map={},shiftDates=new Set(state.shifts.map(s=>s.date));
+  (state.aways||[]).forEach(a=>{if(!a||!DATE_RE2.test(a.date)||shiftDates.has(a.date)||map[a.date])return;
+    map[a.date]={id:a.id,kind:a.kind==="away"?"away":"travel",coarse:a.coarse};});
   return map;
 }
-// hours a travel day costs at its (possibly moved) date: coarse half/whole, else exact
+// hours an away/travel day costs: away = the whole kid-awake day; travel = whole (default) or half
 function travelMissed(dateStr,info,state){
-  const edit=(state.travelEdits||{})[info.key]||{};
-  const aw=homeAwake(dateStr,state),full=aw.reduce((t,[a,b])=>t+(b-a),0);
-  if(edit.coarse==="whole")return Math.round(full*10)/10;
-  if(edit.coarse==="half")return Math.round(full*5)/10;
-  const time=parseHM(edit.time||info.time);
-  let t=0;for(const [a,b] of aw)t+=info.kind==="depart"?ovl(a,b,time,24):ovl(a,b,0,time);
-  return Math.round(t*10)/10;
+  const full=dayAwakeHours(dateStr,state);
+  if(info.kind==="away")return Math.round(full*10)/10;
+  if(info.coarse==="half")return Math.round(full*5)/10;
+  return Math.round(full*10)/10;
 }
-// move a travel day to a new date (or clear the override when back at default)
-const moveTravelEdit=(s,key,date,defDate)=>{const te={...(s.travelEdits||{})},cur={...(te[key]||{})};
-  if(!date||date===defDate)delete cur.date;else cur.date=date;
-  if(Object.keys(cur).length)te[key]=cur;else delete te[key];return {...s,travelEdits:te};};
+const addAway=(s,date,kind)=>({...s,aways:[...(s.aways||[]).filter(a=>a.date!==date),{id:"a"+Date.now().toString(36),date,kind}]});
+const rmAwayAt=(s,date)=>({...s,aways:(s.aways||[]).filter(a=>a.date!==date)});
+const moveAway=(s,id,date)=>s.shifts.some(x=>x.date===date)||(s.aways||[]).some(a=>a.date===date&&a.id!==id)?s:{...s,aways:(s.aways||[]).map(a=>a.id===id?{...a,date}:a)};
+const setAway=(s,id,patch)=>({...s,aways:(s.aways||[]).map(a=>a.id===id?{...a,...patch}:a)});
 // a month with a 2026 catch-up override is frozen: its days can't hold shifts
 const monthLocked=(state,dateStr)=>Number.isFinite((state.monthOverrides||{})[mk(dateStr)]);
 
@@ -335,9 +311,9 @@ function aggregate(state,sIdx,viewYM){
   (state.windows||[]).forEach(w=>{if(!w.from.startsWith(yr))return;const b=windowBand(w,state,sIdx);
     proposed$+=b.money;if(mk(w.from)===viewYM){hrs.proposed+=b.min;m$.proposed+=b.money;mN.proposed+=b.X;}});
   // travel days add their hours to the bucket of their cluster (proposed → proposed; else worked/scheduled by date)
-  const tb=travelBand(state,sIdx);
+  const tb=travelBand(state);
   Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;const info=tb[dt],miss=travelMissed(dt,info,state);
-    hrs[info.status==="proposed"?"proposed":(dt<TODAY_S?"worked":"scheduled")]+=miss;});
+    hrs[dt<TODAY_S?"worked":"scheduled"]+=miss;});
   return {worked$,scheduled$,proposed$,hrs,month:m$,monthN:mN};
 }
 
@@ -371,7 +347,8 @@ function sanitize(o){
   const windows=arr(o.windows,[]).filter(w=>w&&DATE_RE.test(w.from)&&DATE_RE.test(w.to)&&w.from<=w.to&&ids.has(w.siteId))
     .map(w=>({id:String(w.id||("w"+Math.random().toString(36).slice(2))),siteId:w.siteId,type:w.type||"day",from:w.from,to:w.to,x:clamp(Math.round(+w.x||1),1,99)}));
   return {sites,trips:arr(o.trips,seed.trips),calendars:arr(o.calendars,seed.calendars),
-    settings,monthOverrides:obj(o.monthOverrides),travelEdits:obj(o.travelEdits),shifts,windows,travelMigrated:true};
+    settings,monthOverrides:obj(o.monthOverrides),shifts,windows,travelMigrated:true,
+    aways:arr(o.aways,[]).filter(a=>a&&DATE_RE.test(a.date)).map(a=>({id:String(a.id||("a"+Math.random().toString(36).slice(2))),date:a.date,kind:a.kind==="away"?"away":"travel",...(a.coarse==="half"?{coarse:"half"}:{})}))};
 }
 function readHash(){
   try{const m=(location.hash||"").match(/[#&]s=([^&]+)/);
@@ -523,11 +500,11 @@ function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.
 const siteCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
 function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,placing,box,selTrip,selWin,onEdge,onGrabTravel,onTap,onDown,onEnter}){
   if(!str)return <div style={box}/>;
-  const allDay=homeAllDay(str,state),trip=tripOn(str,state.trips),showTravel=travel&&!shift;
+  const allDay=homeAllDay(str,state),trip=tripOn(str,state.trips),showTravel=travel&&!shift,awayDay=showTravel&&travel.kind==="away";
   const cals=visCals(state).filter(c=>calCovers(c,str)).slice(0,3);
   let bg=C.panel;
   if(trip)bg=C.blockTrip;else if(allDay)bg=C.weekend;
-  if(showTravel)bg=C.panel;          // travel day sits on top of a trip band
+  if(showTravel)bg=awayDay?C.away:C.panel;          // away = Prussian blue; travel punches through a trip band
   if(win&&win.kind==="span")bg=C.sel;
   if(preview||placing)bg=C.sel;
   const hatch=allDay&&!trip&&!win&&!preview&&!placing;   // kids home all day → diagonal hatch for texture
@@ -536,7 +513,7 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
   const warn=shift?warnOf(shift,state):null;
   const tMissed=showTravel?travelMissed(str,travel,state):0;
   const day=+str.slice(8,10);
-  const ringCol=placing?C.ocean:selected?C.ink:warn?C.warn:win?C.ocean:showTravel?C.ocean:C.line2;
+  const ringCol=placing?C.ocean:selected?C.ink:warn?C.warn:win?C.ocean:showTravel?(awayDay?C.away:C.ocean):C.line2;
   const spanFirst=win&&win.kind==="span"&&win.w.from===str;
   const grabTravel=showTravel&&onGrabTravel;
   return <div onClick={()=>onTap(str)} data-date={str}
@@ -556,9 +533,8 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
       </div>
     </div>
     {shift?<ShiftPill site={sIdx[shift.siteId]} cat={cat} status={status} co={shift.coLocated}/>
-      :showTravel?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:C.ocean,display:"flex",alignItems:"center",gap:2,
-        border:`1.5px ${travel.status==="proposed"?"dashed":"solid"} ${C.ocean}`,opacity:travel.status==="proposed"?0.7:1,
-        borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>✈ {fmtH(tMissed)}</div>
+      :showTravel?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:awayDay?"#fff":C.ocean,display:"flex",alignItems:"center",gap:2,
+        border:`1.5px solid ${awayDay?"#fff":C.ocean}`,borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>{awayDay?"☾":"✈"} {fmtH(tMissed)}</div>
       :spanFirst?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:C.ocean,border:`1.5px dashed ${C.ocean}`,
         borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>{siteCode(sIdx[win.w.siteId])} ×{win.w.x}</div>
       :win&&win.kind==="span"?<div style={{marginTop:"auto",height:3,borderRadius:2,background:C.ocean,opacity:0.4}}/>:null}
@@ -619,22 +595,23 @@ function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,placing,s
   const allDay=homeAllDay(str,state),trip=tripOn(str,state.trips),locked=monthLocked(state,str);
   const cals=visCals(state).filter(c=>calCovers(c,str));
   let bg=C.panel,border=`1px solid ${C.line2}`,op=1,filled=false;
+  const awayDay=showTravel&&travel.kind==="away",tCol=showTravel?(awayDay?C.away:C.ocean):null;
   if(trip)bg=C.blockTrip;else if(allDay)bg=C.weekend;
-  if(showTravel)bg=C.panel;          // travel day sits on top of (punches through) a trip band
+  if(showTravel)bg=awayDay?C.away:C.panel;          // away day = Prussian blue fill; travel day punches through
   if(win&&win.kind==="span")bg=C.sel;if(preview||placing)bg=C.sel;
   const warn=shift?warnOf(shift,state):null;
   if(shift){const cat=shiftCat(sIdx[shift.siteId],shift.type),status=bucketOf(shift),col=cat==="night"?C.shiftNight:C.shiftDay;
     if(status==="proposed")border=`1.5px dashed ${col}`;else{bg=col;border=`1px solid ${col}`;op=status==="worked"?0.6:1;filled=true;}}
   const today=str===TODAY_S;
-  const ringCol=placing?C.ocean:warn?C.warn:(win||showTravel)?C.ocean:null;
+  const ringCol=placing?C.ocean:warn?C.warn:win?C.ocean:tCol;
   const grabTravel=showTravel&&onGrabTravel;
   return <div data-date={str} title={str} onClick={()=>onTap(str)}
     onPointerDown={onDown?(e=>onDown(str,e)):(grabTravel?(e=>onGrabTravel(travel,e)):undefined)} onPointerEnter={onEnter?()=>onEnter(str):undefined}
     style={{...base,background:bg,border:placing?`1.5px dashed ${C.ocean}`:(ringCol&&!shift)?`1.5px ${(showTravel||(win&&win.kind==="travel"))?"dashed":"solid"} ${ringCol}`:border,
       outline:selected?`2px solid ${C.ink}`:"none",outlineOffset:-1,opacity:locked?0.4:op,touchAction:(onDown||grabTravel)?"none":"auto",cursor:grabTravel?"grab":"pointer",
       display:"flex",alignItems:"center",justifyContent:"center"}}>
-    {cell>=22&&<span style={{fontSize:Math.max(8,Math.round(cell*0.4)),fontWeight:700,color:filled?"#fff":C.gray,lineHeight:1,position:"relative",zIndex:1}}>{+str.slice(8,10)}</span>}
-    {showTravel&&<span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:Math.max(9,Math.round(cell*0.5)),color:C.ocean,lineHeight:1}}>✈</span>}
+    {cell>=22&&<span style={{fontSize:Math.max(8,Math.round(cell*0.4)),fontWeight:700,color:(filled||awayDay)?"#fff":C.gray,lineHeight:1,position:"relative",zIndex:1}}>{+str.slice(8,10)}</span>}
+    {showTravel&&<span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:Math.max(9,Math.round(cell*0.5)),color:awayDay?"#fff":C.ocean,lineHeight:1}}>{awayDay?"☾":"✈"}</span>}
     {today&&<span style={{position:"absolute",top:-2,right:-2,width:5,height:5,borderRadius:5,background:C.danger,zIndex:2}}/>}
     {cals.length>0&&<div style={{position:"absolute",left:0,right:0,bottom:0,height:3,display:"flex",borderRadius:"0 0 2px 2px",overflow:"hidden",pointerEvents:"none"}}>
       {cals.slice(0,3).map((c,i)=><span key={i} style={{flex:1,background:c.color}}/>)}</div>}
@@ -680,7 +657,7 @@ function CalFilter({state,mutate}){
   </div>;
 }
 function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,placing,onCreateWindow,selTid,selWid,onEdge,onGrabTravel}){
-  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["erase","⌫","Erase"]];
+  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["travel","✈","Travel"],["away","☾","Away"],["erase","⌫","Erase"]];
   const selTrip=selTid&&(state.trips||[]).find(t=>t.id===selTid)||null;
   const selWin=selWid&&(state.windows||[]).find(w=>w.id===selWid)||null;
   const [cell,setCell]=useState(()=>{try{const v=+localStorage.getItem("perDiemZoom");return v>=12&&v<=42?v:18;}catch(e){return 18;}});   // strip zoom, remembered
@@ -775,7 +752,7 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected}){
       ({fmt$(state.monthOverrides[mk(selected)])} earned). Its days are frozen — clear the override in <b>Trips&nbsp;&amp;&nbsp;Calendars</b> to edit shifts.</div>
   </div>;
   // travel day (scheduled remote cluster) → exact + coarse editor
-  const tinfo=travelBand(state,sIdx)[selected];
+  const tinfo=travelBand(state)[selected];
   if(!shift&&tinfo)return <TravelReadout state={state} sIdx={sIdx} dateStr={selected} info={tinfo} head={head} awake={awake} mutate={mutate} setSelected={setSelected}/>;
 
   if(!shift)return <div style={{padding:"14px"}}>{head}
@@ -932,43 +909,40 @@ function TripReadout({state,tid,mutate,onClose}){
   </div>;
 }
 
-/* ════════ TRAVEL READOUT — a real travel day: exact time + coarse feel ════════ */
+/* ════════ AWAY READOUT — a manually-placed travel day (✈) or day away (recharge) ════════ */
 function TravelReadout({state,sIdx,dateStr,info,head,awake,mutate,setSelected}){
-  const edit=(state.travelEdits||{})[info.key]||{};
-  const setEdit=patch=>mutate(s=>{const te={...(s.travelEdits||{})};const next={...(te[info.key]||{}),...patch};
-    Object.keys(next).forEach(k=>{if(next[k]==null)delete next[k];});
-    if(Object.keys(next).length)te[info.key]=next;else delete te[info.key];return {...s,travelEdits:te};});
-  const moveBy=n=>{const nd=ds(ad(pd(dateStr),n));if(state.shifts.some(x=>x.date===nd))return;mutate(s=>moveTravelEdit(s,info.key,nd,info.defDate));setSelected&&setSelected(nd);};
-  const resetPos=()=>{mutate(s=>moveTravelEdit(s,info.key,null,info.defDate));setSelected&&setSelected(info.defDate);};
-  const missed=travelMissed(dateStr,info,state),site=sIdx[info.siteId];
-  const feel=edit.coarse||"exact";
-  const time=edit.time||info.time;
-  const moved=DATE_RE2.test(edit.date)&&edit.date!==info.defDate;
+  const away=info.kind==="away",col=away?C.away:C.ocean;
+  const missed=travelMissed(dateStr,info,state);
+  const moveBy=n=>{const nd=ds(ad(pd(dateStr),n));mutate(s=>moveAway(s,info.id,nd));setSelected&&setSelected(nd);};
+  const setKind=k=>mutate(s=>setAway(s,info.id,{kind:k,coarse:undefined}));
+  const setCoarse=c=>mutate(s=>setAway(s,info.id,{coarse:c}));
+  const del=()=>mutate(s=>rmAwayAt(s,dateStr));
   return <div style={{padding:"14px"}}>{head}
-    <div style={{fontSize:11.5,fontWeight:700,color:C.ocean,marginBottom:8}}>
-      ✈ Travel day — {info.kind==="depart"?"leaving for":"home from"} {site?site.name:"a trip"}</div>
+    <div style={{fontSize:11.5,fontWeight:700,color:col,marginBottom:8}}>
+      {away?"☾ Day away — gone all day, recharging":"✈ Travel day — in transit"}</div>
     <Field label="When"><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
       <Btn small onClick={()=>moveBy(-1)}>◀ earlier</Btn>
       <span style={{fontSize:11.5,fontWeight:700,minWidth:96,textAlign:"center"}}>{MON[pd(dateStr).getMonth()]} {pd(dateStr).getDate()}</span>
       <Btn small onClick={()=>moveBy(1)}>later ▶</Btn>
-      {moved&&<Btn small onClick={resetPos}>reset</Btn>}
       <span style={{fontSize:10,color:C.mute}}>drag it on the calendar too</span>
     </div></Field>
     <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
       <div style={{flex:"1 1 280px"}}>
-        <Field label="How it feels"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-          <Btn on={feel==="exact"} onClick={()=>setEdit({coarse:undefined})}>Exact time</Btn>
-          <Btn on={feel==="half"} onClick={()=>setEdit({coarse:"half"})}>½ a day</Btn>
-          <Btn on={feel==="whole"} onClick={()=>setEdit({coarse:"whole"})}>Whole day</Btn>
+        <Field label="Type"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          <Btn on={!away} onClick={()=>setKind("travel")}>✈ Travel day</Btn>
+          <Btn on={away} onClick={()=>setKind("away")}>☾ Day away</Btn>
         </div></Field>
-        {feel==="exact"&&<Field label={info.kind==="depart"?"Depart time":"Return time"}>
-          <input type="time" style={{...inp,maxWidth:150}} value={time} onChange={e=>setEdit({time:e.target.value})}/>
-          <div style={{fontSize:10.5,color:C.mute,marginTop:3}}>
-            {info.kind==="depart"?`you miss kid-awake time after ${time}`:`you miss kid-awake time until ${time}`}</div></Field>}
-        {feel!=="exact"&&<div style={{fontSize:10.5,color:C.mute}}>Stored as ~{fmtH(missed)} of this day's {fmtH(awake)} kid-awake hours, so monthly totals stay one clean number.</div>}
+        {!away&&<Field label="How much"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          <Btn on={info.coarse!=="half"} onClick={()=>setCoarse(undefined)}>Whole day</Btn>
+          <Btn on={info.coarse==="half"} onClick={()=>setCoarse("half")}>½ a day</Btn>
+        </div></Field>}
+        <div style={{fontSize:10.5,color:C.mute}}>{away
+          ?`Misses the whole ${fmtH(awake)} kid-awake day — but it's restful, so it reads cool.`
+          :`Counts ~${fmtH(missed)} of this day's ${fmtH(awake)} kid-awake hours.`}</div>
       </div>
       <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
-        <Stat label="Hours missed" value={fmtH(missed)} sub={feel==="exact"?"exact":feel==="half"?"½ day":"whole day"} accent={C.ocean}/>
+        <Stat label="Hours missed" value={fmtH(missed)} sub={away?"day away":(info.coarse==="half"?"½ day":"whole day")} accent={col}/>
+        <Btn small onClick={del}>Delete</Btn>
       </div>
     </div>
   </div>;
@@ -1201,7 +1175,7 @@ function App(){
 
   const sIdx=useMemo(()=>siteIndex(state.sites),[state.sites]);
   const winBy=useMemo(()=>winBand(state.windows,sIdx),[state.windows,sIdx]);
-  const travelBy=useMemo(()=>travelBand(state,sIdx),[state.shifts,state.travelEdits,sIdx]);
+  const travelBy=useMemo(()=>travelBand(state),[state.shifts,state.aways]);
   const viewYM=`${viewY}-${String(viewM+1).padStart(2,"0")}`;
   const agg=useMemo(()=>aggregate(state,sIdx,viewYM),[state,sIdx,viewYM]);
 
@@ -1217,9 +1191,12 @@ function App(){
       // draw-to-schedule: replaces a proposed shift in place, or drops a fresh scheduled one
       if(ex)mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===ex.id?{...x,status:"scheduled",type:specificType(sIdx[x.siteId],x.type)}:x)}));
       else mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:specificType(sIdx[lastSite],"day"),status:"scheduled",coLocated:false}]}));
+    }else if(tool==="travel"||tool==="away"){
+      if(!ex)mutate(s=>addAway(s,str,tool));   // place a single travel/away day on this day
     }else if(tool==="erase"){
-      // erase the sketch layer: a proposed shift, else a window covering this day (committed shifts need readout delete)
+      // erase the sketch layer: proposed shift, then a placed away/travel day, then a window
       if(ex&&ex.status==="proposed")mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));
+      else if(travelBy[str])mutate(s=>rmAwayAt(s,str));
       else {const w=(state.windows||[]).find(w=>str>=w.from&&str<=w.to);if(w)mutate(s=>({...s,windows:s.windows.filter(x=>x.id!==w.id)}));}
     }
     setSelected(str);
@@ -1252,11 +1229,11 @@ function App(){
     return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[tripDrag]);
   // drag a travel day to another (empty) day — stores a per-trip date override
   const [travelDrag,setTravelDrag]=useState(null);
-  const beginTravelDrag=(info,e)=>{e.stopPropagation();setTravelDrag({key:info.key,defDate:info.defDate,sx:e.clientX,sy:e.clientY,x:e.clientX,y:e.clientY,over:null,moved:false});};
+  const beginTravelDrag=(info,e)=>{e.stopPropagation();setTravelDrag({id:info.id,sx:e.clientX,sy:e.clientY,x:e.clientX,y:e.clientY,over:null,moved:false});};
   useEffect(()=>{if(!travelDrag)return;
     const move=e=>setTravelDrag(d=>{if(!d)return d;const el=document.elementFromPoint(e.clientX,e.clientY),hit=el&&el.closest&&el.closest("[data-date]");
       return {...d,x:e.clientX,y:e.clientY,over:hit?hit.getAttribute("data-date"):null,moved:d.moved||Math.hypot(e.clientX-d.sx,e.clientY-d.sy)>4};});
-    const up=()=>{const d=travelDrag;if(d&&d.moved&&d.over&&!state.shifts.some(x=>x.date===d.over)){mutate(s=>moveTravelEdit(s,d.key,d.over,d.defDate));setSelWid(null);setSelTid(null);setSelected(d.over);}setTravelDrag(null);};
+    const up=()=>{const d=travelDrag;if(d&&d.moved&&d.over){mutate(s=>moveAway(s,d.id,d.over));setSelWid(null);setSelTid(null);setSelected(d.over);}setTravelDrag(null);};
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
     return ()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};},[travelDrag]);
   const placingSet=useMemo(()=>{
