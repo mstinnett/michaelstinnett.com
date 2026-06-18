@@ -732,8 +732,10 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected}){
   const d=pd(selected);
   const dayLabel=`${DOW[d.getDay()]} ${MON[d.getMonth()]} ${d.getDate()}`;
   const setShift=patch=>mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===shift.id?{...x,...patch}:x)}));
-  const addShift=(siteId,type)=>mutate(s=>({...s,shifts:[...s.shifts.filter(x=>x.date!==selected),
-    {id:"s"+Date.now(),date:selected,siteId,type,status:"proposed",coLocated:false}]}));
+  const addShiftAs=(siteId,type,status)=>mutate(s=>({...s,aways:(s.aways||[]).filter(a=>a.date!==selected),
+    shifts:[...s.shifts.filter(x=>x.date!==selected),{id:"s"+Date.now(),date:selected,siteId,
+      type:status==="scheduled"?specificType(sIdx[siteId],type):type,status,coLocated:false}]}));
+  const addDay=kind=>mutate(s=>addAway(s,selected,kind));   // travel / away
   const del=()=>mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==shift.id)}));
 
   const head=<div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:10}}>
@@ -756,8 +758,7 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected}){
   if(!shift&&tinfo)return <TravelReadout state={state} sIdx={sIdx} dateStr={selected} info={tinfo} head={head} awake={awake} mutate={mutate} setSelected={setSelected}/>;
 
   if(!shift)return <div style={{padding:"14px"}}>{head}
-    <div style={{fontSize:11.5,color:C.gray,marginBottom:8}}>No shift here. Add one:</div>
-    <SitePicker sites={state.sites} value={state.sites[0].id} onPick={(sid,ty)=>addShift(sid,ty)} pickType/>
+    <AddDayPanel sites={state.sites} onShift={addShiftAs} onTravel={()=>addDay("travel")} onAway={()=>addDay("away")}/>
   </div>;
 
   const site=sIdx[shift.siteId],cat=shiftCat(site,shift.type),plannedPay=shiftPay(site,shift.type),
@@ -832,14 +833,24 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected}){
     </div>
   </div>;
 }
-function SitePicker({sites,value,onPick,pickType}){
-  const [sid,setSid]=useState(value),[ty,setTy]=useState("day");
-  return <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
-    <div style={{flex:"1 1 200px"}}><Field label="Site"><select style={inp} value={sid} onChange={e=>setSid(e.target.value)}>
-      {sites.map(s=><option key={s.id} value={s.id}>{s.name} · {REACH_LABEL[s.reach]}</option>)}</select></Field></div>
-    {pickType&&<div style={{display:"flex",gap:6,marginBottom:9}}>
-      {["day","night"].map(t=><Btn key={t} on={ty===t} onClick={()=>setTy(t)}>{t==="day"?"Day":"Night"}</Btn>)}</div>}
-    <Btn kind="prim" small onClick={()=>onPick(sid,ty)} title="add proposed shift">+ Propose</Btn>
+// everything you can add to an empty day, right in the info box
+function AddDayPanel({sites,onShift,onTravel,onAway}){
+  const [sid,setSid]=useState(sites[0].id),[ty,setTy]=useState("day");
+  return <div>
+    <div style={{fontSize:11.5,color:C.gray,marginBottom:8}}>Add to this day:</div>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end",marginBottom:9}}>
+      <div style={{flex:"1 1 180px"}}><Field label="Site"><select style={inp} value={sid} onChange={e=>setSid(e.target.value)}>
+        {sites.map(s=><option key={s.id} value={s.id}>{s.name} · {REACH_LABEL[s.reach]}</option>)}</select></Field></div>
+      <div style={{display:"flex",gap:6,marginBottom:9}}>
+        {["day","night"].map(t=><Btn key={t} on={ty===t} onClick={()=>setTy(t)}>{t==="day"?"Day":"Night"}</Btn>)}</div>
+    </div>
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+      <Btn kind="prim" small onClick={()=>onShift(sid,ty,"proposed")}>+ Propose shift</Btn>
+      <Btn small onClick={()=>onShift(sid,ty,"scheduled")}>+ Schedule shift</Btn>
+      <span style={{width:1,height:18,background:C.line,margin:"0 2px"}}/>
+      <Btn small onClick={onTravel}>✈ Travel day</Btn>
+      <Btn small onClick={onAway}>☾ Day away</Btn>
+    </div>
   </div>;
 }
 
