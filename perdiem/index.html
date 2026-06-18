@@ -466,16 +466,13 @@ function MonthBar({agg,viewYM,mobile}){
   if(mobile)return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"4px 12px",flexShrink:0,
     display:"flex",alignItems:"baseline",gap:8,fontSize:10.5,fontVariantNumeric:"tabular-nums",flexWrap:"wrap"}}>
     <b style={{fontSize:11}}>{my}</b>
-    <span>{fmtK(m.worked)}<span style={{color:C.mute}}>·w</span> {fmtK(m.scheduled)}<span style={{color:C.mute}}>·s</span> <span style={{color:C.ocean}}>{fmtK(m.proposed)}<span style={{color:C.mute}}>·p</span></span> <b>={fmtK(tot$)}</b></span>
+    <span><b>{fmtK(tot$)}</b> <span style={{color:C.mute}}>total $</span></span>
     <span style={{marginLeft:"auto",color:C.gray}}>miss <b style={{color:C.ink}}>{Math.round(totMiss)}</b>h</span>
   </div>;
   return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"7px 14px",flexShrink:0}}>
     <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-end"}}>
       <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>{my}</span>
-      <Stat label="Worked $" value={fmtK(m.worked)}/>
-      <Stat label="Scheduled $" value={fmtK(m.scheduled)} accent={C.ink}/>
-      <Stat label="Proposed $" value={fmtK(m.proposed)} accent={C.ocean}/>
-      <Stat label="Total $" value={fmtK(tot$)} sub="all land"/>
+      <Stat label="Total $" value={fmtK(tot$)} sub="worked+sched+proposed"/>
       <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
       <Stat label="Missed" value={fmtH(totMiss)} sub="total this month"/>
     </div>
