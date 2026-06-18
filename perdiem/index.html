@@ -429,6 +429,8 @@ const Stat=({label,value,sub,accent})=> <div style={{minWidth:78}}>
 const MenuItem=({children,on,onClick})=><button onClick={onClick} style={{fontFamily:MONO,fontSize:13,fontWeight:on?800:600,textAlign:"left",
   border:"none",background:on?C.sel:"transparent",color:C.ink,borderRadius:6,cursor:"pointer",padding:"8px 10px",width:"100%",display:"block"}}>{children}</button>;
 const menuHdr={fontSize:9,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",color:C.mute,padding:"4px 10px 4px"};
+const DelX=({onClick})=><button onClick={onClick} title="delete" style={{marginLeft:"auto",alignSelf:"center",fontFamily:MONO,fontSize:13,fontWeight:800,
+  border:`1px solid ${C.line}`,background:C.panel,color:C.gray,borderRadius:5,cursor:"pointer",padding:"1px 8px",flexShrink:0}}>✕</button>;
 
 /* ════════ BANNER — annual: Worked / Scheduled / Proposed $ + goal pace ════════ */
 function Banner({agg,goal,mobile}){
@@ -500,7 +502,10 @@ function monthCells(y,m){
 }
 function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to);}
 
-const siteCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
+const autoCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
+const siteCode=site=>(site&&site.code)?site.code:autoCode(site);
+const DEF_DAY="#7A8C5E",DEF_NIGHT="#3B4A6B";   // default day/night hexes for the per-site pickers
+const siteShiftCol=(site,cat)=>cat==="night"?((site&&site.nightColor)||C.shiftNight):((site&&site.dayColor)||C.shiftDay);
 function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,placing,box,selTrip,selWin,onEdge,onGrabTravel,onTap,onDown,onEnter}){
   if(!str)return <div style={box}/>;
   const allDay=homeAllDay(str,state),trip=tripOn(str,state.trips),showTravel=travel&&!shift,awayDay=showTravel&&travel.kind==="away";
@@ -548,7 +553,7 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
   </div>;
 }
 function ShiftPill({site,cat,status,co}){
-  const col=cat==="night"?C.shiftNight:C.shiftDay;   // colour encodes day vs night
+  const col=siteShiftCol(site,cat);   // colour encodes site + day/night
   const filled=status!=="proposed";                  // texture encodes status
   return <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:3,
     fontSize:9.5,fontWeight:800,padding:"2px 4px",borderRadius:5,opacity:status==="worked"?0.62:1,
@@ -603,7 +608,7 @@ function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,placing,s
   if(showTravel)bg=awayDay?C.away:C.panel;          // away day = Prussian blue fill; travel day punches through
   if(win&&win.kind==="span")bg=C.sel;if(preview||placing)bg=C.sel;
   const warn=shift?warnOf(shift,state):null;
-  if(shift){const cat=shiftCat(sIdx[shift.siteId],shift.type),status=bucketOf(shift),col=cat==="night"?C.shiftNight:C.shiftDay;
+  if(shift){const cat=shiftCat(sIdx[shift.siteId],shift.type),status=bucketOf(shift),col=siteShiftCol(sIdx[shift.siteId],cat);
     if(status==="proposed")border=`1.5px dashed ${col}`;else{bg=col;border=`1px solid ${col}`;op=status==="worked"?0.6:1;filled=true;}}
   const today=str===TODAY_S;
   const ringCol=placing?C.ocean:warn?C.warn:win?C.ocean:tCol;
@@ -740,6 +745,8 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
       type:status==="scheduled"?specificType(sIdx[siteId],type):type,status,coLocated:false}]}));
   const addDay=kind=>mutate(s=>addAway(s,selected,kind));   // travel / away
   const del=()=>mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==shift.id)}));
+  const tinfo=travelBand(state)[selected];
+  const onDel=shift?del:(tinfo?(()=>mutate(s=>rmAwayAt(s,selected))):null);   // delete the day's shift or away/travel item
 
   const head=<div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:10}}>
     <span style={{fontSize:15,fontWeight:800}}>{dayLabel}</span>
@@ -749,6 +756,7 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
     {dayCals.map(c=><span key={c.id} style={{fontSize:10,fontWeight:700,color:c.color,display:"inline-flex",alignItems:"center",gap:3}}>
       <span style={{width:6,height:6,borderRadius:6,background:c.color}}/>{c.name}{c.out?` (out ${c.out.start}–${c.out.end})`:""}</span>)}
     {trip&&<span style={{fontSize:10.5,color:C.ocean}}>✈ {trip.name} ({trip.workFactor})</span>}
+    {onDel&&<DelX onClick={onDel}/>}
   </div>;
 
   // catch-up month → locked
@@ -756,8 +764,7 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
     <div style={{fontSize:11.5,color:C.gray,display:"flex",alignItems:"center",gap:6}}>🔒 {MONL[d.getMonth()]} is a 2026 catch-up month
       ({fmt$(state.monthOverrides[mk(selected)])} earned). Its days are frozen — clear the override in <b>Trips&nbsp;&amp;&nbsp;Calendars</b> to edit shifts.</div>
   </div>;
-  // travel day (scheduled remote cluster) → exact + coarse editor
-  const tinfo=travelBand(state)[selected];
+  // travel day → exact + coarse editor
   if(!shift&&tinfo)return <TravelReadout state={state} sIdx={sIdx} dateStr={selected} info={tinfo} head={head} awake={awake} mutate={mutate} setSelected={setSelected}/>;
 
   if(!shift)return <div style={{padding:"14px"}}>{head}
@@ -831,7 +838,6 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
       <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
         <Stat label={worked?"Earned":"Earns"} value={fmt$(showPay)} sub={edited&&Number.isFinite(shift.actualPay)?"actual":null} accent={C.juniper}/>
         <Stat label="Hours missed" value={fmtH(showMissed)} sub={edited&&Number.isFinite(shift.actualMissed)?"actual":shift.coLocated?"no travel":null} accent={showMissed>0?C.danger:C.gray}/>
-        <Btn small onClick={del}>Delete</Btn>
       </div>
     </div>
   </div>;
@@ -872,6 +878,7 @@ function WindowReadout({state,sIdx,wid,mutate,onScheduled}){
       <span style={{fontSize:15,fontWeight:800}}>Window</span>
       <span style={{fontSize:11.5,color:C.gray}}>{MON[pd(w.from).getMonth()]} {pd(w.from).getDate()}–{pd(w.to).getDate()} · {site.name}</span>
       <span style={{fontSize:10.5,fontWeight:700,color:C.ocean,border:`1px solid ${C.ocean}`,borderRadius:12,padding:"1px 8px"}}>proposed</span>
+      <DelX onClick={del}/>
     </div>
     <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
       <div style={{flex:"1 1 280px"}}>
@@ -894,10 +901,7 @@ function WindowReadout({state,sIdx,wid,mutate,onScheduled}){
       <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
         <Stat label="Earns" value={fmt$(band.money)} accent={C.juniper}/>
         <Stat label="Hours missed" value={`${fmtH(band.min)}–${fmtH(band.max)}`} sub={band.travel>0?`incl. ~${fmtH(band.travel)} travel`:"range over placement"} accent={C.ocean}/>
-        <div style={{display:"flex",gap:6}}>
-          <Btn small onClick={del}>Delete</Btn>
-          <Btn small kind="prim" onClick={sched} title="materialize the X lowest-impact days as scheduled shifts">Schedule {band.X} →</Btn>
-        </div>
+        <Btn small kind="prim" onClick={sched} title="materialize the X lowest-impact days as scheduled shifts">Schedule {band.X} →</Btn>
       </div>
     </div>
     <div style={{fontSize:10.5,color:C.mute,marginTop:10}}>Scheduling places the {band.X} lowest-impact day{band.X>1?"s":""} and bookends travel; you can then adjust each shift. Drawing a shift over the window also replaces it.</div>
@@ -915,6 +919,7 @@ function TripReadout({state,tid,mutate,onClose}){
       <span style={{fontSize:15,fontWeight:800}}>✈ Trip</span>
       <span style={{fontSize:11.5,color:C.gray}}>{MON[pd(t.from).getMonth()]} {pd(t.from).getDate()} – {MON[pd(t.to).getMonth()]} {pd(t.to).getDate()}</span>
       <span style={{marginLeft:"auto"}}><Chip on={t.visible!==false} onClick={()=>setT({visible:!(t.visible!==false)})}>{t.visible!==false?"shown":"hidden"}</Chip></span>
+      <DelX onClick={del}/>
     </div>
     <Field label="Name"><input style={inp} value={t.name} onChange={e=>setT({name:e.target.value})}/></Field>
     <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
@@ -923,7 +928,6 @@ function TripReadout({state,tid,mutate,onClose}){
       <Field label="Work"><select style={{...inp,width:"auto"}} value={t.workFactor} onChange={e=>setT({workFactor:e.target.value})}>
         {WORK_FACTORS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></Field>
     </div>
-    <Btn small onClick={del}>Delete trip</Btn>
   </div>;
 }
 
@@ -960,7 +964,6 @@ function TravelReadout({state,sIdx,dateStr,info,head,awake,mutate,setSelected}){
       </div>
       <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
         <Stat label="Hours missed" value={fmtH(missed)} sub={away?"day away":(info.coarse==="half"?"½ day":"whole day")} accent={col}/>
-        <Btn small onClick={del}>Delete</Btn>
       </div>
     </div>
   </div>;
@@ -1111,6 +1114,7 @@ function SitesTab({state,mutate}){
   const rmShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.length<=1?x:{...x,menu:x.menu.filter(m=>m.shift!==shiftId)})}));
   const setTravel=(sid,patch)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,travel:Object.assign({},x.travel||TRAVEL_DEFAULT[x.reach]||TRAVEL_DEFAULT.local,patch)})}));
   const setName=(sid,name)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,name})}));
+  const setSiteF=(sid,patch)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,...patch})}));
   const setReach=(sid,reach)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,reach,travel:TRAVEL_DEFAULT[reach]||TRAVEL_DEFAULT.local})}));   // reset travel to the reach default
   const addSite=()=>mutate(s=>({...s,sites:[...s.sites,{id:"site"+Date.now(),name:"New site",reach:"local",menu:[{shift:"d7",rate:200}],travel:TRAVEL_DEFAULT.local}]}));
   const rmSite=sid=>{const site=state.sites.find(x=>x.id===sid);
@@ -1123,16 +1127,23 @@ function SitesTab({state,mutate}){
     {state.sites.map(s=>{
       return <div key={s.id} style={{padding:"12px 0",borderBottom:`1px solid ${C.line2}`}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-        <input value={s.name} onChange={e=>setName(s.id,e.target.value)} style={{...inp,maxWidth:210,fontWeight:700,padding:"4px 8px"}}/>
+        <input value={s.name} onChange={e=>setName(s.id,e.target.value)} style={{...inp,maxWidth:190,fontWeight:700,padding:"4px 8px"}}/>
+        <label style={{fontSize:10.5,color:C.gray,display:"inline-flex",alignItems:"center",gap:4}}>abbr
+          <input value={s.code||""} placeholder={autoCode(s)} maxLength={4} onChange={e=>setSiteF(s.id,{code:e.target.value.toUpperCase()||undefined})} style={{...inp,width:54,padding:"3px 6px",textAlign:"center",fontWeight:700}}/></label>
         <select value={s.reach} onChange={e=>setReach(s.id,e.target.value)} style={{...inp,width:"auto",padding:"4px 6px",fontSize:11.5}}>
           {["local","nm","rural_nm"].map(r=><option key={r} value={r}>{REACH_LABEL[r]}</option>)}</select>
+        <label style={{fontSize:10.5,color:C.gray,display:"inline-flex",alignItems:"center",gap:3}}>day
+          <input type="color" value={s.dayColor||DEF_DAY} onChange={e=>setSiteF(s.id,{dayColor:e.target.value})} style={{width:26,height:22,padding:0,border:`1px solid ${C.line}`,borderRadius:4,cursor:"pointer"}}/></label>
+        <label style={{fontSize:10.5,color:C.gray,display:"inline-flex",alignItems:"center",gap:3}}>night
+          <input type="color" value={s.nightColor||DEF_NIGHT} onChange={e=>setSiteF(s.id,{nightColor:e.target.value})} style={{width:26,height:22,padding:0,border:`1px solid ${C.line}`,borderRadius:4,cursor:"pointer"}}/></label>
+        {(s.dayColor||s.nightColor||s.code)&&<button onClick={()=>setSiteF(s.id,{dayColor:undefined,nightColor:undefined,code:undefined})} title="reset abbr & colours" style={{...delBtn,padding:"2px 6px"}}>↺</button>}
         <button onClick={()=>rmSite(s.id)} title="delete site" style={{...delBtn,marginLeft:"auto"}}>✕ delete</button></div>
       <div style={{display:"flex",flexDirection:"column",gap:6}}>{s.menu.map(m=>{const hrs=entryHours(m),night=entryNight(m);
         return <div key={m.shift} style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,flexWrap:"wrap"}}>
           <span style={{color:C.gray}}>start</span>
           <input type="time" value={entryStartStr(m)} onChange={e=>setStart(s.id,m.shift,e.target.value)} style={{...inp,width:108,padding:"3px 6px"}}/>
           <NumInput value={hrs} min="0.5" step="0.5" onChange={v=>setHours(s.id,m.shift,v)} style={{...inp,width:50,padding:"3px 6px"}}/><span style={{color:C.gray,marginLeft:-2}}>h</span>
-          <span style={{fontSize:9.5,fontWeight:800,color:night?C.shiftNight:C.shiftDay,minWidth:38}}>{night?"NIGHT":"DAY"}</span>
+          <span style={{fontSize:9.5,fontWeight:800,color:siteShiftCol(s,night?"night":"day"),minWidth:38}}>{night?"NIGHT":"DAY"}</span>
           <span style={{color:C.gray}}>$/hr</span>
           <NumInput value={m.rate} min="0" onChange={v=>setRate(s.id,m.shift,v)} style={{...inp,width:70,padding:"3px 6px"}}/>
           <span style={{color:C.mute}}>= {fmt$((+m.rate||0)*hrs)}</span>
