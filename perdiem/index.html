@@ -158,18 +158,24 @@ function seedState(){
 
 /* ════════ ENGINE ════════ */
 const siteIndex=sites=>Object.fromEntries(sites.map(s=>[s.id,s]));
+// a menu entry carries its own editable start/hours/rate; the catalog only supplies defaults for old entries
+const HM_RE=/^\d{1,2}:\d{2}$/;
+const entryStartStr=e=>{const t=e&&e.start;return HM_RE.test(t)?t:(SHIFT_BY[e&&e.shift]||SHIFT_BY.d7).start;};
+const entryHours=e=>Number.isFinite(e&&e.hours)?e.hours:(SHIFT_BY[e&&e.shift]||SHIFT_BY.d7).hours;
+const entryNight=e=>{const h=parseHM(entryStartStr(e));return h>=18||h<5;};   // night = evening/overnight start
+const fmtClock=t=>{const v=parseHM(t),h=Math.floor(v),mm=Math.round((v-h)*60),ap=h>=12?"p":"a";let hh=h%12;if(!hh)hh=12;return hh+(mm?":"+String(mm).padStart(2,"0"):"")+ap;};
+const entryLabel=e=>`${fmtClock(entryStartStr(e))} · ${entryHours(e)}h`;
 function resolveEntry(site,type){
   const menu=(site&&site.menu)||[{shift:"d7",rate:0}];
-  if(type==="day")  return menu.find(e=>!SHIFT_BY[e.shift].night)||menu[0];
-  if(type==="night")return menu.find(e=> SHIFT_BY[e.shift].night)||menu[0];
+  if(type==="day")  return menu.find(e=>!entryNight(e))||menu[0];
+  if(type==="night")return menu.find(e=> entryNight(e))||menu[0];
   return menu.find(e=>e.shift===type)||menu[0];
 }
 const isCat=t=>t==="day"||t==="night";              // coarse type vs a specific catalog id
-const shiftCat=(site,type)=>SHIFT_BY[resolveEntry(site,type).shift].night?"night":"day";
+const shiftCat=(site,type)=>entryNight(resolveEntry(site,type))?"night":"day";
 const specificType=(site,type)=>isCat(type)?resolveEntry(site,type).shift:type;   // coarse → representative specific shift
-const entryHours=e=>Number.isFinite(e&&e.hours)?e.hours:(SHIFT_BY[e&&e.shift]||SHIFT_BY.d7).hours;   // per-menu-entry editable duration
 function shiftInterval(site,type){            // [startHour, endHour] within the day
-  const e=resolveEntry(site,type),sh=SHIFT_BY[e.shift]||SHIFT_BY.d7,start=parseHM(sh.start);
+  const e=resolveEntry(site,type),start=parseHM(entryStartStr(e));
   return [start,start+entryHours(e)];
 }
 function shiftPay(site,type){const e=resolveEntry(site,type);return (+e.rate||0)*entryHours(e);}
@@ -313,16 +319,17 @@ function aggregate(state,sIdx,viewYM){
   // hours missed — current viewed month only (never annualized) + the viewed month's money
   const hrs={worked:0,scheduled:0,proposed:0};
   const m$={worked:0,scheduled:0,proposed:0};
-  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;const b=bucketOf(sh);hrs[b]+=missedOf(sh,state,sIdx);m$[b]+=pay(sh);});
+  const mN={worked:0,scheduled:0,proposed:0};   // shift counts for the month
+  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;const b=bucketOf(sh);hrs[b]+=missedOf(sh,state,sIdx);m$[b]+=pay(sh);mN[b]++;});
   if(Number.isFinite((state.monthOverrides||{})[viewYM]))m$.worked=state.monthOverrides[viewYM];   // a catch-up month's worked $ = its override
   // proposed windows: money is pinned (X×rate); hours contribute their low end (a floor) for the window's month
   (state.windows||[]).forEach(w=>{if(!w.from.startsWith(yr))return;const b=windowBand(w,state,sIdx);
-    proposed$+=b.money;if(mk(w.from)===viewYM){hrs.proposed+=b.min;m$.proposed+=b.money;}});
+    proposed$+=b.money;if(mk(w.from)===viewYM){hrs.proposed+=b.min;m$.proposed+=b.money;mN.proposed+=b.X;}});
   // travel days add their hours to the bucket of their cluster (proposed → proposed; else worked/scheduled by date)
   const tb=travelBand(state,sIdx);
   Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;const info=tb[dt],miss=travelMissed(dt,info,state,travelEditOf(state,dt));
     hrs[info.status==="proposed"?"proposed":(dt<TODAY_S?"worked":"scheduled")]+=miss;});
-  return {worked$,scheduled$,proposed$,hrs,month:m$};
+  return {worked$,scheduled$,proposed$,hrs,month:m$,monthN:mN};
 }
 
 /* ════════ persistence + sanitize ════════
@@ -332,7 +339,7 @@ const DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
 function sanitize(o){
   if(!o||typeof o!=="object")return seedState();
   const seed=seedState();
-  let sites=(Array.isArray(o.sites)?o.sites:[]).filter(s=>s&&s.id&&Array.isArray(s.menu)&&s.menu.length&&s.menu.every(m=>m&&SHIFT_BY[m.shift]));
+  let sites=(Array.isArray(o.sites)?o.sites:[]).filter(s=>s&&s.id&&Array.isArray(s.menu)&&s.menu.length&&s.menu.every(m=>m&&m.shift&&(SHIFT_BY[m.shift]||HM_RE.test(m.start))));
   if(!sites.length)sites=seed.sites;
   // one-time migration: old "Boston ED" → BMC South with the full 8-hour menu (runs once; name guard prevents re-trigger)
   sites=sites.map(s=>s.name==="Boston ED"
@@ -470,17 +477,20 @@ function Banner({agg,goal,mobile}){
 }
 /* ════════ MONTH BAR — the focused month's $ + hours missed ════════ */
 function MonthBar({agg,viewYM,mobile}){
-  const my=`${MON[+viewYM.slice(5,7)-1]} ${viewYM.slice(0,4)}`,m=agg.month,h=agg.hrs;
+  const my=`${MON[+viewYM.slice(5,7)-1]} ${viewYM.slice(0,4)}`,m=agg.month,h=agg.hrs,n=agg.monthN||{worked:0,scheduled:0,proposed:0};
   const totMiss=Math.round((h.worked+h.scheduled+h.proposed)*10)/10,tot$=m.worked+m.scheduled+m.proposed;
+  const totN=n.worked+n.scheduled+n.proposed;
   if(mobile)return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"4px 12px",flexShrink:0,
     display:"flex",alignItems:"baseline",gap:8,fontSize:10.5,fontVariantNumeric:"tabular-nums",flexWrap:"wrap"}}>
     <b style={{fontSize:11}}>{my}</b>
+    <span><b>{totN}</b> <span style={{color:C.mute}}>shifts</span></span>
     <span><b>{fmtK(tot$)}</b> <span style={{color:C.mute}}>total $</span></span>
     <span style={{marginLeft:"auto",color:C.gray}}>miss <b style={{color:C.ink}}>{Math.round(totMiss)}</b>h</span>
   </div>;
   return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"7px 14px",flexShrink:0}}>
     <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-end"}}>
       <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>{my}</span>
+      <Stat label="Shifts" value={totN} sub={`${n.worked}w · ${n.scheduled}s · ${n.proposed}p`}/>
       <Stat label="Total $" value={fmtK(tot$)} sub="worked+sched+proposed"/>
       <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
       <Stat label="Missed" value={fmtH(totMiss)} sub="total this month"/>
@@ -710,7 +720,7 @@ function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setT
 /* shift picker keyed to lifecycle: proposed = Day/Night + the specific list; scheduled = specific only */
 function ShiftSelect({site,type,coarse,compact,onChange}){
   const style={...inp,...(compact?{flex:1,minWidth:0}:{maxWidth:240})};
-  const opts=site.menu.map(m=><option key={m.shift} value={m.shift}>{SHIFT_BY[m.shift].label} · {SHIFT_BY[m.shift].night?"Night":"Day"}</option>);
+  const opts=site.menu.map(m=><option key={m.shift} value={m.shift}>{entryLabel(m)} · {entryNight(m)?"Night":"Day"}</option>);
   if(coarse){
     const val=isCat(type)?type:(site.menu.some(m=>m.shift===type)?type:"day");
     return <select style={style} value={val} onChange={e=>onChange(e.target.value)}>
@@ -862,7 +872,7 @@ function WindowReadout({state,sIdx,wid,mutate,onScheduled}){
           {state.sites.map(s=><option key={s.id} value={s.id}>{s.name} · {REACH_LABEL[s.reach]}</option>)}</select></Field>
         <Field label="Shift"><div style={{display:"flex",gap:6,alignItems:"center"}}>
           {["day","night"].map(t=><Btn key={t} on={cat===t} onClick={()=>setW({type:t})}>{t==="day"?"Day":"Night"}</Btn>)}
-          <span style={{fontSize:11,color:C.mute}}>{SHIFT_BY[resolveEntry(site,w.type).shift].label}</span></div></Field>
+          <span style={{fontSize:11,color:C.mute}}>{entryLabel(resolveEntry(site,w.type))}</span></div></Field>
         <Field label="Will work"><div style={{display:"flex",gap:8,alignItems:"center"}}>
           <Btn small onClick={()=>setX(band.X-1)} disabled={band.X<=1}>−</Btn>
           <b style={{fontSize:15,minWidth:62,textAlign:"center"}}>{band.X} of {band.Y}</b>
@@ -1079,7 +1089,9 @@ function TripsCalsTab({state,mutate}){
 function SitesTab({state,mutate}){
   const setRate=(sid,shift,rate)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,menu:x.menu.map(m=>m.shift===shift?{...m,rate}:m)})}));
   const setHours=(sid,shift,hours)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,menu:x.menu.map(m=>m.shift===shift?{...m,hours:Math.max(0.5,hours)}:m)})}));
-  const addShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.some(m=>m.shift===shiftId)?x:{...x,menu:[...x.menu,{shift:shiftId,rate:200}]})}));
+  const setStart=(sid,shift,start)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,menu:x.menu.map(m=>m.shift===shift?{...m,start}:m)})}));
+  // add a fully custom shift slot (own start/hours/rate; not tied to the catalog)
+  const addShift=sid=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,menu:[...x.menu,{shift:"c"+Date.now().toString(36),start:"09:00",hours:8,rate:200}]})}));
   const rmShift=(sid,shiftId)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid||x.menu.length<=1?x:{...x,menu:x.menu.filter(m=>m.shift!==shiftId)})}));
   const setTravel=(sid,patch)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,travel:Object.assign({},x.travel||TRAVEL_DEFAULT[x.reach]||TRAVEL_DEFAULT.local,patch)})}));
   const setName=(sid,name)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,name})}));
@@ -1092,24 +1104,26 @@ function SitesTab({state,mutate}){
     mutate(s=>({...s,sites:s.sites.filter(x=>x.id!==sid),shifts:s.shifts.filter(x=>x.siteId!==sid),windows:(s.windows||[]).filter(w=>w.siteId!==sid)}));};
   return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:760}}>
     <div style={{fontSize:11,color:C.gray,marginBottom:12}}>Each site's <b>menu</b> is the specific shifts it offers — pick from these on a day. Edit name, reach, rates, travel; add or remove shifts and sites.</div>
-    {state.sites.map(s=>{const have=new Set(s.menu.map(m=>m.shift)),avail=SHIFTS.filter(sh=>!have.has(sh.id));
+    {state.sites.map(s=>{
       return <div key={s.id} style={{padding:"12px 0",borderBottom:`1px solid ${C.line2}`}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
         <input value={s.name} onChange={e=>setName(s.id,e.target.value)} style={{...inp,maxWidth:210,fontWeight:700,padding:"4px 8px"}}/>
         <select value={s.reach} onChange={e=>setReach(s.id,e.target.value)} style={{...inp,width:"auto",padding:"4px 6px",fontSize:11.5}}>
           {["local","nm","rural_nm"].map(r=><option key={r} value={r}>{REACH_LABEL[r]}</option>)}</select>
         <button onClick={()=>rmSite(s.id)} title="delete site" style={{...delBtn,marginLeft:"auto"}}>✕ delete</button></div>
-      <div style={{display:"flex",flexDirection:"column",gap:6}}>{s.menu.map(m=>{const sh=SHIFT_BY[m.shift],hrs=entryHours(m),start=(sh.label.split(" · ")[0]);
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>{s.menu.map(m=>{const hrs=entryHours(m),night=entryNight(m);
         return <div key={m.shift} style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,flexWrap:"wrap"}}>
-          <span style={{minWidth:74}}><b>{start}</b> <span style={{color:C.mute}}>{sh.night?"Night":"Day"}</span></span>
-          <NumInput value={hrs} min="0.5" step="0.5" onChange={v=>setHours(s.id,m.shift,v)} style={{...inp,width:54,padding:"3px 6px"}}/><span style={{color:C.gray,marginLeft:-2}}>h</span>
+          <span style={{color:C.gray}}>start</span>
+          <input type="time" value={entryStartStr(m)} onChange={e=>setStart(s.id,m.shift,e.target.value)} style={{...inp,width:108,padding:"3px 6px"}}/>
+          <NumInput value={hrs} min="0.5" step="0.5" onChange={v=>setHours(s.id,m.shift,v)} style={{...inp,width:50,padding:"3px 6px"}}/><span style={{color:C.gray,marginLeft:-2}}>h</span>
+          <span style={{fontSize:9.5,fontWeight:800,color:night?C.shiftNight:C.shiftDay,minWidth:38}}>{night?"NIGHT":"DAY"}</span>
           <span style={{color:C.gray}}>$/hr</span>
-          <NumInput value={m.rate} min="0" onChange={v=>setRate(s.id,m.shift,v)} style={{...inp,width:72,padding:"3px 6px"}}/>
-          <span style={{color:C.mute}}>= {fmt$((+m.rate||0)*hrs)}/shift</span>
+          <NumInput value={m.rate} min="0" onChange={v=>setRate(s.id,m.shift,v)} style={{...inp,width:70,padding:"3px 6px"}}/>
+          <span style={{color:C.mute}}>= {fmt$((+m.rate||0)*hrs)}</span>
           {s.menu.length>1&&<button onClick={()=>rmShift(s.id,m.shift)} title="remove shift"
             style={{fontFamily:MONO,fontSize:12,border:`1px solid ${C.line}`,background:C.panel,color:C.gray,borderRadius:5,cursor:"pointer",padding:"2px 7px"}}>✕</button>}
         </div>;})}</div>
-      {avail.length>0&&<AddShift key={avail.map(a=>a.id).join()} avail={avail} onAdd={id=>addShift(s.id,id)}/>}
+      <button onClick={()=>addShift(s.id)} style={{...addBtn,marginTop:8}}>+ shift</button>
       {s.reach!=="local"&&(()=>{const tv=s.travel||TRAVEL_DEFAULT[s.reach]||TRAVEL_DEFAULT.local;
         return <div style={{marginTop:10,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
           <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>Travel</span>
