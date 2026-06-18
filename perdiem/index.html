@@ -911,8 +911,6 @@ function TripReadout({state,tid,mutate,onClose}){
     <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
       <Field label="From"><input type="date" style={{...inp,width:"auto"}} value={t.from} onChange={e=>setT({from:e.target.value})}/></Field>
       <Field label="To"><input type="date" style={{...inp,width:"auto"}} value={t.to} onChange={e=>setT({to:e.target.value})}/></Field>
-      <Field label="Location"><select style={{...inp,width:"auto"}} value={t.loc} onChange={e=>setT({loc:e.target.value})}>
-        {Object.keys(LOC_NAME).map(l=><option key={l} value={l}>{LOC_NAME[l]}</option>)}</select></Field>
       <Field label="Work"><select style={{...inp,width:"auto"}} value={t.workFactor} onChange={e=>setT({workFactor:e.target.value})}>
         {WORK_FACTORS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></Field>
     </div>
@@ -1087,8 +1085,6 @@ function TripsCalsTab({state,mutate}){
         <input type="date" value={t.from} onChange={e=>setTrip(t.id,{from:e.target.value})} style={{...inp,width:"auto",padding:"3px 5px",fontSize:11}}/>
         <span style={{color:C.mute,fontSize:11}}>→</span>
         <input type="date" value={t.to} onChange={e=>setTrip(t.id,{to:e.target.value})} style={{...inp,width:"auto",padding:"3px 5px",fontSize:11}}/>
-        <select value={t.loc} onChange={e=>setTrip(t.id,{loc:e.target.value})} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}>
-          {Object.keys(LOC_NAME).map(l=><option key={l} value={l}>{LOC_NAME[l]}</option>)}</select>
         <select value={t.workFactor} onChange={e=>setTrip(t.id,{workFactor:e.target.value})} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}>
           {WORK_FACTORS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
       </div>
