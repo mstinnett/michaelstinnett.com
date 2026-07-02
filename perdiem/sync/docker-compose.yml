@@ -1,0 +1,13 @@
+services:
+  perdiem-sync:
+    build: .
+    # or, once published: image: ghcr.io/you/perdiem-sync
+    container_name: perdiem-sync
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"        # bind to localhost; tailscale serve fronts it with HTTPS
+    volumes:
+      - ./data:/data                 # the JSON documents live here — back this up
+    environment:
+      ALLOW_ORIGIN: "https://michaelstinnett.com"
+      # TOKEN: "choose-a-long-random-secret"   # optional second factor; also enter it in the app

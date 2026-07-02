@@ -359,6 +359,27 @@ function shareLink(state){
   try{if(!window.LZString)return null;
     return location.origin+location.pathname+"#s="+LZString.compressToEncodedURIComponent(JSON.stringify(state));}catch(e){return null;}
 }
+/* ── shared storage: a tiny JSON-doc store on your NAS, reached over Tailscale.
+   Endpoint is entered per-device (localStorage, never in the repo); access is
+   gated by tailnet reachability. Whole-doc last-write-wins; sanitize() guards loads. */
+const SYNC_URL="pdSyncUrl",SYNC_TOK="pdSyncTok",SYNC_ID="pdSyncId";
+function syncCfg(){
+  try{const url=localStorage.getItem(SYNC_URL);
+    return url?{url:url.replace(/\/+$/,""),tok:localStorage.getItem(SYNC_TOK)||"",id:localStorage.getItem(SYNC_ID)||"shared"}:null;}
+  catch(e){return null;}
+}
+const syncHeaders=c=>{const h={"Content-Type":"application/json"};if(c.tok)h.Authorization="Bearer "+c.tok;return h;};
+async function remoteGet(c){
+  const r=await fetch(`${c.url}/doc/${encodeURIComponent(c.id)}`,{headers:syncHeaders(c),cache:"no-store"});
+  if(r.status===404)return {rev:0,updatedAt:null,data:null};
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  return await r.json();
+}
+async function remotePut(c,data){
+  const r=await fetch(`${c.url}/doc/${encodeURIComponent(c.id)}`,{method:"PUT",headers:syncHeaders(c),body:JSON.stringify({data})});
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  return await r.json();
+}
 function load(){
   const fromUrl=readHash();                                  // a share-link wins on first load
   if(fromUrl){try{history.replaceState(null,"",location.pathname+location.search);}catch(_){}return fromUrl;}
@@ -1173,6 +1194,42 @@ function AddShift({avail,onAdd}){
   </div>;
 }
 
+/* ════════ SHARED STORAGE (NAS over Tailscale) ════════ */
+const SYNC_UI={off:{c:"mute",t:"off"},connecting:{c:"ocean",t:"connecting…"},synced:{c:"juniper",t:"synced"},
+  saving:{c:"ocean",t:"saving…"},offline:{c:"mute",t:"offline"},error:{c:"danger",t:"error"}};
+function SyncModal({sync,onClose,onSaved}){
+  const c=syncCfg()||{url:"",tok:"",id:"shared"};
+  const [url,setUrl]=useState(c.url),[tok,setTok]=useState(c.tok),[id,setId]=useState(c.id||"shared"),[test,setTest]=useState(null);
+  const norm=()=>({url:url.trim().replace(/\/+$/,""),tok:tok.trim(),id:id.trim()||"shared"});
+  const save=()=>{const n=norm();try{if(n.url)localStorage.setItem(SYNC_URL,n.url);else localStorage.removeItem(SYNC_URL);
+    localStorage.setItem(SYNC_TOK,n.tok);localStorage.setItem(SYNC_ID,n.id);}catch(e){}onSaved();onClose();};
+  const disconnect=()=>{try{localStorage.removeItem(SYNC_URL);localStorage.removeItem(SYNC_TOK);}catch(e){}onSaved();onClose();};
+  const doTest=async()=>{setTest("testing…");try{const r=await remoteGet(norm());
+    setTest(`✓ reached · rev ${r.rev}${r.updatedAt?" · saved "+new Date(r.updatedAt).toLocaleString():" · empty (first save creates it)"}`);}
+    catch(e){setTest("✗ "+(e.message||e)+" — check the URL, that you're on the tailnet, and CORS/token");}};
+  return <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:700,background:"rgba(0,0,0,.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div onClick={e=>e.stopPropagation()} style={{fontFamily:MONO,color:C.ink,background:C.panel,borderRadius:10,padding:"18px 20px",maxWidth:460,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,.35)"}}>
+      <div style={{fontSize:15,fontWeight:800,marginBottom:2}}>Shared storage</div>
+      <div style={{fontSize:11.5,color:C.gray,lineHeight:1.5,marginBottom:8}}>
+        Point this device at your NAS store, reached over Tailscale. Saved only here — the address never goes into the site.
+        You both enter the same URL + workspace to share a living plan.
+      </div>
+      <Field label="Endpoint URL"><input style={inp} value={url} placeholder="https://nas.your-tailnet.ts.net" onChange={e=>setUrl(e.target.value)}/></Field>
+      <div style={{display:"flex",gap:10}}>
+        <div style={{flex:1}}><Field label="Workspace"><input style={inp} value={id} onChange={e=>setId(e.target.value)}/></Field></div>
+        <div style={{flex:1}}><Field label="Token (optional)"><input style={inp} type="password" value={tok} onChange={e=>setTok(e.target.value)}/></Field></div>
+      </div>
+      {test&&<div style={{fontSize:10.5,marginTop:2,marginBottom:4,lineHeight:1.4,color:/^✓/.test(test)?C.juniper:(/^testing/.test(test)?C.gray:C.danger)}}>{test}</div>}
+      <div style={{display:"flex",gap:8,marginTop:12,alignItems:"center",flexWrap:"wrap"}}>
+        <Btn onClick={doTest}>test</Btn><div style={{flex:1}}/>
+        {syncCfg()&&<Btn kind="danger" onClick={disconnect}>disconnect</Btn>}
+        <Btn onClick={onClose}>cancel</Btn><Btn kind="prim" onClick={save}>connect</Btn>
+      </div>
+      {sync&&sync.status==="error"&&sync.err&&<div style={{fontSize:10,color:C.danger,marginTop:8}}>last error: {sync.err}</div>}
+    </div>
+  </div>;
+}
+
 /* ════════ APP ════════ */
 function App(){
   const [state,setState]=useState(load);
@@ -1190,6 +1247,10 @@ function App(){
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}});
   const [mobile,setMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width:760px)").matches);
   const [tripDrag,setTripDrag]=useState(null);   // grabbing a trip from the drawer to place on the calendar
+  const [cfg,setCfg]=useState(()=>syncCfg());    // shared-storage endpoint (per-device)
+  const [sync,setSync]=useState(()=>({status:syncCfg()?"connecting":"off"}));
+  const [syncModal,setSyncModal]=useState(false);
+  const remoteJson=useRef(null),rev=useRef(0),saveTimer=useRef();
 
   useEffect(()=>{try{localStorage.setItem("perDiemNext",JSON.stringify(state));}catch(e){}},[state]);
   useEffect(()=>{const m=window.matchMedia&&window.matchMedia("(max-width:760px)");if(!m)return;
@@ -1299,6 +1360,34 @@ function App(){
   const fileRef=useRef();
   const [toast,setToast]=useState(null);
   useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),4000);return ()=>clearTimeout(t);},[toast]);
+  // ── shared storage: initial pull (or create), debounced push, poll for the other device ──
+  const applyRemote=v=>{past.current=[];setCanUndo(false);setState(v);};
+  useEffect(()=>{
+    if(!cfg){setSync({status:"off"});return;}
+    let alive=true;setSync({status:"connecting"});
+    (async()=>{try{
+      const r=await remoteGet(cfg);if(!alive)return;
+      if(r.data){const v=sanitize(r.data);if(v){remoteJson.current=JSON.stringify(v);rev.current=r.rev;applyRemote(v);setSync({status:"synced",rev:r.rev,at:r.updatedAt});return;}}
+      const p=await remotePut(cfg,state);if(!alive)return;remoteJson.current=JSON.stringify(state);rev.current=p.rev;setSync({status:"synced",rev:p.rev,at:p.updatedAt});
+    }catch(e){if(alive)setSync({status:"error",err:String(e.message||e)});}})();
+    return ()=>{alive=false;};
+  },[cfg]);
+  useEffect(()=>{
+    if(!cfg)return;const js=JSON.stringify(state);if(js===remoteJson.current)return;   // unchanged / just-pulled → don't echo back
+    clearTimeout(saveTimer.current);setSync(s=>s.status==="synced"?{...s,status:"saving"}:s);
+    saveTimer.current=setTimeout(async()=>{try{const p=await remotePut(cfg,state);remoteJson.current=js;rev.current=p.rev;setSync({status:"synced",rev:p.rev,at:p.updatedAt});}
+      catch(e){setSync(s=>({...s,status:"error",err:String(e.message||e)}));}},800);
+    return ()=>clearTimeout(saveTimer.current);
+  },[state,cfg]);
+  useEffect(()=>{
+    if(!cfg)return;
+    const iv=setInterval(async()=>{try{
+      const r=await remoteGet(cfg);
+      if(r.rev>rev.current&&r.data){const v=sanitize(r.data);if(v){remoteJson.current=JSON.stringify(v);rev.current=r.rev;applyRemote(v);setSync({status:"synced",rev:r.rev,at:r.updatedAt});setToast("Updated from another device");}}
+      else setSync(s=>(s.status==="offline"||s.status==="error")?{status:"synced",rev:rev.current}:s);
+    }catch(e){setSync(s=>s.status==="saving"?s:{...s,status:"offline"});}},7000);
+    return ()=>clearInterval(iv);
+  },[cfg]);
   const exportJSON=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="per-diem.json";a.click();};
   const importJSON=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
@@ -1317,6 +1406,7 @@ function App(){
     {tripDrag&&tripDrag.moved&&<div style={{position:"fixed",left:tripDrag.x+12,top:tripDrag.y+12,zIndex:500,pointerEvents:"none",
       background:C.ocean,color:"#fff",fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:6,boxShadow:"0 6px 18px rgba(0,0,0,.3)"}}>
       ✈ {tripDrag.name}{tripDrag.over?` → ${MON[pd(tripDrag.over).getMonth()]} ${pd(tripDrag.over).getDate()}`:""}</div>}
+    {syncModal&&<SyncModal sync={sync} onClose={()=>setSyncModal(false)} onSaved={()=>setCfg(syncCfg())}/>}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
       <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM</span>
       <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -1339,6 +1429,7 @@ function App(){
           <MenuItem onClick={()=>{share();setMenu(false);}}>Share link</MenuItem>
           <MenuItem onClick={()=>{exportJSON();setMenu(false);}}>Export JSON</MenuItem>
           <MenuItem onClick={()=>fileRef.current.click()}>Import JSON</MenuItem>
+          <MenuItem onClick={()=>{setSyncModal(true);setMenu(false);}}>Shared storage — {(SYNC_UI[sync.status]||SYNC_UI.off).t}</MenuItem>
         </div>
         <div style={{borderTop:`1px solid ${C.line2}`,padding:"8px 10px"}}>
           <div style={menuHdr}>System</div>
