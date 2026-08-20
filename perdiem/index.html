@@ -69,9 +69,10 @@ const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","De
 const MONL=["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-const TODAY=new Date(2026,5,17);   // ctx: 2026-06-17
-const TODAY_S=`2026-06-17`;
-const YEAR=2026;
+// today comes off the device clock — the app opens on the real current month
+const TODAY=(()=>{const n=new Date();return new Date(n.getFullYear(),n.getMonth(),n.getDate());})();
+const TODAY_S=`${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,'0')}-${String(TODAY.getDate()).padStart(2,'0')}`;
+const YEAR=TODAY.getFullYear();
 
 /* ─── dates ─── */
 const ds=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -585,8 +586,8 @@ function ShiftPill({site,cat,status,co}){
   </div>;
 }
 
-// the month range the desktop scroll covers: June 2026 → December 2027
-const CAL_MONTHS=Array.from({length:19},(_,i)=>{const m=5+i;return [2026+Math.floor(m/12),m%12];});
+// the month range the desktop scroll covers: the current month → 18 months out
+const CAL_MONTHS=Array.from({length:19},(_,i)=>{const m=TODAY.getMonth()+i;return [TODAY.getFullYear()+Math.floor(m/12),m%12];});
 const DowHeader=()=> <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
   {DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}</div>;
 function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,previewSet,placing,selTrip,selWin,onEdge,onGrabTravel,onDown,onEnter}){
@@ -1242,7 +1243,7 @@ function App(){
   const [selected,setSelected]=useState(TODAY_S);
   const [selWid,setSelWid]=useState(null);
   const [selTid,setSelTid]=useState(null);
-  const [[viewY,viewM],setVY]=useState([2026,5]);
+  const [[viewY,viewM],setVY]=useState([TODAY.getFullYear(),TODAY.getMonth()]);   // opens on the current month
   const [lastSite,setLastSite]=useState("boston");
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("perDiemTheme")||"system";}catch(e){return "system";}});
   const [mobile,setMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width:760px)").matches);
