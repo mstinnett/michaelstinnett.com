@@ -85,7 +85,15 @@ Per Diem can subscribe to the calendar link your scheduler publishes — ShiftAd
 `webcal://www.shiftadmin.com/schedule_ical.php?cd=v2&u=…&h=…`, or any `.ics` URL — and
 fold it into the plan on a timer.
 
-In the app: **Menu → Calendar feeds → paste the link → subscribe**.
+In the app: **Menu → Calendar feeds → paste the link → pick the hospital → subscribe**.
+
+**One feed per hospital.** ShiftAdmin publishes a separate link per group, so subscribe
+once per site and bind each feed to it. That binding is authoritative: every shift the
+feed carries lands at that hospital, priced at its rates, with its travel bracketing. A
+feed that genuinely mixes sites can be switched to *read it from each event*, which
+matches the hospital's full name or its abbreviation as a whole word in the event text
+and falls back to the feed's own hospital. If a day you requested at one hospital comes
+back scheduled at another, that's flagged too.
 
 **When it checks.** On open — always, as soon as the shared plan has landed, so what
 you're looking at is current. Then on the feed's own interval while the app stays open
@@ -114,6 +122,7 @@ holds one shift per day; same-day events collapse to the earliest). Then:
 - a day she **requested** that comes back on the feed → promoted to **scheduled**, silently
 - a scheduled day she **never requested** → added, and **flagged** — the app pops an alert
   listing them, since those are the ones she may not know about
+- a day you asked for at **one hospital**, scheduled at **another** → moved, and flagged
 - a shift the feed later **drops** → removed, and flagged — but see the window rule below
 - a shift **dropped** by hand stays gone; if the schedule genuinely moves it, it returns
 

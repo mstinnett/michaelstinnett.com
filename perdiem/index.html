@@ -397,7 +397,7 @@ function sanitize(o){
   const feeds=arr(o.feeds,[]).filter(f=>f&&isFeedURL(f.url)).map(f=>({
     id:String(f.id||("f"+Math.random().toString(36).slice(2))),
     name:String(f.name||"Schedule feed").slice(0,60),url:String(f.url).trim(),
-    siteId:ids.has(f.siteId)?f.siteId:sites[0].id,
+    siteId:ids.has(f.siteId)?f.siteId:sites[0].id,siteMode:f.siteMode==="detect"?"detect":"fixed",
     enabled:f.enabled!==false,every:clamp(Math.round(+f.every||60),15,1440)}));
   const feedIds=new Set(feeds.map(f=>f.id));
   const surprises=arr(o.surprises,[]).filter(x=>x&&DATE_RE.test(x.date)&&SURPRISE_KINDS.includes(x.kind))
@@ -405,6 +405,7 @@ function sanitize(o){
       feed:String(x.feed||"").slice(0,60),date:x.date,kind:x.kind,siteId:ids.has(x.siteId)?x.siteId:sites[0].id,
       start:HM_RE.test(x.start)?x.start:null,hours:Number.isFinite(x.hours)?x.hours:null,
       label:String(x.label||"").slice(0,80),from:DATE_RE.test(x.from)?x.from:null,
+      fromSite:ids.has(x.fromSite)?x.fromSite:null,
       uid:typeof x.uid==="string"?x.uid.slice(0,200):null,
       at:typeof x.at==="string"?x.at:null})).slice(-200);
   const okDocs=v=>(Array.isArray(v)?v:[]).filter(d=>d&&typeof d.id==="string"&&DOC_ID_RE.test(d.id)&&d.name)
@@ -565,12 +566,19 @@ function loadPdfJs(){
    fetch these hosts directly (no CORS), so the pull goes through the NAS
    service's /ics proxy when one is connected. */
 const FEED_EVERY=[[15,"every 15 min"],[30,"every 30 min"],[60,"hourly"],[240,"every 4 hours"],[720,"twice a day"],[1440,"once a day"]];
-const SURPRISE_KINDS=["new","unrequested","moved","dropped"];
+const SURPRISE_KINDS=["new","unrequested","moved","dropped","resited"];
 const SURPRISE_TEXT={
   new:"scheduled on a day you hadn’t requested or marked",
   unrequested:"scheduled on a day you’d only held — you never requested it",
   moved:"the schedule moved this shift to a different day",
-  dropped:"this shift came off the schedule"};
+  dropped:"this shift came off the schedule",
+  resited:"scheduled at a different hospital than you asked for"};
+/* Each feed is one hospital's calendar — ShiftAdmin publishes a link per group,
+   so subscribing to three hospitals means three feeds. "fixed" (the default)
+   means every shift the feed carries lands at that hospital, full stop. Only a
+   feed that genuinely mixes sites needs "detect", which reads the hospital out
+   of each event's own text and falls back to the feed's site. */
+const SITE_MODES=[["fixed","always this hospital"],["detect","read it from each event"]];
 const feedURL=u=>String(u||"").trim().replace(/^webcal:\/\//i,"https://");
 const isFeedURL=u=>/^(webcal|https?):\/\/[^\s]+$/i.test(String(u||"").trim());
 const feedHost=u=>{try{return new URL(feedURL(u)).host;}catch(e){return String(u||"").slice(0,40);}};
@@ -649,14 +657,19 @@ function feedEvents(text){
 const looksLikeICS=t=>/BEGIN:VCALENDAR/i.test(String(t||""));
 
 /* ─── matching an event onto the plan's own vocabulary ─── */
-// site by name/abbr appearing in the summary or location; null when the feed doesn't say
+/* Which hospital does this event name? Only its full name or its abbreviation as
+   a whole word — matching loose fragments would put a shift at "BMC South" for
+   any event that happened to say "south". Longest match wins; null means the
+   feed didn't say, and the feed's own hospital is used instead. */
+const wholeWord=(hay,t)=>new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}([^a-z0-9]|$)`,"i").test(hay);
 function matchSite(ev,sites){
-  const hay=`${ev.label} ${ev.where}`.toLowerCase();
+  const hay=`${ev.label} ${ev.where}`;
   let best=null;
   sites.forEach(s=>{
-    const words=[s.code,siteCode(s),s.name].concat(String(s.name).split(/\s+/).filter(w=>w.length>3));
-    words.forEach(w=>{const t=String(w||"").toLowerCase();
-      if(t.length>=3&&hay.indexOf(t)>=0&&(!best||t.length>best.n))best={id:s.id,n:t.length};});
+    const name=String(s.name||"").trim().toLowerCase();
+    if(name.length>=4&&hay.toLowerCase().indexOf(name)>=0&&(!best||name.length>best.n))best={id:s.id,n:name.length};
+    [s.code,siteCode(s)].forEach(c=>{const t=String(c||"").trim().toLowerCase();
+      if(t.length>=2&&wholeWord(hay,t)&&(!best||t.length>best.n))best={id:s.id,n:t.length};});
   });
   return best?best.id:null;
 }
@@ -674,8 +687,12 @@ function matchEntry(site,ev){
 }
 // event → the shift fields a feed owns (never money, co-location or actuals)
 function feedShift(ev,state,sIdx,feed,preferSiteId){
-  const named=matchSite(ev,state.sites);
-  const siteId=named||(sIdx[preferSiteId]?preferSiteId:null)||(sIdx[feed.siteId]?feed.siteId:state.sites[0].id);
+  const own=sIdx[feed.siteId]?feed.siteId:state.sites[0].id;
+  // a feed bound to one hospital says where the shift is — that's the whole point
+  // of binding it; only a mixed feed reads the hospital out of the event itself.
+  const siteId=feed.siteMode==="detect"
+    ? (matchSite(ev,state.sites)||(sIdx[preferSiteId]?preferSiteId:null)||own)
+    : own;
   const entry=matchEntry(sIdx[siteId],ev);
   const sh={date:ev.date,siteId,type:entry?entry.shift:"day",source:{feedId:feed.id,uid:ev.uid}};
   if(ev.start)sh.start=ev.start;
@@ -691,12 +708,14 @@ const ignoreShift=(state,sh)=>{const k=shiftKey(sh);
   return k?{...state,feedIgnore:[...(state.feedIgnore||[]).filter(x=>x!==k),k].slice(-500)}:state;};
 const clearIgnores=(state,feedId)=>({...state,feedIgnore:(state.feedIgnore||[]).filter(k=>k.split("|")[0]!==feedId)});
 const ignoredCount=(state,feedId)=>(state.feedIgnore||[]).filter(k=>k.split("|")[0]===feedId).length;
-function surpriseOf(feed,kind,date,sh,from,label){
+function surpriseOf(feed,kind,date,sh,extra){
+  const x=extra||{};
   return {id:`x_${feed.id}_${kind}_${date}_${hash36((sh&&sh.source&&sh.source.uid)||date)}`,
     feedId:feed.id,feed:feed.name,date,kind,siteId:sh?sh.siteId:null,
     uid:(sh&&sh.source&&sh.source.uid)||null,
     start:(sh&&sh.start)||null,hours:(sh&&Number.isFinite(sh.hours))?sh.hours:null,
-    label:String(label||(sh&&sh.label)||""),from:from||null,at:new Date().toISOString()};
+    label:String(x.label||(sh&&sh.label)||""),from:x.from||null,fromSite:x.fromSite||null,
+    at:new Date().toISOString()};
 }
 
 /* ─── the reconcile itself: pure, idempotent, safe to run on every check ───
@@ -711,7 +730,7 @@ function reconcile(state,sIdx,feed,parsed,nowStr,opts){
   const mine=sh=>!!(sh.source&&sh.source.feedId===feed.id);
   const ignored=new Set(state.feedIgnore||[]);
   const held=str=>(state.windows||[]).some(w=>str>=w.from&&str<=w.to);
-  const flagIt=(kind,date,sh,from,label)=>{if(flag&&date>=nowStr)rep.surprises.push(surpriseOf(feed,kind,date,sh,from,label));};
+  const flagIt=(kind,date,sh,extra)=>{if(flag&&date>=nowStr)rep.surprises.push(surpriseOf(feed,kind,date,sh,extra));};
 
   events.forEach(ev=>{
     if(monthLocked(state,ev.date)){rep.locked++;return;}          // a frozen catch-up month stays frozen
@@ -724,6 +743,8 @@ function reconcile(state,sIdx,feed,parsed,nowStr,opts){
       if(byUid&&byUid!==onDay)shifts=shifts.filter(s=>s!==byUid);   // it folded onto a day already spoken for
       const was=bucketOf(onDay),next={...onDay,...patch,status:phase};
       shifts=shifts.map(s=>s===onDay?next:s);
+      // asked for one hospital, scheduled at another — she'd want to know
+      if(isSketch(was)&&patch.siteId!==onDay.siteId)flagIt("resited",ev.date,patch,{fromSite:onDay.siteId});
       if(was==="requested")rep.promoted++;
       else if(was==="marked"){rep.promoted++;flagIt("unrequested",ev.date,patch);}
       // a re-check that lands on the same values is not news — only count a real edit
@@ -731,7 +752,7 @@ function reconcile(state,sIdx,feed,parsed,nowStr,opts){
     }else if(byUid){
       const from=byUid.date;
       shifts=shifts.map(s=>s===byUid?{...byUid,...patch,status:phase}:s);
-      rep.moved++;flagIt("moved",ev.date,patch,from);
+      rep.moved++;flagIt("moved",ev.date,patch,{from});
     }else{
       shifts=shifts.concat([{id:"f"+hash36(feed.id+ev.uid+ev.date),coLocated:false,...patch,status:phase}]);
       rep.added++;flagIt(held(ev.date)?"unrequested":"new",ev.date,patch);
@@ -1649,6 +1670,7 @@ function FeedRow({feed,state,mutate,onCheck,busy,onPaste,status}){
   const busyLabel=busy==="checking"?"checking…":null;
   const ignores=ignoredCount(state,feed.id);
   const st=status||{};
+  const site=(state.sites||[]).find(x=>x.id===feed.siteId);
   const when=st.at?new Date(st.at).toLocaleString():null;
   return <div style={{border:`1px solid ${C.line2}`,borderRadius:8,padding:"9px 10px",marginBottom:8}}>
     <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
@@ -1661,13 +1683,21 @@ function FeedRow({feed,state,mutate,onCheck,busy,onPaste,status}){
     <input value={feed.url} onChange={e=>setF({url:e.target.value})} spellCheck={false}
       style={{...inp,padding:"4px 7px",fontSize:10.5,color:C.gray}}/>
     <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap",marginTop:7}}>
-      <label style={{fontSize:10.5,color:C.gray}}>shifts land at<br/>
+      <label style={{fontSize:10.5,color:C.gray}}>hospital<br/>
         <select value={feed.siteId} onChange={e=>setF({siteId:e.target.value})} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}>
-          {state.sites.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+          {state.sites.map(x=><option key={x.id} value={x.id}>{x.name} · {REACH_LABEL[x.reach]}</option>)}</select></label>
+      <label style={{fontSize:10.5,color:C.gray}}>which is<br/>
+        <select value={feed.siteMode==="detect"?"detect":"fixed"} onChange={e=>setF({siteMode:e.target.value})} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}>
+          {SITE_MODES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
       <label style={{fontSize:10.5,color:C.gray}}>check<br/>
         <select value={feed.every} onChange={e=>setF({every:+e.target.value})} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}>
           {FEED_EVERY.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
       <button onClick={()=>setPaste(x=>!x)} style={{...addBtn,padding:"4px 8px"}}>{paste?"close paste":"paste .ics"}</button>
+    </div>
+    <div style={{fontSize:10,color:C.mute,marginTop:5,lineHeight:1.45}}>
+      {feed.siteMode==="detect"
+        ? <>Each event names its own hospital; anything unnamed lands at <b>{site?site.name:"—"}</b>. Use this only for a feed that really does mix sites.</>
+        : <>Every shift on this feed lands at <b>{site?site.name:"—"}</b>, at that hospital's rates. One feed per hospital.</>}
     </div>
     <div style={{fontSize:10,marginTop:7,color:st.ok===false?C.danger:C.mute,lineHeight:1.45}}>
       {st.ok===false
@@ -1689,11 +1719,13 @@ function FeedRow({feed,state,mutate,onCheck,busy,onPaste,status}){
 }
 function FeedsTab({state,mutate,onCheck,onPaste,busy,status,hasStore,onOpenStore}){
   const [url,setUrl]=useState(""),[name,setName]=useState("");
+  const [site,setSite]=useState(()=>state.sites[0].id);
   const add=()=>{
     if(!isFeedURL(url)){alert("That doesn’t look like a calendar link — it should start with webcal:// or https://");return;}
     const id="f"+Date.now().toString(36),u=url.trim();
-    mutate(s=>({...s,feeds:[...(s.feeds||[]),{id,name:name.trim()||feedHost(u),url:u,siteId:s.sites[0].id,
-      enabled:true,every:60}]}));
+    const at=state.sites.some(x=>x.id===site)?site:state.sites[0].id;
+    mutate(s=>({...s,feeds:[...(s.feeds||[]),{id,name:name.trim()||feedHost(u),url:u,siteId:at,
+      siteMode:"fixed",enabled:true,every:60}]}));
     setUrl("");setName("");
   };
   const feeds=state.feeds||[];
@@ -1702,6 +1734,9 @@ function FeedsTab({state,mutate,onCheck,onPaste,busy,status,hasStore,onOpenStore
       Subscribe to the calendar link your scheduler publishes — ShiftAdmin's “<b>webcal://…schedule_ical.php…</b>” link, or any
       .ics URL. Per Diem checks it on a timer and folds it into the plan: days you <b>requested</b> that come back on the feed
       become <b>scheduled</b> by themselves, and anything scheduled that you never asked for gets flagged.
+      <div style={{marginTop:6}}><b>One feed per hospital.</b> ShiftAdmin publishes a separate link per group, so add each
+      hospital's link and point it at that site — its shifts then land there, priced at that site's rates, and travel days
+      bracket them the way that site is set up.</div>
     </div>
     {!hasStore&&<div style={{border:`1px solid ${C.warn}`,borderRadius:8,padding:"9px 11px",marginBottom:12,fontSize:11,color:C.ink,lineHeight:1.5}}>
       <b style={{color:C.warn}}>⚠ Connect shared storage first.</b> Scheduler sites don’t allow a browser to read their
@@ -1715,8 +1750,10 @@ function FeedsTab({state,mutate,onCheck,onPaste,busy,status,hasStore,onOpenStore
       <div style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:6}}>Add a calendar link</div>
       <input value={url} onChange={e=>setUrl(e.target.value)} spellCheck={false}
         placeholder="webcal://www.shiftadmin.com/schedule_ical.php?cd=v2&u=…" style={{...inp,fontSize:11,marginBottom:6}}/>
-      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-        <input value={name} onChange={e=>setName(e.target.value)} placeholder="name it (optional)" style={{...inp,flex:"1 1 140px",minWidth:0,fontSize:11.5}}/>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+        <input value={name} onChange={e=>setName(e.target.value)} placeholder="name it (optional)" style={{...inp,flex:"1 1 120px",minWidth:0,fontSize:11.5}}/>
+        <select value={site} onChange={e=>setSite(e.target.value)} style={{...inp,width:"auto",padding:"5px 6px",fontSize:11.5}}>
+          {state.sites.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>
         <Btn kind="prim" onClick={add}>+ subscribe</Btn>
       </div>
     </div>
@@ -1750,6 +1787,7 @@ function SurpriseModal({state,sIdx,onKeep,onDrop,onKeepAll,onClose,onGo}){
                 {site?siteCode(site):"?"}{x.start?` · ${fmtClock(x.start)}${Number.isFinite(x.hours)?` · ${x.hours}h`:""}`:""}</span>
               <div style={{fontSize:10.5,color:C.gray,marginTop:2,lineHeight:1.4}}>
                 {SURPRISE_TEXT[x.kind]}{x.from?` (was ${MON[pd(x.from).getMonth()]} ${pd(x.from).getDate()})`:""}
+                {x.fromSite&&sIdx[x.fromSite]?` (you asked for ${sIdx[x.fromSite].name})`:""}
                 {x.label?<span style={{color:C.mute}}> · {x.label}</span>:null}
                 {x.feed?<span style={{color:C.mute}}> · {x.feed}</span>:null}</div>
             </div>
