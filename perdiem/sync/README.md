@@ -85,8 +85,18 @@ Per Diem can subscribe to the calendar link your scheduler publishes — ShiftAd
 `webcal://www.shiftadmin.com/schedule_ical.php?cd=v2&u=…&h=…`, or any `.ics` URL — and
 fold it into the plan on a timer.
 
-In the app: **Menu → Calendar feeds → paste the link → subscribe**. It checks hourly by
-default (15 min – daily), and **check now** pulls immediately.
+In the app: **Menu → Calendar feeds → paste the link → subscribe**.
+
+**When it checks.** On open — always, as soon as the shared plan has landed, so what
+you're looking at is current. Then on the feed's own interval while the app stays open
+(hourly by default; 15 min – daily). And again whenever you come back to the app: a phone
+freezes a backgrounded tab and its timers with it, so returning catches up on whatever
+fell due meanwhile. **Check now** pulls immediately.
+
+It all runs in whichever browser has the app open, so the phone is fine — as long as it's
+on the tailnet, since the pull goes through this service. Nothing checks while the app is
+closed everywhere; if you want the schedule reconciled around the clock, that would be a
+job running here on the NAS rather than in the app.
 
 **Why this service has to be involved.** The app runs at `https://michaelstinnett.com`;
 shiftadmin.com sends no `Access-Control-Allow-Origin` header, so the browser refuses to
@@ -104,8 +114,15 @@ holds one shift per day; same-day events collapse to the earliest). Then:
 - a day she **requested** that comes back on the feed → promoted to **scheduled**, silently
 - a scheduled day she **never requested** → added, and **flagged** — the app pops an alert
   listing them, since those are the ones she may not know about
-- a shift the feed later **drops** (inside the span it publishes) → removed, and flagged
+- a shift the feed later **drops** → removed, and flagged — but see the window rule below
 - a shift **dropped** by hand stays gone; if the schedule genuinely moves it, it returns
+
+**A feed is a moving window.** It publishes a rolling span, and shifts leave that span
+because the window slid past them, not because anyone cancelled anything. So a missing
+shift only counts as cancelled when it's absent from the *interior* of the span the feed
+just published: after today, and strictly between its first and last event. Anything
+behind the window, ahead of it, on either edge, or today itself is left alone — the app
+will never quietly delete schedule history because a feed stopped mentioning it.
 
 Reconciling is idempotent, so a missed hour or a double-check costs nothing. It never
 touches money, co-location or actuals, never edits a frozen catch-up month, and a feed's
