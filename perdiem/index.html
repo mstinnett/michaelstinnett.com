@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#1C1917">
-<meta name="description" content="Per Diem — draw proposed shifts, schedule them, see the family cost.">
+<meta name="description" content="Per Diem — mark, request, schedule and work shifts; see the family cost.">
 <title>Per Diem</title>
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script">
 <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
@@ -52,8 +52,10 @@
 const {useState,useMemo,useRef,useEffect}=React;
 
 /* ════════════════════════════════════════════════════════════
-   PER DIEM — redesign, Stage 1: Frame + readout + kid engine.
-   Draw-first surface. State axis: Proposed → Scheduled → Worked.
+   PER DIEM — draw-first planning surface.
+   State axis: Marked → Requested → Scheduled → Worked. Subscribed
+   calendar feeds (webcal) carry the official schedule in, auto-promote
+   the days she requested, and flag the ones she never asked for.
    The calendar is the work surface; the readout below it is the
    per-day picker/editor. Hours-missed comes from one engine wired
    to Wake / Bed / School-Start / School-End.
@@ -141,25 +143,32 @@ function seedState(){
     ["2026-06-13","day"],["2026-06-15","day"],["2026-06-16","day"],["2026-06-23","night"],["2026-06-24","night"],
     ["2026-06-27","day"],["2026-06-30","day"],["2026-07-07","day"],["2026-07-08","day"],["2026-07-30","day"]];
   let n=0;
-  const shifts=LYDIA.map(([date,t])=>({id:"L"+(++n),date,siteId:"boston",type:t,status:"scheduled",coLocated:false}));
-  // a couple of proposed shifts at travel sites, to show the readout's reach/co-location affordances
-  shifts.push({id:"P1",date:"2026-07-14",siteId:"abq",   type:"day",  status:"proposed",coLocated:false});
-  shifts.push({id:"P2",date:"2026-07-15",siteId:"abq",   type:"day",  status:"proposed",coLocated:false});
-  shifts.push({id:"P3",date:"2026-08-12",siteId:"santa_fe",type:"day",status:"proposed",coLocated:false});
+  const shifts=LYDIA.map(([date,t])=>({id:"L"+(++n),date,siteId:"boston",type:t,
+    status:date<TODAY_S?"worked":"scheduled",coLocated:false}));
+  // a couple of requested shifts at travel sites, to show the readout's reach/co-location affordances
+  shifts.push({id:"P1",date:"2026-07-14",siteId:"abq",   type:"day",  status:"requested",coLocated:false});
+  shifts.push({id:"P2",date:"2026-07-15",siteId:"abq",   type:"day",  status:"requested",coLocated:false});
+  shifts.push({id:"P3",date:"2026-08-12",siteId:"santa_fe",type:"day",status:"requested",coLocated:false});
+  // days she's marked as "I could work this" — not asked for yet
+  shifts.push({id:"M1",date:"2026-10-06",siteId:"boston",type:"day",  status:"marked",coLocated:false});
+  shifts.push({id:"M2",date:"2026-10-07",siteId:"boston",type:"night",status:"marked",coLocated:false});
   // a scheduled remote cluster (ABQ) so real travel days bookend it out of the box
   shifts.push({id:"S1",date:"2026-09-29",siteId:"abq",type:"day",status:"scheduled",coLocated:false});
   shifts.push({id:"S2",date:"2026-09-30",siteId:"abq",type:"day",status:"scheduled",coLocated:false});
   // 2026 catch-up: per-month earned override for the pre-app months
   const monthOverrides={"2026-01":7600,"2026-02":9200,"2026-03":12400,"2026-04":10800,"2026-05":8800};
   const settings={wake:"07:00",bed:"20:00",schoolStart:"08:00",schoolEnd:"15:00",goal:220000};
-  // a proposed window at a travel site: hold 7 days (incl. a weekend), work 2; a travel day bookends it
+  // a held window at a travel site: hold 7 days (incl. a weekend), work 2; a travel day bookends it
   const windows=[{id:"w1",siteId:"santa_fe",type:"day",from:"2026-10-17",to:"2026-10-23",x:2}];
   const aways=[{id:"a1",date:"2026-09-28",kind:"travel"},{id:"a2",date:"2026-07-13",kind:"away"}];   // manually-placed demo days
-  return {sites,trips,calendars,shifts,monthOverrides,settings,windows,aways,travelMigrated:true};
+  return {sites,trips,calendars,shifts,monthOverrides,settings,windows,aways,
+    feeds:[],surprises:[],feedIgnore:[],travelMigrated:true,phaseMigrated:true};
 }
 
 /* ════════ ENGINE ════════ */
 const siteIndex=sites=>Object.fromEntries(sites.map(s=>[s.id,s]));
+const autoCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
+const siteCode=site=>(site&&site.code)?site.code:autoCode(site);   // a site's short badge: hand-set, else initials
 // a menu entry carries its own editable start/hours/rate; the catalog only supplies defaults for old entries
 const HM_RE=/^\d{1,2}:\d{2}$/;
 const entryStartStr=e=>{const t=e&&e.start;return HM_RE.test(t)?t:(SHIFT_BY[e&&e.shift]||SHIFT_BY.d7).start;};
@@ -181,6 +190,19 @@ function shiftInterval(site,type){            // [startHour, endHour] within the
   return [start,start+entryHours(e)];
 }
 function shiftPay(site,type){const e=resolveEntry(site,type);return (+e.rate||0)*entryHours(e);}
+/* a single shift may carry its own start/hours — that's how a feed-imported shift
+   keeps the exact times the schedule published, while still billing at the site's rate */
+function entryFor(site,sh){
+  const base=resolveEntry(site,sh&&sh.type);if(!sh)return base;
+  const o={...base};let over=false;
+  if(HM_RE.test(sh.start)){o.start=sh.start;over=true;}
+  if(Number.isFinite(sh.hours)&&sh.hours>0){o.hours=sh.hours;over=true;}
+  return over?o:base;
+}
+const shiftIntervalOf=(site,sh)=>{const e=entryFor(site,sh),st=parseHM(entryStartStr(e));return [st,st+entryHours(e)];};
+const shiftPayOf=(site,sh)=>{const e=entryFor(site,sh);return (+e.rate||0)*entryHours(e);};
+const shiftCatOf=(site,sh)=>entryNight(entryFor(site,sh))?"night":"day";
+const shiftLabelOf=(site,sh)=>entryLabel(entryFor(site,sh));
 
 const isWeekend=str=>{const g=pd(str).getDay();return g===0||g===6;};
 const calCovers=(cal,str)=>(cal.ranges||[]).some(r=>str>=r.from&&str<=r.to);
@@ -214,20 +236,38 @@ const dayAwakeHours=(str,state)=>homeAwake(str,state).reduce((t,[a,b])=>t+(b-a),
 function shiftMissed(shift,state,sIdx){
   const site=sIdx[shift.siteId];if(!site)return 0;
   if(site.reach!=="local"&&!shift.coLocated)return dayAwakeHours(shift.date,state);
-  const [a,b]=shiftInterval(site,shift.type),aw=homeAwake(shift.date,state);
+  const [a,b]=shiftIntervalOf(site,shift),aw=homeAwake(shift.date,state);
   let t=0;for(const [x,y] of aw)t+=ovl(a,Math.min(b,24),x,y);
   return Math.round(t*10)/10;
 }
-const isWorked=sh=>sh.status==="scheduled"&&sh.date<TODAY_S;
-const bucketOf=sh=>sh.status==="proposed"?"proposed":(sh.date<TODAY_S?"worked":"scheduled");
+/* ─── the four phases ───────────────────────────────────────────────────────
+   marked     — a day she's holding: "I could work this." Nothing asked for yet.
+   requested  — submitted to the scheduler. Money counts only "if it lands".
+   scheduled  — on the official schedule (usually confirmed by a calendar feed).
+   worked     — scheduled and now in the past. Carries actuals.
+   A scheduled day rolls to worked on its own once the date passes.          */
+const PHASES=["marked","requested","scheduled","worked"];
+const PHASE_LABEL={marked:"Marked",requested:"Requested",scheduled:"Scheduled",worked:"Worked"};
+const PHASE_SHORT={marked:"Mark",requested:"Req",scheduled:"Sched",worked:"Worked"};
+const PHASE_ORDER={marked:0,requested:1,scheduled:2,worked:3};
+const isSketch=st=>st==="marked"||st==="requested";           // the un-committed layer
+const isWorked=sh=>sh.status==="worked"||(sh.status==="scheduled"&&sh.date<TODAY_S);
+const bucketOf=sh=>{const st=PHASES.includes(sh.status)?sh.status:"requested";
+  if(st==="scheduled"&&sh.date<TODAY_S)return "worked";
+  if(st==="worked"&&sh.date>=TODAY_S)return "scheduled";      // a worked day dragged forward
+  return st;};
 // worked shifts can carry hand-edited actuals; otherwise fall back to the planned value
 const missedOf=(sh,state,sIdx)=>(isWorked(sh)&&Number.isFinite(sh.actualMissed))?sh.actualMissed:shiftMissed(sh,state,sIdx);
-const payOf=(sh,sIdx)=>(isWorked(sh)&&Number.isFinite(sh.actualPay))?sh.actualPay:shiftPay(sIdx[sh.siteId],sh.type);
+const payOf=(sh,sIdx)=>(isWorked(sh)&&Number.isFinite(sh.actualPay))?sh.actualPay:shiftPayOf(sIdx[sh.siteId],sh);
+// scheduled days whose date has passed become worked, in the store, not just on screen
+function rollWorked(shifts){return (shifts||[]).map(s=>
+  s.status==="scheduled"&&s.date<TODAY_S?{...s,status:"worked"}
+  :s.status==="worked"&&s.date>=TODAY_S?{...s,status:"scheduled"}:s);}
 // soft warnings — never block, just flag an odd state in a colour
 function warnOf(sh,state){
   const trip=(state.trips||[]).find(t=>t.visible!==false&&t.workFactor==="closed"&&sh.date>=t.from&&sh.date<=t.to);
   if(trip)return "on a closed trip ("+trip.name+")";
-  if(sh.status==="proposed"&&sh.date<TODAY_S)return "proposed but already in the past";
+  if(isSketch(bucketOf(sh))&&sh.date<TODAY_S)return PHASE_LABEL[bucketOf(sh)].toLowerCase()+" but already in the past";
   return null;
 }
 
@@ -249,7 +289,7 @@ function winBand(windows,sIdx){
   });
   return map;
 }
-// the proposed-impact band: min/max kid-awake hours missed + provisional travel
+// a held window's impact band: min/max kid-awake hours missed + provisional travel
 function windowBand(w,state,sIdx){
   const site=sIdx[w.siteId],dates=winDates(w),Y=dates.length,X=clamp(w.x||1,1,Y);
   const perDay=dates.map(dt=>shiftMissed({date:dt,siteId:w.siteId,type:w.type,coLocated:false},state,sIdx)).sort((a,b)=>a-b);
@@ -263,7 +303,7 @@ function scheduleWindow(state,sIdx,w){
   const dates=winDates(w).map(dt=>({dt,m:shiftMissed({date:dt,siteId:w.siteId,type:w.type,coLocated:false},state,sIdx)}))
     .sort((a,b)=>a.m-b.m).slice(0,clamp(w.x||1,1,winDates(w).length)).map(o=>o.dt);
   const keep=state.shifts.filter(s=>!dates.includes(s.date));
-  const made=dates.map((dt,i)=>({id:"w"+w.id+"_"+i,date:dt,siteId:w.siteId,type:specificType(sIdx[w.siteId],w.type),status:"scheduled",coLocated:false}));
+  const made=dates.map((dt,i)=>({id:"w"+w.id+"_"+i,date:dt,siteId:w.siteId,type:specificType(sIdx[w.siteId],w.type),status:"requested",coLocated:false}));
   return {...state,shifts:[...keep,...made],windows:state.windows.filter(x=>x.id!==w.id)};
 }
 
@@ -293,29 +333,29 @@ const monthLocked=(state,dateStr)=>Number.isFinite((state.monthOverrides||{})[mk
 /* year + month aggregates for the banner */
 function aggregate(state,sIdx,viewYM){
   const yr=viewYM.slice(0,4);   // the year you're viewing — annual totals include only this one year
-  const pay=sh=>shiftPay(sIdx[sh.siteId],sh.type);
+  const pay=sh=>shiftPayOf(sIdx[sh.siteId],sh);
   // $ — worked uses month overrides where present, else summed past-scheduled pay
   const workedByMonth={};
   state.shifts.forEach(sh=>{if(isWorked(sh)){const m=mk(sh.date);workedByMonth[m]=(workedByMonth[m]||0)+payOf(sh,sIdx);}});
   const months=new Set([...Object.keys(workedByMonth),...Object.keys(state.monthOverrides||{})].filter(m=>m.startsWith(yr)));
   let worked$=0;months.forEach(m=>{const ov=(state.monthOverrides||{})[m];worked$+=(ov!=null?ov:(workedByMonth[m]||0));});
-  let scheduled$=0,proposed$=0;
+  let scheduled$=0,requested$=0,marked$=0;
   state.shifts.forEach(sh=>{if(!sh.date.startsWith(yr))return;const b=bucketOf(sh);
-    if(b==="scheduled")scheduled$+=pay(sh);else if(b==="proposed")proposed$+=pay(sh);});
+    if(b==="scheduled")scheduled$+=pay(sh);else if(b==="requested")requested$+=pay(sh);else if(b==="marked")marked$+=pay(sh);});
   // hours missed — current viewed month only (never annualized) + the viewed month's money
-  const hrs={worked:0,scheduled:0,proposed:0};
-  const m$={worked:0,scheduled:0,proposed:0};
-  const mN={worked:0,scheduled:0,proposed:0};   // shift counts for the month
+  const hrs={worked:0,scheduled:0,requested:0,marked:0};
+  const m$={worked:0,scheduled:0,requested:0,marked:0};
+  const mN={worked:0,scheduled:0,requested:0,marked:0};   // shift counts for the month
   state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;const b=bucketOf(sh);hrs[b]+=missedOf(sh,state,sIdx);m$[b]+=pay(sh);mN[b]++;});
   if(Number.isFinite((state.monthOverrides||{})[viewYM]))m$.worked=state.monthOverrides[viewYM];   // a catch-up month's worked $ = its override
-  // proposed windows: money is pinned (X×rate); hours contribute their low end (a floor) for the window's month
+  // a held window is marked, not asked for: money is pinned (X×rate); hours contribute their low end (a floor)
   (state.windows||[]).forEach(w=>{if(!w.from.startsWith(yr))return;const b=windowBand(w,state,sIdx);
-    proposed$+=b.money;if(mk(w.from)===viewYM){hrs.proposed+=b.min;m$.proposed+=b.money;mN.proposed+=b.X;}});
-  // travel days add their hours to the bucket of their cluster (proposed → proposed; else worked/scheduled by date)
+    marked$+=b.money;if(mk(w.from)===viewYM){hrs.marked+=b.min;m$.marked+=b.money;mN.marked+=b.X;}});
+  // travel days add their hours to the bucket their date falls in (worked before today, scheduled after)
   const tb=travelBand(state);
   Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;const info=tb[dt],miss=travelMissed(dt,info,state);
     hrs[dt<TODAY_S?"worked":"scheduled"]+=miss;});
-  return {worked$,scheduled$,proposed$,hrs,month:m$,monthN:mN};
+  return {worked$,scheduled$,requested$,marked$,hrs,month:m$,monthN:mN};
 }
 
 /* ════════ persistence + sanitize ════════
@@ -340,15 +380,37 @@ function sanitize(o){
   const arr=(v,fb)=>Array.isArray(v)?v:fb;
   const settings={...seed.settings,...(o.settings&&typeof o.settings==="object"?o.settings:{})};
   const obj=v=>(v&&typeof v==="object"&&!Array.isArray(v))?v:{};
-  const shifts=arr(o.shifts,[]).filter(s=>s&&DATE_RE.test(s.date)&&ids.has(s.siteId)).map(s=>{
+  // one-time phase migration: the old two-state axis (proposed/scheduled) → the four phases
+  const phase=s=>PHASES.includes(s.status)?s.status:(s.status==="proposed"?"requested":"scheduled");
+  const shifts=rollWorked(arr(o.shifts,[]).filter(s=>s&&DATE_RE.test(s.date)&&ids.has(s.siteId)).map(s=>{
     const o2={id:String(s.id||("s"+Math.random().toString(36).slice(2))),date:s.date,siteId:s.siteId,
-      type:s.type||"day",status:s.status==="scheduled"?"scheduled":"proposed",coLocated:!!s.coLocated};
+      type:s.type||"day",status:phase(s),coLocated:!!s.coLocated};
     if(Number.isFinite(s.actualPay))o2.actualPay=s.actualPay;
-    if(Number.isFinite(s.actualMissed))o2.actualMissed=s.actualMissed;return o2;});
+    if(Number.isFinite(s.actualMissed))o2.actualMissed=s.actualMissed;
+    if(HM_RE.test(s.start))o2.start=s.start;                      // exact times a feed published
+    if(Number.isFinite(s.hours)&&s.hours>0)o2.hours=Math.min(24,s.hours);
+    if(typeof s.label==="string"&&s.label)o2.label=s.label.slice(0,80);
+    if(s.source&&s.source.feedId)o2.source={feedId:String(s.source.feedId),uid:String(s.source.uid||"")};
+    return o2;}));
   const windows=arr(o.windows,[]).filter(w=>w&&DATE_RE.test(w.from)&&DATE_RE.test(w.to)&&w.from<=w.to&&ids.has(w.siteId))
     .map(w=>({id:String(w.id||("w"+Math.random().toString(36).slice(2))),siteId:w.siteId,type:w.type||"day",from:w.from,to:w.to,x:clamp(Math.round(+w.x||1),1,99)}));
+  const feeds=arr(o.feeds,[]).filter(f=>f&&isFeedURL(f.url)).map(f=>({
+    id:String(f.id||("f"+Math.random().toString(36).slice(2))),
+    name:String(f.name||"Schedule feed").slice(0,60),url:String(f.url).trim(),
+    siteId:ids.has(f.siteId)?f.siteId:sites[0].id,
+    enabled:f.enabled!==false,every:clamp(Math.round(+f.every||60),15,1440)}));
+  const feedIds=new Set(feeds.map(f=>f.id));
+  const surprises=arr(o.surprises,[]).filter(x=>x&&DATE_RE.test(x.date)&&SURPRISE_KINDS.includes(x.kind))
+    .map(x=>({id:String(x.id||("x"+Math.random().toString(36).slice(2))),feedId:String(x.feedId||""),
+      feed:String(x.feed||"").slice(0,60),date:x.date,kind:x.kind,siteId:ids.has(x.siteId)?x.siteId:sites[0].id,
+      start:HM_RE.test(x.start)?x.start:null,hours:Number.isFinite(x.hours)?x.hours:null,
+      label:String(x.label||"").slice(0,80),from:DATE_RE.test(x.from)?x.from:null,
+      uid:typeof x.uid==="string"?x.uid.slice(0,200):null,
+      at:typeof x.at==="string"?x.at:null})).slice(-200);
   return {sites,trips:arr(o.trips,seed.trips),calendars:arr(o.calendars,seed.calendars),
-    settings,monthOverrides:obj(o.monthOverrides),shifts,windows,travelMigrated:true,
+    settings,monthOverrides:obj(o.monthOverrides),shifts,windows,feeds,surprises,
+    feedIgnore:arr(o.feedIgnore,[]).filter(x=>typeof x==="string"&&x.length<300).slice(-500),
+    travelMigrated:true,phaseMigrated:true,
     aways:arr(o.aways,[]).filter(a=>a&&DATE_RE.test(a.date)).map(a=>({id:String(a.id||("a"+Math.random().toString(36).slice(2))),date:a.date,kind:a.kind==="away"?"away":"travel",...(a.coarse==="half"?{coarse:"half"}:{})}))};
 }
 function readHash(){
@@ -420,6 +482,268 @@ function icsRanges(text){
   return out;
 }
 
+/* ════════ CALENDAR FEEDS — subscribed webcal/ICS schedules ════════
+   A feed is a published calendar URL (webcal:// or https://) carrying the
+   official schedule — e.g. ShiftAdmin's per-user .ics link. Every check pulls
+   it, turns each VEVENT into a shift, and reconciles it against the plan:
+
+     · a day she REQUESTED that comes back on the feed → promoted to scheduled
+     · a scheduled day she never requested             → flagged as a surprise
+     · a feed day that later disappears                → dropped, and flagged
+
+   The feed is a read-only input. The plan stays the source of truth for money,
+   co-location and actuals; reconciling never touches those. Browsers can't
+   fetch these hosts directly (no CORS), so the pull goes through the NAS
+   service's /ics proxy when one is connected. */
+const FEED_EVERY=[[15,"every 15 min"],[30,"every 30 min"],[60,"hourly"],[240,"every 4 hours"],[720,"twice a day"],[1440,"once a day"]];
+const SURPRISE_KINDS=["new","unrequested","moved","dropped"];
+const SURPRISE_TEXT={
+  new:"scheduled on a day you hadn’t requested or marked",
+  unrequested:"scheduled on a day you’d only held — you never requested it",
+  moved:"the schedule moved this shift to a different day",
+  dropped:"this shift came off the schedule"};
+const feedURL=u=>String(u||"").trim().replace(/^webcal:\/\//i,"https://");
+const isFeedURL=u=>/^(webcal|https?):\/\/[^\s]+$/i.test(String(u||"").trim());
+const feedHost=u=>{try{return new URL(feedURL(u)).host;}catch(e){return String(u||"").slice(0,40);}};
+const hash36=v=>{const t=String(v);let h=2166136261>>>0;for(let i=0;i<t.length;i++){h^=t.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}return h.toString(36);};
+
+/* ─── time zones: an ICS stamp is UTC (…Z), zoned (TZID=…) or floating ─── */
+function tzOffsetMs(tz,utcMs){
+  try{
+    const parts=new Intl.DateTimeFormat("en-US",{timeZone:tz,hour12:false,year:"numeric",month:"2-digit",
+      day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}).formatToParts(new Date(utcMs));
+    const p={};parts.forEach(x=>{p[x.type]=x.value;});
+    return Date.UTC(+p.year,+p.month-1,+p.day,(+p.hour)%24,+p.minute,+p.second)-utcMs;
+  }catch(e){return null;}
+}
+// a wall clock in `tz` → epoch ms; the second pass puts DST edges on the right side
+function zonedMs(y,mo,d,h,mi,se,tz){
+  const wall=Date.UTC(y,mo-1,d,h,mi,se),o1=tzOffsetMs(tz,wall);
+  if(o1==null)return new Date(y,mo-1,d,h,mi,se).getTime();
+  const t=wall-o1,o2=tzOffsetMs(tz,t);
+  return (o2==null||o2===o1)?t:wall-o2;
+}
+const ICS_STAMP=/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/;
+function icsMs(val,params){                       // "20260810T070000Z" (+ its params) → {ms,allDay}
+  const m=ICS_STAMP.exec(String(val).trim());if(!m)return null;
+  const y=+m[1],mo=+m[2],d=+m[3],h=+(m[4]||0),mi=+(m[5]||0),se=+(m[6]||0);
+  const allDay=!m[4]||/VALUE=DATE(?!-TIME)/i.test(params||"");
+  if(allDay)return {ms:new Date(y,mo-1,d).getTime(),allDay:true};
+  if(m[7])return {ms:Date.UTC(y,mo-1,d,h,mi,se),allDay:false};
+  const tz=(/TZID=([^;:]+)/i.exec(params||"")||[])[1];
+  return {ms:tz?zonedMs(y,mo,d,h,mi,se,tz.replace(/^"|"$/g,"")):new Date(y,mo-1,d,h,mi,se).getTime(),allDay:false};
+}
+const icsDurH=v=>{const m=/^-?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i.exec(String(v).trim());
+  return m?((+m[1]||0)*168+(+m[2]||0)*24+(+m[3]||0)+(+m[4]||0)/60+(+m[5]||0)/3600):null;};
+
+/* full VEVENT records — the .ics *calendar* importer above only needs dates */
+function parseVEvents(text){
+  const lines=String(text).replace(/\r?\n[ \t]/g,"").split(/\r\n|\n|\r/);
+  const out=[];let cur=null;
+  for(const line of lines){
+    if(line==="BEGIN:VEVENT"){cur={};continue;}
+    if(line==="END:VEVENT"){if(cur)out.push(cur);cur=null;continue;}
+    if(!cur)continue;
+    const i=line.indexOf(":");if(i<0)continue;
+    const left=line.slice(0,i),val=line.slice(i+1),name=left.split(";")[0].toUpperCase(),params=left.slice(name.length);
+    if(name==="DTSTART")cur.start=icsMs(val,params);
+    else if(name==="DTEND")cur.end=icsMs(val,params);
+    else if(name==="DURATION")cur.dur=icsDurH(val);
+    else if(name==="UID")cur.uid=val.trim();
+    else if(name==="SUMMARY")cur.summary=unescapeICS(val);
+    else if(name==="LOCATION")cur.location=unescapeICS(val);
+    else if(name==="STATUS")cur.status=val.trim().toUpperCase();
+  }
+  return out;
+}
+/* a feed's text → one shift-shaped record per event, on local calendar dates.
+   The plan holds one shift per day, so same-day events collapse to the earliest. */
+function feedEvents(text){
+  const raw=[];
+  for(const e of parseVEvents(text)){
+    if(!e.start||e.status==="CANCELLED")continue;
+    const d=new Date(e.start.ms),date=ds(new Date(d.getFullYear(),d.getMonth(),d.getDate()));
+    let hours=null;
+    if(e.end&&e.end.ms>e.start.ms)hours=(e.end.ms-e.start.ms)/36e5;
+    else if(Number.isFinite(e.dur)&&e.dur>0)hours=e.dur;
+    const allDay=!!e.start.allDay;
+    raw.push({uid:e.uid||`${date}@${d.getTime()}`,date,allDay,
+      start:allDay?null:hm(d.getHours()+d.getMinutes()/60),
+      hours:(!allDay&&Number.isFinite(hours)&&hours>0)?Math.round(Math.min(24,hours)*100)/100:null,
+      label:String(e.summary||"").slice(0,80),where:String(e.location||"").slice(0,80)});
+  }
+  raw.sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:String(a.start).localeCompare(String(b.start)));
+  const by={},events=[];let extra=0;
+  for(const ev of raw){if(by[ev.date]){extra++;continue;}by[ev.date]=1;events.push(ev);}
+  return {events,extra};
+}
+const looksLikeICS=t=>/BEGIN:VCALENDAR/i.test(String(t||""));
+
+/* ─── matching an event onto the plan's own vocabulary ─── */
+// site by name/abbr appearing in the summary or location; null when the feed doesn't say
+function matchSite(ev,sites){
+  const hay=`${ev.label} ${ev.where}`.toLowerCase();
+  let best=null;
+  sites.forEach(s=>{
+    const words=[s.code,siteCode(s),s.name].concat(String(s.name).split(/\s+/).filter(w=>w.length>3));
+    words.forEach(w=>{const t=String(w||"").toLowerCase();
+      if(t.length>=3&&hay.indexOf(t)>=0&&(!best||t.length>best.n))best={id:s.id,n:t.length};});
+  });
+  return best?best.id:null;
+}
+// the site's menu entry closest to what the feed published (start time, then length)
+function matchEntry(site,ev){
+  const menu=(site&&site.menu)||[];if(!menu.length)return null;
+  if(!ev.start)return menu[0];
+  const want=parseHM(ev.start);let best=menu[0],score=Infinity;
+  menu.forEach(m=>{
+    const gap=Math.abs(parseHM(entryStartStr(m))-want),d=Math.min(gap,24-gap);
+    const hd=Number.isFinite(ev.hours)?Math.abs(entryHours(m)-ev.hours)/8:0;
+    if(d+hd<score){score=d+hd;best=m;}
+  });
+  return best;
+}
+// event → the shift fields a feed owns (never money, co-location or actuals)
+function feedShift(ev,state,sIdx,feed,preferSiteId){
+  const named=matchSite(ev,state.sites);
+  const siteId=named||(sIdx[preferSiteId]?preferSiteId:null)||(sIdx[feed.siteId]?feed.siteId:state.sites[0].id);
+  const entry=matchEntry(sIdx[siteId],ev);
+  const sh={date:ev.date,siteId,type:entry?entry.shift:"day",source:{feedId:feed.id,uid:ev.uid}};
+  if(ev.start)sh.start=ev.start;
+  if(Number.isFinite(ev.hours))sh.hours=ev.hours;
+  if(ev.label)sh.label=ev.label;
+  return sh;
+}
+/* a shift she explicitly threw back mustn't reappear on the next check. The key
+   is feed+event+day, so if the schedule later moves it, it does come back. */
+const feedKey=(feedId,uid,date)=>`${feedId}|${uid}|${date}`;
+const shiftKey=sh=>(sh&&sh.source)?feedKey(sh.source.feedId,sh.source.uid,sh.date):null;
+const ignoreShift=(state,sh)=>{const k=shiftKey(sh);
+  return k?{...state,feedIgnore:[...(state.feedIgnore||[]).filter(x=>x!==k),k].slice(-500)}:state;};
+const clearIgnores=(state,feedId)=>({...state,feedIgnore:(state.feedIgnore||[]).filter(k=>k.split("|")[0]!==feedId)});
+const ignoredCount=(state,feedId)=>(state.feedIgnore||[]).filter(k=>k.split("|")[0]===feedId).length;
+function surpriseOf(feed,kind,date,sh,from,label){
+  return {id:`x_${feed.id}_${kind}_${date}_${hash36((sh&&sh.source&&sh.source.uid)||date)}`,
+    feedId:feed.id,feed:feed.name,date,kind,siteId:sh?sh.siteId:null,
+    uid:(sh&&sh.source&&sh.source.uid)||null,
+    start:(sh&&sh.start)||null,hours:(sh&&Number.isFinite(sh.hours))?sh.hours:null,
+    label:String(label||(sh&&sh.label)||""),from:from||null,at:new Date().toISOString()};
+}
+
+/* ─── the reconcile itself: pure, idempotent, safe to run on every check ───
+   Returns the next state plus a report of what moved. `flag:false` (a feed's
+   very first pull) adopts the schedule silently instead of flagging all of it. */
+function reconcile(state,sIdx,feed,parsed,nowStr,opts){
+  const flag=!(opts&&opts.flag===false);
+  const events=(parsed&&parsed.events)||[];
+  const rep={promoted:0,updated:0,added:0,moved:0,dropped:0,locked:0,ignored:0,extra:(parsed&&parsed.extra)||0,surprises:[]};
+  if(!events.length)return {state,report:rep};
+  let shifts=state.shifts.slice();
+  const mine=sh=>!!(sh.source&&sh.source.feedId===feed.id);
+  const ignored=new Set(state.feedIgnore||[]);
+  const held=str=>(state.windows||[]).some(w=>str>=w.from&&str<=w.to);
+  const flagIt=(kind,date,sh,from,label)=>{if(flag&&date>=nowStr)rep.surprises.push(surpriseOf(feed,kind,date,sh,from,label));};
+
+  events.forEach(ev=>{
+    if(monthLocked(state,ev.date)){rep.locked++;return;}          // a frozen catch-up month stays frozen
+    if(ignored.has(feedKey(feed.id,ev.uid,ev.date))){rep.ignored++;return;}   // she threw this one back
+    const onDay=shifts.find(s=>s.date===ev.date);
+    const byUid=shifts.find(s=>mine(s)&&s.source.uid===ev.uid);
+    const patch=feedShift(ev,state,sIdx,feed,onDay?onDay.siteId:(byUid?byUid.siteId:null));
+    const phase=ev.date<nowStr?"worked":"scheduled";
+    if(onDay){
+      if(byUid&&byUid!==onDay)shifts=shifts.filter(s=>s!==byUid);   // it folded onto a day already spoken for
+      const was=bucketOf(onDay),next={...onDay,...patch,status:phase};
+      shifts=shifts.map(s=>s===onDay?next:s);
+      if(was==="requested")rep.promoted++;
+      else if(was==="marked"){rep.promoted++;flagIt("unrequested",ev.date,patch);}
+      // a re-check that lands on the same values is not news — only count a real edit
+      else if(JSON.stringify(next)!==JSON.stringify(onDay))rep.updated++;
+    }else if(byUid){
+      const from=byUid.date;
+      shifts=shifts.map(s=>s===byUid?{...byUid,...patch,status:phase}:s);
+      rep.moved++;flagIt("moved",ev.date,patch,from);
+    }else{
+      shifts=shifts.concat([{id:"f"+hash36(feed.id+ev.uid+ev.date),coLocated:false,...patch,status:phase}]);
+      rep.added++;flagIt(held(ev.date)?"unrequested":"new",ev.date,patch);
+    }
+  });
+
+  // shifts this feed placed that have since vanished from the span it publishes
+  const dates=events.map(e=>e.date).sort(),lo=dates[0],hi=dates[dates.length-1];
+  const uids=new Set(events.map(e=>e.uid)),days=new Set(dates);
+  const gone=shifts.filter(s=>mine(s)&&s.date>=nowStr&&s.date>=lo&&s.date<=hi&&!uids.has(s.source.uid)&&!days.has(s.date));
+  if(gone.length){
+    const ids=new Set(gone.map(s=>s.id));
+    shifts=shifts.filter(s=>!ids.has(s.id));
+    rep.dropped=gone.length;
+    gone.forEach(s=>flagIt("dropped",s.date,s));
+  }
+  // a placed travel/away day can't share a date with a shift
+  const taken=new Set(shifts.map(s=>s.date));
+  const aways=(state.aways||[]).filter(a=>!taken.has(a.date));
+  return {state:{...state,shifts,aways},report:rep};
+}
+const reportEmpty=r=>!r||(!r.promoted&&!r.added&&!r.moved&&!r.dropped&&!r.updated);
+function reportLine(r){
+  const bits=[];
+  if(r.promoted)bits.push(`${r.promoted} confirmed`);
+  if(r.added)bits.push(`${r.added} new`);
+  if(r.moved)bits.push(`${r.moved} moved`);
+  if(r.dropped)bits.push(`${r.dropped} dropped`);
+  if(!bits.length&&r.updated)bits.push(`${r.updated} updated`);
+  if(r.locked)bits.push(`${r.locked} skipped (locked month)`);
+  return bits.join(" · ")||"no changes";
+}
+// merge a check's flags into the plan, skipping any she's already been shown
+function withSurprises(state,list){
+  const seen=new Set((state.surprises||[]).map(x=>x.id));
+  const add=(list||[]).filter(x=>!seen.has(x.id));
+  if(!add.length)return state;
+  return {...state,surprises:[...(state.surprises||[]),...add].slice(-200)};
+}
+/* When a device last checked a feed — and how it went — is that device's
+   business, not the plan's. Keeping it out of the shared document means an
+   idle hourly check never writes, so the other phone isn't woken by a sync
+   that carries no actual news. */
+const FEED_ST="pdFeedStatus";
+function loadFeedStatus(){try{const v=JSON.parse(localStorage.getItem(FEED_ST)||"{}");return (v&&typeof v==="object")?v:{};}catch(e){return {};}}
+function saveFeedStatus(v){try{localStorage.setItem(FEED_ST,JSON.stringify(v));}catch(e){}}
+const feedDue=(f,st)=>{const at=st&&st.at?Date.parse(st.at):0;
+  return !at||(Date.now()-at)>=clamp(Math.round(+f.every||60),15,1440)*60000;};
+const ackSurprises=(state,ids)=>({...state,surprises:(state.surprises||[]).filter(x=>ids.indexOf(x.id)<0)});
+// "I didn't agree to this" — drop the flagged shift out of the plan along with the
+// flag, and remember not to take it back on the next check
+function rejectSurprise(state,x){
+  const hit=state.shifts.find(s=>s.date===x.date&&s.source&&s.source.feedId===x.feedId);
+  const next={...state,
+    shifts:state.shifts.filter(s=>s!==hit),
+    surprises:(state.surprises||[]).filter(y=>y.id!==x.id)};
+  return ignoreShift(next,hit||(x.uid?{date:x.date,source:{feedId:x.feedId,uid:x.uid}}:null));
+}
+
+/* pull a feed's text: through the NAS proxy when one is connected (feed hosts
+   send no CORS headers), else straight at it in case this one does. */
+async function fetchFeedText(feed,cfg){
+  const url=feedURL(feed.url),errs=[];
+  if(cfg&&cfg.url){
+    try{
+      const h=cfg.tok?{Authorization:"Bearer "+cfg.tok}:{};
+      const r=await fetch(`${cfg.url}/ics?url=${encodeURIComponent(url)}`,{headers:h,cache:"no-store"});
+      if(r.ok)return await r.text();
+      let msg="HTTP "+r.status;
+      try{const j=await r.json();if(j&&j.error)msg=j.error;}catch(_){}
+      errs.push("via shared storage: "+msg);
+    }catch(e){errs.push("via shared storage: "+(e.message||e));}
+  }
+  try{
+    const r=await fetch(url,{cache:"no-store"});
+    if(r.ok)return await r.text();
+    errs.push("direct: HTTP "+r.status);
+  }catch(e){errs.push(cfg&&cfg.url?"direct: blocked by the browser":"direct: blocked by the browser — connect shared storage so the NAS can fetch it");}
+  throw new Error(errs.join(" · "));
+}
+
 /* ════════ small UI atoms ════════ */
 const Btn=({children,onClick,kind,on,small,disabled,title})=>{
   const base={fontFamily:MONO,fontWeight:700,cursor:disabled?"default":"pointer",borderRadius:6,
@@ -456,18 +780,19 @@ const DelX=({onClick})=><button onClick={onClick} title="delete" style={{marginL
 
 /* ════════ BANNER — annual: Worked / Scheduled / Proposed $ + goal pace ════════ */
 function Banner({agg,goal,mobile,year}){
-  const projected=agg.worked$+agg.scheduled$,allLand=agg.worked$+agg.scheduled$+agg.proposed$;
+  const projected=agg.worked$+agg.scheduled$,allLand=projected+agg.requested$+agg.marked$;
   const pct=goal>0?clamp(projected/goal,0,1):0;
   const wpct=goal>0?clamp(agg.worked$/goal,0,1):0;
   const goalBar=<div style={{height:mobile?5:8,borderRadius:5,background:C.line2,position:"relative",overflow:"hidden"}}>
     <div style={{position:"absolute",inset:0,width:`${pct*100}%`,background:C.bar}}/>
     <div style={{position:"absolute",inset:0,width:`${wpct*100}%`,background:C.juniper}}/></div>;
   if(mobile)return <div style={{borderBottom:`1px solid ${C.line}`,background:C.panel,padding:"5px 12px",flexShrink:0}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:11,fontVariantNumeric:"tabular-nums"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:6,flexWrap:"wrap",fontSize:11,fontVariantNumeric:"tabular-nums"}}>
       <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color:C.mute}}>{year}</span>
       <span><b style={{fontSize:13.5}}>{fmtK(agg.worked$)}</b> <span style={{color:C.mute}}>worked</span></span>
       <span><b style={{fontSize:12.5}}>{fmtK(agg.scheduled$)}</b> <span style={{color:C.mute}}>sched</span></span>
-      <span style={{color:C.ocean}}><b style={{fontSize:12.5}}>{fmtK(agg.proposed$)}</b> <span style={{color:C.mute}}>prop</span></span>
+      <span style={{color:C.ocean}}><b style={{fontSize:12.5}}>{fmtK(agg.requested$)}</b> <span style={{color:C.mute}}>req</span></span>
+      <span style={{color:C.mute}}><b style={{fontSize:12}}>{fmtK(agg.marked$)}</b> <span>mark</span></span>
       <span><b style={{fontSize:13.5}}>{fmtK(allLand)}</b> <span style={{color:C.mute}}>all</span></span>
     </div>
     <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
@@ -479,10 +804,11 @@ function Banner({agg,goal,mobile,year}){
     <div style={{display:"flex",gap:22,flexWrap:"wrap",alignItems:"flex-end"}}>
       <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>{year}</span>
       <Stat label="Worked $" value={fmtK(agg.worked$)} sub="to date"/>
-      <Stat label="Scheduled $" value={fmtK(agg.scheduled$)} sub="committed ahead" accent={C.ink}/>
-      <Stat label="Proposed $" value={fmtK(agg.proposed$)} sub="if it lands" accent={C.ocean}/>
+      <Stat label="Scheduled $" value={fmtK(agg.scheduled$)} sub="on the schedule" accent={C.ink}/>
+      <Stat label="Requested $" value={fmtK(agg.requested$)} sub="if it lands" accent={C.ocean}/>
+      <Stat label="Marked $" value={fmtK(agg.marked$)} sub="days held" accent={C.mute}/>
       <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
-      <Stat label="Total $" value={fmtK(allLand)} sub="all three land"/>
+      <Stat label="Total $" value={fmtK(allLand)} sub="every phase lands"/>
       <div style={{flex:1,minWidth:160}}>
         <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:3}}>
           Goal {fmtK(goal)} · projected {fmtK(projected)}</div>
@@ -493,9 +819,10 @@ function Banner({agg,goal,mobile,year}){
 }
 /* ════════ MONTH BAR — the focused month's $ + hours missed ════════ */
 function MonthBar({agg,viewYM,mobile}){
-  const my=`${MON[+viewYM.slice(5,7)-1]} ${viewYM.slice(0,4)}`,m=agg.month,h=agg.hrs,n=agg.monthN||{worked:0,scheduled:0,proposed:0};
-  const totMiss=Math.round((h.worked+h.scheduled+h.proposed)*10)/10,tot$=m.worked+m.scheduled+m.proposed;
-  const totN=n.worked+n.scheduled+n.proposed;
+  const my=`${MON[+viewYM.slice(5,7)-1]} ${viewYM.slice(0,4)}`,m=agg.month,h=agg.hrs;
+  const n=agg.monthN||{worked:0,scheduled:0,requested:0,marked:0};
+  const sum=o=>o.worked+o.scheduled+o.requested+o.marked;
+  const totMiss=Math.round(sum(h)*10)/10,tot$=sum(m),totN=sum(n);
   if(mobile)return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"5px 12px",flexShrink:0,
     display:"flex",alignItems:"baseline",gap:8,fontSize:11,fontVariantNumeric:"tabular-nums",flexWrap:"wrap"}}>
     <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color:C.mute}}>{my}</span>
@@ -506,8 +833,8 @@ function MonthBar({agg,viewYM,mobile}){
   return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"7px 14px",flexShrink:0}}>
     <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-end"}}>
       <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>{my}</span>
-      <Stat label="Shifts" value={totN} sub={`${n.worked}w · ${n.scheduled}s · ${n.proposed}p`}/>
-      <Stat label="Total $" value={fmtK(tot$)} sub="worked+sched+proposed"/>
+      <Stat label="Shifts" value={totN} sub={`${n.worked}w · ${n.scheduled}s · ${n.requested}r · ${n.marked}m`}/>
+      <Stat label="Total $" value={fmtK(tot$)} sub="every phase"/>
       <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
       <Stat label="Missed" value={fmtH(totMiss)} sub="total this month"/>
     </div>
@@ -524,8 +851,6 @@ function monthCells(y,m){
 }
 function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to);}
 
-const autoCode=site=>(site?site.name:"?").replace(/ ED$/,"").split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
-const siteCode=site=>(site&&site.code)?site.code:autoCode(site);
 const DEF_DAY="#7A8C5E",DEF_NIGHT="#3B4A6B";   // default day/night hexes for the per-site pickers
 const siteShiftCol=(site,cat)=>cat==="night"?((site&&site.nightColor)||C.shiftNight):((site&&site.dayColor)||C.shiftDay);
 function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,placing,box,selTrip,selWin,onEdge,onGrabTravel,onTap,onDown,onEnter}){
@@ -538,7 +863,7 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
   if(win&&win.kind==="span")bg=C.sel;
   if(preview||placing)bg=C.sel;
   const hatch=allDay&&!trip&&!win&&!preview&&!placing;   // kids home all day → diagonal hatch for texture
-  const cat=shift?shiftCat(sIdx[shift.siteId],shift.type):null;
+  const cat=shift?shiftCatOf(sIdx[shift.siteId],shift):null;
   const status=shift?bucketOf(shift):null;
   const warn=shift?warnOf(shift,state):null;
   const tMissed=showTravel?travelMissed(str,travel,state):0;
@@ -562,7 +887,7 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
           :today?<span style={{width:5,height:5,borderRadius:5,background:C.danger}}/>:null}
       </div>
     </div>
-    {shift?<ShiftPill site={sIdx[shift.siteId]} cat={cat} status={status} co={shift.coLocated}/>
+    {shift?<ShiftPill site={sIdx[shift.siteId]} cat={cat} status={status} co={shift.coLocated} src={!!shift.source}/>
       :showTravel?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:awayDay?"#fff":C.ocean,display:"flex",alignItems:"center",gap:2,
         border:`1.5px solid ${awayDay?"#fff":C.ocean}`,borderRadius:5,padding:"1px 3px",whiteSpace:"nowrap",overflow:"hidden"}}>{awayDay?"☾":"✈"} {fmtH(tMissed)}</div>
       :spanFirst?<div style={{marginTop:"auto",fontSize:9,fontWeight:800,color:C.ocean,border:`1.5px dashed ${C.ocean}`,
@@ -574,15 +899,18 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
     {selWin&&selWin.to===str&&<Nub side="right" onDown={e=>onEdge("window",selWin.id,"end",e)}/>}
   </div>;
 }
-function ShiftPill({site,cat,status,co}){
-  const col=siteShiftCol(site,cat);   // colour encodes site + day/night
-  const filled=status!=="proposed";                  // texture encodes status
-  return <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:3,
-    fontSize:9.5,fontWeight:800,padding:"2px 4px",borderRadius:5,opacity:status==="worked"?0.62:1,
-    border:`1.5px ${status==="proposed"?"dashed":"solid"} ${col}`,
+// colour encodes site + day/night; texture encodes the phase:
+// marked = dotted outline · requested = dashed outline · scheduled = filled · worked = filled, dimmed
+const PHASE_DASH={marked:"dotted",requested:"dashed",scheduled:"solid",worked:"solid"};
+const phaseFilled=st=>st==="scheduled"||st==="worked";
+function ShiftPill({site,cat,status,co,src}){
+  const col=siteShiftCol(site,cat),filled=phaseFilled(status);
+  return <div title={PHASE_LABEL[status]} style={{marginTop:"auto",display:"flex",alignItems:"center",gap:3,
+    fontSize:9.5,fontWeight:800,padding:"2px 4px",borderRadius:5,opacity:status==="worked"?0.62:status==="marked"?0.75:1,
+    border:`1.5px ${PHASE_DASH[status]||"solid"} ${col}`,
     background:filled?col:"transparent",color:filled?"#fff":col,overflow:"hidden",whiteSpace:"nowrap"}}>
     <span>{siteCode(site)}</span><span style={{opacity:0.85}}>{cat==="night"?"N":"D"}</span>
-    {status==="worked"&&<span>✓</span>}{co&&<span title="co-located">⌂</span>}
+    {status==="worked"&&<span>✓</span>}{src&&<span title="from a linked calendar">⟳</span>}{co&&<span title="co-located">⌂</span>}
   </div>;
 }
 
@@ -630,8 +958,9 @@ function StripCell({str,cell,ml,state,sIdx,selected,win,travel,preview,placing,s
   if(showTravel)bg=awayDay?C.away:C.panel;          // away day = Prussian blue fill; travel day punches through
   if(win&&win.kind==="span")bg=C.sel;if(preview||placing)bg=C.sel;
   const warn=shift?warnOf(shift,state):null;
-  if(shift){const cat=shiftCat(sIdx[shift.siteId],shift.type),status=bucketOf(shift),col=siteShiftCol(sIdx[shift.siteId],cat);
-    if(status==="proposed")border=`1.5px dashed ${col}`;else{bg=col;border=`1px solid ${col}`;op=status==="worked"?0.6:1;filled=true;}}
+  if(shift){const cat=shiftCatOf(sIdx[shift.siteId],shift),status=bucketOf(shift),col=siteShiftCol(sIdx[shift.siteId],cat);
+    if(phaseFilled(status)){bg=col;border=`1px solid ${col}`;op=status==="worked"?0.6:1;filled=true;}
+    else{border=`1.5px ${PHASE_DASH[status]} ${col}`;op=status==="marked"?0.75:1;}}
   const today=str===TODAY_S;
   const ringCol=placing?C.ocean:warn?C.warn:win?C.ocean:tCol;
   const grabTravel=showTravel&&onGrabTravel;
@@ -684,10 +1013,15 @@ function CalFilter({state,mutate}){
     {open&&<span style={{width:1,height:14,background:C.line2,margin:"0 1px"}}/>}
     {open&&key(C.shiftDay,"day")}{open&&key(C.shiftNight,"night")}{open&&key(C.blockTrip,"trip")}
     {open&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.ocean}}>✈ travel</span>}
+    {open&&<span style={{width:1,height:14,background:C.line2,margin:"0 1px"}}/>}
+    {open&&[["marked","dotted"],["requested","dashed"],["scheduled","solid"]].map(([lab,d])=>
+      <span key={lab} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.gray}}>
+        <span style={{width:11,height:11,borderRadius:3,border:`1.5px ${d} ${C.gray}`,background:d==="solid"?C.gray:"transparent"}}/>{lab}</span>)}
   </div>;
 }
 function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,placing,onCreateWindow,selTid,selWid,onEdge,onGrabTravel}){
-  const tools=[["select","⌖","Select"],["propose","✎","Propose"],["window","▭","Window"],["schedule","◆","Schedule"],["travel","✈","Travel"],["away","☾","Away"],["erase","⌫","Erase"]];
+  const tools=[["select","⌖","Select"],["mark","✎","Mark"],["request","▲","Request"],["window","▭","Window"],
+    ["schedule","◆","Schedule"],["travel","✈","Travel"],["away","☾","Away"],["erase","⌫","Erase"]];
   const selTrip=selTid&&(state.trips||[]).find(t=>t.id===selTid)||null;
   const selWin=selWid&&(state.windows||[]).find(w=>w.id===selWid)||null;
   const [cell,setCell]=useState(()=>{try{const v=+localStorage.getItem("perDiemZoom");return v>=12&&v<=42?v:18;}catch(e){return 18;}});   // strip zoom, remembered
@@ -728,6 +1062,8 @@ function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setT
       </div>
       {tool==="window"&&<div style={{fontSize:10.5,color:C.ocean,padding:"0 12px 5px"}}>
         Drag across days to hold a window, then set “will work X of Y” in the readout.</div>}
+      {tool==="erase"&&<div style={{fontSize:10.5,color:C.gray,padding:"0 12px 5px"}}>
+        Erase clears the sketch layer — marked and requested days, held windows, travel days. Scheduled and worked days are deleted from the readout.</div>}
       {!mobile&&<CalFilter state={state} mutate={mutate}/>}
     </div>
     {/* desktop: each month a one-row strip (Lydia's dense view); phone: one month grid + arrows */}
@@ -739,7 +1075,7 @@ function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setT
   </div>;
 }
 
-/* shift picker keyed to lifecycle: proposed = Day/Night + the specific list; scheduled = specific only */
+/* shift picker keyed to lifecycle: marked/requested = Day/Night + the specific list; scheduled = specific only */
 function ShiftSelect({site,type,coarse,compact,onChange}){
   const style={...inp,...(compact?{flex:1,minWidth:0}:{maxWidth:240})};
   const opts=site.menu.map(m=><option key={m.shift} value={m.shift}>{entryLabel(m)} · {entryNight(m)?"Night":"Day"}</option>);
@@ -753,9 +1089,21 @@ function ShiftSelect({site,type,coarse,compact,onChange}){
 }
 
 /* ════════ READOUT — the per-day picker/editor ════════ */
+const PHASE_HINT={
+  marked:"Held on your own calendar — nothing asked for yet.",
+  requested:"Asked for. A linked calendar confirms it into scheduled by itself.",
+  scheduled:"On the official schedule. Rolls to worked once the day passes.",
+  worked:"Done. Edit the actuals below if the day didn't go to plan."};
+// marked → requested → scheduled, with the last slot reading "worked" on a past day
+function PhaseBtns({status,past,onSet,small}){
+  const items=[["marked","Marked"],["requested","Requested"],past?["worked","Worked"]:["scheduled","Scheduled"]];
+  return <>{items.map(([ph,lab])=><Btn key={ph} small={small} on={status===ph} onClick={()=>onSet(ph)}
+    title={PHASE_HINT[ph]}>{small?PHASE_SHORT[ph]:lab}</Btn>)}</>;
+}
 function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
   if(!selected)return <div style={{padding:"16px 14px",color:C.mute,fontSize:12.5}}>
-    Tap a day to read or edit it. <b>Propose</b> adds a shift; <b>Schedule</b> commits it (or draws a fresh one); <b>Erase</b> removes a proposed one.</div>;
+    Tap a day to read or edit it. <b>Mark</b> holds a day; <b>Request</b> asks for it; <b>Schedule</b> commits it.
+    A linked calendar promotes requested days to scheduled on its own.</div>;
   const shift=state.shifts.find(s=>s.date===selected);
   const allDay=homeAllDay(selected,state),awake=dayAwakeHours(selected,state),trip=tripOn(selected,state.trips);
   const dayCals=visCals(state).filter(c=>calCovers(c,selected));
@@ -764,9 +1112,10 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
   const setShift=patch=>mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===shift.id?{...x,...patch}:x)}));
   const addShiftAs=(siteId,type,status)=>mutate(s=>({...s,aways:(s.aways||[]).filter(a=>a.date!==selected),
     shifts:[...s.shifts.filter(x=>x.date!==selected),{id:"s"+Date.now(),date:selected,siteId,
-      type:status==="scheduled"?specificType(sIdx[siteId],type):type,status,coLocated:false}]}));
+      type:isSketch(status)?type:specificType(sIdx[siteId],type),
+      status:(status==="scheduled"&&selected<TODAY_S)?"worked":status,coLocated:false}]}));
   const addDay=kind=>mutate(s=>addAway(s,selected,kind));   // travel / away
-  const del=()=>mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==shift.id)}));
+  const del=()=>mutate(s=>ignoreShift({...s,shifts:s.shifts.filter(x=>x.id!==shift.id)},shift));
   const tinfo=travelBand(state)[selected];
   const onDel=shift?del:(tinfo?(()=>mutate(s=>rmAwayAt(s,selected))):null);   // delete the day's shift or away/travel item
 
@@ -793,30 +1142,34 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
     <AddDayPanel sites={state.sites} onShift={addShiftAs} onTravel={()=>addDay("travel")} onAway={()=>addDay("away")} onWindow={()=>onAddWindow&&onAddWindow(selected)}/>
   </div>;
 
-  const site=sIdx[shift.siteId],cat=shiftCat(site,shift.type),plannedPay=shiftPay(site,shift.type),
+  const site=sIdx[shift.siteId],cat=shiftCatOf(site,shift),plannedPay=shiftPayOf(site,shift),
     plannedMissed=shiftMissed(shift,state,sIdx),worked=isWorked(shift),remote=site.reach!=="local",warn=warnOf(shift,state);
   const status=bucketOf(shift);
   const showPay=worked?payOf(shift,sIdx):plannedPay,showMissed=worked?missedOf(shift,state,sIdx):plannedMissed;
   const edited=worked&&(Number.isFinite(shift.actualPay)||Number.isFinite(shift.actualMissed));
-  // scheduling resolves a coarse day/night proposal to a specific shift (full granularity)
-  const toSched=()=>setShift({status:"scheduled",type:specificType(site,shift.type)});
-  const toProp=()=>setShift({status:"proposed"});
+  // committing resolves a coarse day/night hold to a specific shift (full granularity)
+  const setPhase=ph=>setShift(isSketch(ph)?{status:ph}:{status:ph,type:specificType(site,shift.type)});
+  const feed=shift.source&&(state.feeds||[]).find(f=>f.id===shift.source.feedId);
+  const fromFeed=shift.source&&<div style={{fontSize:10.5,color:C.gray,display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginBottom:8}}>
+    <span style={{color:C.juniper,fontWeight:800}}>⟳ {feed?feed.name:"a linked calendar"}</span>
+    <span>{shiftLabelOf(site,shift)}</span>
+    {shift.label&&<span style={{color:C.mute}}>· {shift.label}</span>}</div>;
   // compact phone layout: title+status+delete / site+shift / readout — fits without scrolling
   if(mobile)return <div style={{padding:"9px 12px"}}>
     <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
       <b style={{fontSize:14}}>{MON[d.getMonth()]} {d.getDate()}</b>
       <span style={{fontSize:9.5,color:allDay?C.juniper:C.mute}}>{allDay?"home":"school"}</span>
       {warn&&<span title={warn} style={{fontSize:11,color:C.warn}}>⚠</span>}
-      <div style={{marginLeft:"auto",display:"flex",gap:5}}>
-        <Btn small on={status==="proposed"} onClick={toProp}>Prop</Btn>
-        <Btn small on={status!=="proposed"} onClick={toSched}>{worked?"Worked":"Sched"}</Btn>
+      <div style={{marginLeft:"auto",display:"flex",gap:4}}>
+        <PhaseBtns status={status} past={selected<TODAY_S} onSet={setPhase} small/>
         <Btn small onClick={del}>✕</Btn>
       </div>
     </div>
+    {fromFeed}
     <div style={{display:"flex",gap:6,marginBottom:7,alignItems:"center"}}>
       <select style={{...inp,flex:1,minWidth:0}} value={shift.siteId} onChange={e=>setShift({siteId:e.target.value})}>
         {state.sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
-      <div style={{flex:1,minWidth:0}}><ShiftSelect site={site} type={shift.type} coarse={status==="proposed"} compact onChange={t=>setShift({type:t})}/></div>
+      <div style={{flex:1,minWidth:0}}><ShiftSelect site={site} type={shift.type} coarse={isSketch(status)} compact onChange={t=>setShift({type:t})}/></div>
     </div>
     <div style={{display:"flex",alignItems:"center",gap:14,fontSize:12,fontVariantNumeric:"tabular-nums"}}>
       <span><b style={{color:C.juniper,fontSize:14}}>{fmt$(showPay)}</b></span>
@@ -832,18 +1185,18 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
       {edited&&<Btn small onClick={()=>setShift({actualPay:undefined,actualMissed:undefined})}>reset</Btn>}</div>}
   </div>;
   return <div style={{padding:"14px"}}>{head}
+    {fromFeed}
     {warn&&<div style={{fontSize:11.5,fontWeight:700,color:C.warn,marginBottom:9,display:"flex",alignItems:"center",gap:5}}>⚠ {warn}</div>}
     <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
       <div style={{flex:"1 1 280px"}}>
         <Field label="Site"><select style={inp} value={shift.siteId} onChange={e=>setShift({siteId:e.target.value})}>
           {state.sites.map(s=><option key={s.id} value={s.id}>{s.name} · {REACH_LABEL[s.reach]}</option>)}</select></Field>
-        <Field label={status==="proposed"?"Shift (day/night, or pick specific)":"Shift"}>
-          <ShiftSelect site={site} type={shift.type} coarse={status==="proposed"} onChange={t=>setShift({type:t})}/></Field>
-        <Field label="Status"><div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <Btn on={status==="proposed"} onClick={toProp}>Proposed</Btn>
-          <Btn on={status!=="proposed"} onClick={toSched}>Scheduled</Btn>
-          {worked&&<span style={{fontSize:10.5,fontWeight:800,color:C.gray}}>✓ worked (past)</span>}
+        <Field label={isSketch(status)?"Shift (day/night, or pick specific)":"Shift"}>
+          <ShiftSelect site={site} type={shift.type} coarse={isSketch(status)} onChange={t=>setShift({type:t})}/></Field>
+        <Field label="Phase"><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+          <PhaseBtns status={status} past={selected<TODAY_S} onSet={setPhase}/>
         </div></Field>
+        <div style={{fontSize:10.5,color:C.mute,margin:"-4px 0 10px"}}>{PHASE_HINT[status]}</div>
         {remote&&<label style={{display:"flex",alignItems:"flex-start",gap:7,fontSize:12,marginTop:2,cursor:"pointer"}}>
           <input type="checkbox" checked={!!shift.coLocated} onChange={e=>setShift({coLocated:e.target.checked})} style={{marginTop:2}}/>
           <span>Co-located — kids came along. No travel days; the shift hours still count.</span></label>}
@@ -876,8 +1229,9 @@ function AddDayPanel({sites,onShift,onTravel,onAway,onWindow}){
         {["day","night"].map(t=><Btn key={t} on={ty===t} onClick={()=>setTy(t)}>{t==="day"?"Day":"Night"}</Btn>)}</div>
     </div>
     <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-      <Btn kind="prim" small onClick={()=>onShift(sid,ty,"proposed")}>+ Propose shift</Btn>
-      <Btn small onClick={()=>onShift(sid,ty,"scheduled")}>+ Schedule shift</Btn>
+      <Btn small onClick={()=>onShift(sid,ty,"marked")}>✎ Mark</Btn>
+      <Btn kind="prim" small onClick={()=>onShift(sid,ty,"requested")}>▲ Request</Btn>
+      <Btn small onClick={()=>onShift(sid,ty,"scheduled")}>◆ Schedule</Btn>
       <Btn small onClick={onWindow}>▭ Window</Btn>
       <span style={{width:1,height:18,background:C.line,margin:"0 2px"}}/>
       <Btn small onClick={onTravel}>✈ Travel day</Btn>
@@ -899,7 +1253,7 @@ function WindowReadout({state,sIdx,wid,mutate,onScheduled}){
     <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:10}}>
       <span style={{fontSize:15,fontWeight:800}}>Window</span>
       <span style={{fontSize:11.5,color:C.gray}}>{MON[pd(w.from).getMonth()]} {pd(w.from).getDate()}–{pd(w.to).getDate()} · {site.name}</span>
-      <span style={{fontSize:10.5,fontWeight:700,color:C.ocean,border:`1px solid ${C.ocean}`,borderRadius:12,padding:"1px 8px"}}>proposed</span>
+      <span style={{fontSize:10.5,fontWeight:700,color:C.ocean,border:`1px solid ${C.ocean}`,borderRadius:12,padding:"1px 8px"}}>marked</span>
       <DelX onClick={del}/>
     </div>
     <div style={{display:"flex",gap:18,flexWrap:"wrap"}}>
@@ -923,10 +1277,10 @@ function WindowReadout({state,sIdx,wid,mutate,onScheduled}){
       <div style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:12,alignItems:"flex-end"}}>
         <Stat label="Earns" value={fmt$(band.money)} accent={C.juniper}/>
         <Stat label="Hours missed" value={`${fmtH(band.min)}–${fmtH(band.max)}`} sub={band.travel>0?`incl. ~${fmtH(band.travel)} travel`:"range over placement"} accent={C.ocean}/>
-        <Btn small kind="prim" onClick={sched} title="materialize the X lowest-impact days as scheduled shifts">Schedule {band.X} →</Btn>
+        <Btn small kind="prim" onClick={sched} title="turn the X lowest-impact days into requested shifts">Request {band.X} →</Btn>
       </div>
     </div>
-    <div style={{fontSize:10.5,color:C.mute,marginTop:10}}>Scheduling places the {band.X} lowest-impact day{band.X>1?"s":""} and bookends travel; you can then adjust each shift. Drawing a shift over the window also replaces it.</div>
+    <div style={{fontSize:10.5,color:C.mute,marginTop:10}}>Requesting places the {band.X} lowest-impact day{band.X>1?"s":""} as requested shifts; a linked calendar confirms them into scheduled when they land. Drawing a shift over the window also replaces it.</div>
   </div>;
 }
 
@@ -1195,6 +1549,138 @@ function AddShift({avail,onAdd}){
   </div>;
 }
 
+/* ════════ FEEDS TAB — subscribed calendar links ════════ */
+function FeedRow({feed,state,mutate,onCheck,busy,onPaste,status}){
+  const [paste,setPaste]=useState(false),[txt,setTxt]=useState("");
+  const setF=patch=>mutate(s=>({...s,feeds:(s.feeds||[]).map(f=>f.id===feed.id?{...f,...patch}:f)}));
+  const rm=()=>{
+    const n=state.shifts.filter(x=>x.source&&x.source.feedId===feed.id).length;
+    if(!confirm(`Remove “${feed.name}”?`+(n?` The ${n} shift(s) it brought in stay on the calendar, just unlinked.`:"")))return;
+    mutate(s=>({...s,feeds:(s.feeds||[]).filter(f=>f.id!==feed.id),
+      shifts:s.shifts.map(x=>{if(!x.source||x.source.feedId!==feed.id)return x;const y={...x};delete y.source;return y;}),
+      surprises:(s.surprises||[]).filter(x=>x.feedId!==feed.id)}));
+  };
+  const busyLabel=busy==="checking"?"checking…":null;
+  const ignores=ignoredCount(state,feed.id);
+  const st=status||{};
+  const when=st.at?new Date(st.at).toLocaleString():null;
+  return <div style={{border:`1px solid ${C.line2}`,borderRadius:8,padding:"9px 10px",marginBottom:8}}>
+    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+      <span style={{fontSize:12,color:feed.enabled!==false?C.juniper:C.mute}}>⟳</span>
+      <input value={feed.name} onChange={e=>setF({name:e.target.value})} style={{...inp,flex:"1 1 130px",minWidth:0,padding:"4px 7px",fontWeight:700}}/>
+      <Chip on={feed.enabled!==false} onClick={()=>setF({enabled:!(feed.enabled!==false)})}>{feed.enabled!==false?"on":"paused"}</Chip>
+      <Btn small disabled={!!busyLabel} onClick={()=>onCheck(feed)}>{busyLabel||"check now"}</Btn>
+      <button onClick={rm} title="remove feed" style={delBtn}>✕</button>
+    </div>
+    <input value={feed.url} onChange={e=>setF({url:e.target.value})} spellCheck={false}
+      style={{...inp,padding:"4px 7px",fontSize:10.5,color:C.gray}}/>
+    <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap",marginTop:7}}>
+      <label style={{fontSize:10.5,color:C.gray}}>shifts land at<br/>
+        <select value={feed.siteId} onChange={e=>setF({siteId:e.target.value})} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}>
+          {state.sites.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+      <label style={{fontSize:10.5,color:C.gray}}>check<br/>
+        <select value={feed.every} onChange={e=>setF({every:+e.target.value})} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}>
+          {FEED_EVERY.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
+      <button onClick={()=>setPaste(x=>!x)} style={{...addBtn,padding:"4px 8px"}}>{paste?"close paste":"paste .ics"}</button>
+    </div>
+    <div style={{fontSize:10,marginTop:7,color:st.ok===false?C.danger:C.mute,lineHeight:1.45}}>
+      {st.ok===false
+        ? <>✗ last check failed — {st.err}</>
+        : when
+        ? <>✓ checked {when}{Number.isFinite(st.count)?` · ${st.count} shift${st.count===1?"":"s"} in the feed`:""}</>
+        : <>never checked on this device — it'll pull within the minute, or hit “check now”.</>}
+      <span style={{color:C.mute}}> · this device only</span>
+    </div>
+    {ignores>0&&<div style={{fontSize:10,color:C.mute,marginTop:4,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+      <span>{ignores} shift{ignores===1?"":"s"} you dropped stay off the calendar.</span>
+      <button onClick={()=>mutate(s=>clearIgnores(s,feed.id))} style={{...addBtn,padding:"2px 7px",fontSize:10}}>let them back</button></div>}
+    {paste&&<div style={{marginTop:6}}>
+      <div style={{fontSize:10,color:C.gray,marginBottom:3}}>Open the link in a browser, copy the whole file, paste it here — same reconcile, no network needed.</div>
+      <textarea value={txt} onChange={e=>setTxt(e.target.value)} placeholder="BEGIN:VCALENDAR …" style={{...inp,height:80,fontSize:11,resize:"vertical"}}/>
+      <button onClick={()=>{onPaste(feed,txt);setTxt("");setPaste(false);}} style={{...addBtn,marginTop:4}}>reconcile this text</button>
+    </div>}
+  </div>;
+}
+function FeedsTab({state,mutate,onCheck,onPaste,busy,status,hasStore,onOpenStore}){
+  const [url,setUrl]=useState(""),[name,setName]=useState("");
+  const add=()=>{
+    if(!isFeedURL(url)){alert("That doesn’t look like a calendar link — it should start with webcal:// or https://");return;}
+    const id="f"+Date.now().toString(36),u=url.trim();
+    mutate(s=>({...s,feeds:[...(s.feeds||[]),{id,name:name.trim()||feedHost(u),url:u,siteId:s.sites[0].id,
+      enabled:true,every:60}]}));
+    setUrl("");setName("");
+  };
+  const feeds=state.feeds||[];
+  return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:720}}>
+    <div style={{fontSize:11,color:C.gray,lineHeight:1.55,marginBottom:12}}>
+      Subscribe to the calendar link your scheduler publishes — ShiftAdmin's “<b>webcal://…schedule_ical.php…</b>” link, or any
+      .ics URL. Per Diem checks it on a timer and folds it into the plan: days you <b>requested</b> that come back on the feed
+      become <b>scheduled</b> by themselves, and anything scheduled that you never asked for gets flagged.
+    </div>
+    {!hasStore&&<div style={{border:`1px solid ${C.warn}`,borderRadius:8,padding:"9px 11px",marginBottom:12,fontSize:11,color:C.ink,lineHeight:1.5}}>
+      <b style={{color:C.warn}}>⚠ Connect shared storage first.</b> Scheduler sites don’t allow a browser to read their
+      calendars directly, so the NAS service fetches them for you. Without it a check will fail — or you can paste the
+      .ics text into a feed by hand.
+      <div style={{marginTop:6}}><Btn small onClick={onOpenStore}>open shared storage</Btn></div>
+    </div>}
+    {feeds.map(f=><FeedRow key={f.id} feed={f} state={state} mutate={mutate} onCheck={onCheck} onPaste={onPaste}
+      busy={busy[f.id]} status={status[f.id]}/>)}
+    <div style={{border:`1px dashed ${C.faint}`,borderRadius:8,padding:"10px 11px",marginTop:4}}>
+      <div style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:6}}>Add a calendar link</div>
+      <input value={url} onChange={e=>setUrl(e.target.value)} spellCheck={false}
+        placeholder="webcal://www.shiftadmin.com/schedule_ical.php?cd=v2&u=…" style={{...inp,fontSize:11,marginBottom:6}}/>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        <input value={name} onChange={e=>setName(e.target.value)} placeholder="name it (optional)" style={{...inp,flex:"1 1 140px",minWidth:0,fontSize:11.5}}/>
+        <Btn kind="prim" onClick={add}>+ subscribe</Btn>
+      </div>
+    </div>
+  </div>;
+}
+
+/* ════════ THE ALERT — scheduled shifts she didn't ask for ════════ */
+const SURPRISE_ICON={new:"◆",unrequested:"◆",moved:"→",dropped:"✕"};
+function SurpriseModal({state,sIdx,onKeep,onDrop,onKeepAll,onClose,onGo}){
+  const list=(state.surprises||[]).slice().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  if(!list.length)return null;
+  const news=list.filter(x=>x.kind!=="dropped").length;
+  return <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:750,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div onClick={e=>e.stopPropagation()} style={{fontFamily:MONO,color:C.ink,background:C.panel,borderRadius:10,
+      maxWidth:520,width:"100%",maxHeight:"84vh",display:"flex",flexDirection:"column",boxShadow:"0 20px 60px rgba(0,0,0,.35)"}}>
+      <div style={{padding:"16px 18px 10px",borderBottom:`1px solid ${C.line2}`}}>
+        <div style={{fontSize:15,fontWeight:800,marginBottom:3,color:C.warn}}>⚠ Heads up — {list.length} shift{list.length===1?"":"s"} changed</div>
+        <div style={{fontSize:11.5,color:C.gray,lineHeight:1.5}}>
+          {news>0?"These landed on the official schedule without a request from you — days you hadn’t asked for, or that moved. ":""}
+          Keep one to accept it into the plan, or drop it if it shouldn’t be there.</div>
+      </div>
+      <div style={{overflow:"auto",padding:"8px 12px",flex:1}}>
+        {list.map(x=>{const site=sIdx[x.siteId],d=pd(x.date),gone=x.kind==="dropped";
+          return <div key={x.id} style={{display:"flex",gap:9,alignItems:"flex-start",padding:"9px 6px",borderBottom:`1px solid ${C.line2}`}}>
+            <span style={{fontSize:13,color:gone?C.mute:C.warn,width:14,textAlign:"center",flexShrink:0,marginTop:1}}>{SURPRISE_ICON[x.kind]}</span>
+            <div style={{flex:1,minWidth:0}}>
+              <button onClick={()=>onGo(x.date)} style={{fontFamily:MONO,fontSize:12.5,fontWeight:800,border:"none",background:"transparent",
+                color:C.ink,cursor:"pointer",padding:0,textDecoration:"underline",textDecorationColor:C.faint}}>
+                {DOW[d.getDay()]} {MON[d.getMonth()]} {d.getDate()}</button>
+              <span style={{fontSize:11,color:C.gray,marginLeft:7}}>
+                {site?siteCode(site):"?"}{x.start?` · ${fmtClock(x.start)}${Number.isFinite(x.hours)?` · ${x.hours}h`:""}`:""}</span>
+              <div style={{fontSize:10.5,color:C.gray,marginTop:2,lineHeight:1.4}}>
+                {SURPRISE_TEXT[x.kind]}{x.from?` (was ${MON[pd(x.from).getMonth()]} ${pd(x.from).getDate()})`:""}
+                {x.label?<span style={{color:C.mute}}> · {x.label}</span>:null}
+                {x.feed?<span style={{color:C.mute}}> · {x.feed}</span>:null}</div>
+            </div>
+            <div style={{display:"flex",gap:5,flexShrink:0}}>
+              <Btn small onClick={()=>onKeep(x)}>{gone?"ok":"keep"}</Btn>
+              {!gone&&<Btn small onClick={()=>onDrop(x)} title="take it back off the calendar">drop</Btn>}
+            </div>
+          </div>;})}
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",padding:"10px 16px",borderTop:`1px solid ${C.line2}`}}>
+        <span style={{fontSize:10,color:C.mute,flex:1}}>Dropping only removes it here — it stays on the official schedule.</span>
+        <Btn onClick={onClose}>later</Btn><Btn kind="prim" onClick={onKeepAll}>keep all</Btn>
+      </div>
+    </div>
+  </div>;
+}
+
 /* ════════ SHARED STORAGE (NAS over Tailscale) ════════ */
 const SYNC_UI={off:{c:"mute",t:"off"},connecting:{c:"ocean",t:"connecting…"},synced:{c:"juniper",t:"synced"},
   saving:{c:"ocean",t:"saving…"},offline:{c:"mute",t:"offline"},error:{c:"danger",t:"error"}};
@@ -1249,6 +1735,9 @@ function App(){
   const [mobile,setMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia&&window.matchMedia("(max-width:760px)").matches);
   const [tripDrag,setTripDrag]=useState(null);   // grabbing a trip from the drawer to place on the calendar
   const [cfg,setCfg]=useState(()=>syncCfg());    // shared-storage endpoint (per-device)
+  const [feedBusy,setFeedBusy]=useState({});     // feedId → "checking"
+  const [feedStatus,setFeedStatus]=useState(loadFeedStatus);   // per-device check results
+  const [snooze,setSnooze]=useState("");         // the surprise set she's already looked at
   const [sync,setSync]=useState(()=>({status:syncCfg()?"connecting":"off"}));
   const [syncModal,setSyncModal]=useState(false);
   const remoteJson=useRef(null),rev=useRef(0),saveTimer=useRef();
@@ -1271,23 +1760,29 @@ function App(){
   const viewYM=`${viewY}-${String(viewM+1).padStart(2,"0")}`;
   const agg=useMemo(()=>aggregate(state,sIdx,viewYM),[state,sIdx,viewYM]);
 
-  // drawing a shift over a window replaces the window (no proposed/scheduled mixing)
+  // drawing a shift over a window replaces the window (a day is either held or drawn, never both)
   const dropWinAt=(s,str)=>s.windows.filter(w=>!(str>=w.from&&str<=w.to));
   const onTap=str=>{
     if(tool==="window")return;   // window tool builds via drag, not tap
     if(monthLocked(state,str)){setSelected(str);setSelWid(null);setSelTid(null);const d0=pd(str);setVY([d0.getFullYear(),d0.getMonth()]);return;}   // frozen month
     const ex=state.shifts.find(s=>s.date===str);
-    if(tool==="propose"){
-      if(!ex)mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:"day",status:"proposed",coLocated:false}]}));
+    const draw=(status,type)=>mutate(s=>({...s,windows:dropWinAt(s,str),aways:(s.aways||[]).filter(a=>a.date!==str),
+      shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type,status,coLocated:false}]}));
+    if(tool==="mark"){
+      if(!ex)draw("marked","day");
+    }else if(tool==="request"){
+      // draw-to-request: lifts a marked day, or drops a fresh request
+      if(ex){if(bucketOf(ex)==="marked")mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===ex.id?{...x,status:"requested"}:x)}));}
+      else draw("requested","day");
     }else if(tool==="schedule"){
-      // draw-to-schedule: replaces a proposed shift in place, or drops a fresh scheduled one
-      if(ex)mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===ex.id?{...x,status:"scheduled",type:specificType(sIdx[x.siteId],x.type)}:x)}));
-      else mutate(s=>({...s,windows:dropWinAt(s,str),shifts:[...s.shifts,{id:"s"+Date.now(),date:str,siteId:lastSite,type:specificType(sIdx[lastSite],"day"),status:"scheduled",coLocated:false}]}));
+      // draw-to-schedule: commits a marked/requested day in place, or drops a fresh scheduled one
+      if(ex)mutate(s=>({...s,shifts:s.shifts.map(x=>x.id===ex.id?{...x,status:str<TODAY_S?"worked":"scheduled",type:specificType(sIdx[x.siteId],x.type)}:x)}));
+      else draw(str<TODAY_S?"worked":"scheduled",specificType(sIdx[lastSite],"day"));
     }else if(tool==="travel"||tool==="away"){
       if(!ex)mutate(s=>addAway(s,str,tool));   // place a single travel/away day on this day
     }else if(tool==="erase"){
-      // erase the sketch layer: proposed shift, then a placed away/travel day, then a window
-      if(ex&&ex.status==="proposed")mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));
+      // erase the sketch layer: a marked/requested shift, then a placed away/travel day, then a window
+      if(ex&&isSketch(bucketOf(ex)))mutate(s=>({...s,shifts:s.shifts.filter(x=>x.id!==ex.id)}));
       else if(travelBy[str])mutate(s=>rmAwayAt(s,str));
       else {const w=(state.windows||[]).find(w=>str>=w.from&&str<=w.to);if(w)mutate(s=>({...s,windows:s.windows.filter(x=>x.id!==w.id)}));}
     }
@@ -1353,8 +1848,9 @@ function App(){
     const sh=state.shifts.find(s=>s.date===selected);
     if(w)setLastSite(w.siteId);else if(sh)setLastSite(sh.siteId);},[selected,selWid,state.shifts,state.windows]);
 
-  const MENU_SECTIONS=[["trips","✈ Trips"],["sites","⌂ Sites"],["earnings","$ Earnings settings"],["family","☺ Family time settings"]];
-  const PANEL_TITLE={trips:"Trips",sites:"Sites",earnings:"Earnings settings",family:"Family time settings"};
+  const MENU_SECTIONS=[["trips","✈ Trips"],["sites","⌂ Sites"],["feeds","⟳ Calendar feeds"],
+    ["earnings","$ Earnings settings"],["family","☺ Family time settings"]];
+  const PANEL_TITLE={trips:"Trips",sites:"Sites",feeds:"Calendar feeds",earnings:"Earnings settings",family:"Family time settings"};
   const openPanel=p=>{setPanel(p);setMenu(false);};
   const themeIcon={system:"◐",light:"☀",dark:"☾"}[theme];
   const cycle=()=>setTheme(t=>t==="system"?"light":t==="light"?"dark":"system");
@@ -1389,6 +1885,61 @@ function App(){
     }catch(e){setSync(s=>s.status==="saving"?s:{...s,status:"offline"});}},7000);
     return ()=>clearInterval(iv);
   },[cfg]);
+  /* ── calendar feeds: pull, reconcile, and flag what she didn't ask for ──
+     Every check is idempotent, so a missed hour or a double-check costs nothing. */
+  const stateRef=useRef(state);stateRef.current=state;
+  const statusRef=useRef(feedStatus);statusRef.current=feedStatus;
+  const feedRun=useRef(false);
+  const stamp=(id,patch)=>setFeedStatus(m=>{const n={...m,[id]:{...(m[id]||{}),...patch,at:new Date().toISOString()}};saveFeedStatus(n);return n;});
+  const applyFeedText=React.useCallback((feed,text,manual)=>{
+    if(!looksLikeICS(text)){
+      stamp(feed.id,{ok:false,err:"that link didn’t return a calendar"});
+      if(manual)setToast(`${feed.name} · that link didn’t return a calendar.`);
+      return;
+    }
+    const parsed=feedEvents(text);
+    const first=!(statusRef.current[feed.id]||{}).at;       // this device's first pull adopts quietly
+    // peek at what this check would do; only touch the plan when it actually says something
+    const cur=stateRef.current,live=(cur.feeds||[]).find(x=>x.id===feed.id)||feed;
+    const peek=reconcile(cur,siteIndex(cur.sites),live,parsed,TODAY_S,{flag:!first});
+    stamp(feed.id,{ok:true,count:parsed.events.length,err:null});
+    const news=!reportEmpty(peek.report)||peek.report.surprises.length>0;
+    if(news)
+      mutate(s=>{const f=(s.feeds||[]).find(x=>x.id===feed.id)||live;
+        const out=reconcile(s,siteIndex(s.sites),f,parsed,TODAY_S,{flag:!first});
+        return withSurprises(out.state,out.report.surprises);});
+    if(manual||news)
+      setToast(`${feed.name} · ${first?`adopted ${parsed.events.length} shift${parsed.events.length===1?"":"s"}`:reportLine(peek.report)}`);
+  },[]);
+  const checkFeed=React.useCallback(async(feed,opts)=>{
+    const manual=!(opts&&opts.silent);
+    setFeedBusy(b=>({...b,[feed.id]:"checking"}));
+    try{ applyFeedText(feed,await fetchFeedText(feed,syncCfg()),manual); }
+    catch(e){
+      const msg=String(e.message||e);
+      stamp(feed.id,{ok:false,err:msg});
+      if(manual)setToast(`${feed.name} · ${msg}`);
+    }
+    finally{setFeedBusy(b=>{const n={...b};delete n[feed.id];return n;});}
+  },[applyFeedText]);
+  const runDueFeeds=React.useCallback(async force=>{
+    if(feedRun.current)return;feedRun.current=true;
+    try{
+      const feeds=(stateRef.current.feeds||[]).filter(f=>f.enabled!==false&&isFeedURL(f.url));
+      for(const f of feeds)if(force||feedDue(f,statusRef.current[f.id]))await checkFeed(f,{silent:true});
+    }finally{feedRun.current=false;}
+  },[checkFeed]);
+  // first pass waits for the shared-storage pull to land, so we reconcile against the shared plan
+  useEffect(()=>{const t=setTimeout(()=>runDueFeeds(false),cfg?5000:1500);
+    const iv=setInterval(()=>runDueFeeds(false),60000);
+    return ()=>{clearTimeout(t);clearInterval(iv);};},[runDueFeeds,cfg]);
+
+  const surprises=state.surprises||[];
+  const sKey=surprises.map(x=>x.id).join("|");                  // a new flag re-opens the alert
+  const showSurprise=!!sKey&&snooze!==sKey;
+  const goToDay=d=>{setSnooze(sKey);setPanel(null);setSelWid(null);setSelTid(null);setSelected(d);
+    const dd=pd(d);setVY([dd.getFullYear(),dd.getMonth()]);};
+
   const exportJSON=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="per-diem.json";a.click();};
   const importJSON=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
@@ -1408,10 +1959,17 @@ function App(){
       background:C.ocean,color:"#fff",fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:6,boxShadow:"0 6px 18px rgba(0,0,0,.3)"}}>
       ✈ {tripDrag.name}{tripDrag.over?` → ${MON[pd(tripDrag.over).getMonth()]} ${pd(tripDrag.over).getDate()}`:""}</div>}
     {syncModal&&<SyncModal sync={sync} onClose={()=>setSyncModal(false)} onSaved={()=>setCfg(syncCfg())}/>}
+    {showSurprise&&<SurpriseModal state={state} sIdx={sIdx} onClose={()=>setSnooze(sKey)} onGo={goToDay}
+      onKeep={x=>mutate(s=>ackSurprises(s,[x.id]))}
+      onDrop={x=>mutate(s=>rejectSurprise(s,x))}
+      onKeepAll={()=>mutate(s=>ackSurprises(s,surprises.map(x=>x.id)))}/>}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",borderBottom:`1px solid ${C.line}`,background:C.panel,flexShrink:0,gap:8,flexWrap:"wrap"}}>
       <span style={{fontSize:15.5,fontWeight:900,letterSpacing:"-0.03em"}}>PER DIEM</span>
       <div style={{display:"flex",gap:8,alignItems:"center"}}>
         <span style={{fontSize:9.5,color:C.mute}}>today {TODAY_S}</span>
+        {surprises.length>0&&<button onClick={()=>setSnooze("")} title="shifts that landed without a request"
+          style={{fontFamily:MONO,fontSize:10.5,fontWeight:800,cursor:"pointer",borderRadius:20,padding:"3px 9px",
+            border:`1px solid ${C.warn}`,background:"transparent",color:C.warn}}>⚠ {surprises.length}</button>}
         <Btn small onClick={()=>setMenu(true)}>☰ Menu</Btn>
         <input ref={fileRef} type="file" accept=".json,application/json" onChange={importJSON} style={{display:"none"}}/>
       </div>
@@ -1431,6 +1989,8 @@ function App(){
           <MenuItem onClick={()=>{exportJSON();setMenu(false);}}>Export JSON</MenuItem>
           <MenuItem onClick={()=>fileRef.current.click()}>Import JSON</MenuItem>
           <MenuItem onClick={()=>{setSyncModal(true);setMenu(false);}}>Shared storage — {(SYNC_UI[sync.status]||SYNC_UI.off).t}</MenuItem>
+          <MenuItem onClick={()=>openPanel("feeds")}>Calendar feeds — {(state.feeds||[]).length?`${(state.feeds||[]).length} linked`:"none yet"}</MenuItem>
+          <MenuItem onClick={()=>{setMenu(false);runDueFeeds(true);}}>Check feeds now</MenuItem>
         </div>
         <div style={{borderTop:`1px solid ${C.line2}`,padding:"8px 10px"}}>
           <div style={menuHdr}>System</div>
@@ -1445,7 +2005,10 @@ function App(){
             <button onClick={()=>setPanel(null)} style={{fontFamily:MONO,fontSize:12.5,fontWeight:700,border:`1px solid ${C.line}`,background:C.panel,color:C.ink,borderRadius:6,cursor:"pointer",padding:"4px 9px"}}>‹ Calendar</button>
             <b style={{fontSize:13.5}}>{PANEL_TITLE[panel]}</b></div>
           <div style={{flex:1,minHeight:0,overflow:"auto"}}>
-            {panel==="sites"?<SitesTab state={state} mutate={mutate}/>:<TripsCalsTab state={state} mutate={mutate} only={panel}/>}
+            {panel==="sites"?<SitesTab state={state} mutate={mutate}/>
+              :panel==="feeds"?<FeedsTab state={state} mutate={mutate} busy={feedBusy} status={feedStatus} hasStore={!!cfg}
+                 onCheck={f=>checkFeed(f)} onPaste={(f,t)=>applyFeedText(f,t,true)} onOpenStore={()=>setSyncModal(true)}/>
+              :<TripsCalsTab state={state} mutate={mutate} only={panel}/>}
           </div>
         </div>
       : <>

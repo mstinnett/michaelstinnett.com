@@ -14,8 +14,13 @@
  *   DATA_DIR      where docs are stored       (default ./data)
  *   TOKEN         if set, require  Authorization: Bearer <TOKEN>
  *   ALLOW_ORIGIN  CORS origin                 (default *  — set to https://michaelstinnett.com)
+ *
+ * Also proxies calendar feeds: GET /ics?url=<webcal|https url> returns the raw
+ * .ics text with our CORS header, so the browser-only app can read shift feeds
+ * that send no CORS headers of their own.
  */
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 
@@ -63,6 +68,66 @@ function writeDoc(id, data) {
   return doc;
 }
 
+/* ── calendar proxy ──────────────────────────────────────────────────────────
+ * The app is served from HTTPS GitHub Pages and shift-feed hosts (shiftadmin
+ * and friends) send no CORS headers, so a browser can't read them directly.
+ * This service can: it pulls the feed server-side and hands the text back with
+ * our CORS header. It's tailnet-only, and it refuses private/loopback targets
+ * so it can never be pointed back at the LAN.
+ */
+const ICS_TIMEOUT = 15000;
+const ICS_MAX = 4 * 1024 * 1024;
+const ICS_REDIRECTS = 5;
+
+function privateHost(host) {
+  const h = String(host || "").toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h || h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
+  if (h === "::1" || h === "0.0.0.0") return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (m) {
+    const a = +m[1], b = +m[2];
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;               // link-local + cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;     // CGNAT range — tailnets live here
+  }
+  if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true;
+  return false;
+}
+
+function fetchICS(rawUrl, depth, cb) {
+  let done = false;
+  const finish = (err, text) => { if (done) return; done = true; cb(err, text); };
+  let u;
+  try { u = new URL(String(rawUrl).replace(/^webcal:\/\//i, "https://")); }
+  catch (e) { return finish(new Error("bad url")); }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return finish(new Error("unsupported scheme"));
+  if (privateHost(u.hostname)) return finish(new Error("refused: private address"));
+
+  const mod = u.protocol === "https:" ? https : http;
+  const req = mod.get(u, { headers: { "User-Agent": "per-diem-sync/1", "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.5" } }, (r) => {
+    if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+      r.resume();
+      if (depth >= ICS_REDIRECTS) return finish(new Error("too many redirects"));
+      let next; try { next = new URL(r.headers.location, u).toString(); } catch (e) { return finish(new Error("bad redirect")); }
+      done = true;                                          // hand off to the next hop
+      return fetchICS(next, depth + 1, cb);
+    }
+    if (r.statusCode !== 200) { r.resume(); return finish(new Error("upstream HTTP " + r.statusCode)); }
+    let size = 0; const chunks = [];
+    r.on("data", (c) => {
+      size += c.length;
+      if (size > ICS_MAX) { req.destroy(); return finish(new Error("feed too large")); }
+      chunks.push(c);
+    });
+    r.on("end", () => finish(null, Buffer.concat(chunks).toString("utf8")));
+    r.on("error", (e) => finish(e));
+  });
+  req.setTimeout(ICS_TIMEOUT, () => { req.destroy(); finish(new Error("timed out")); });
+  req.on("error", (e) => finish(e));
+}
+
 const server = http.createServer((req, res) => {
   cors(res);
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
@@ -70,7 +135,19 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");
   const parts = url.pathname.split("/").filter(Boolean); // ["doc","<id>"]
 
-  if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true });
+  if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true, ics: true });
+
+  if (url.pathname === "/ics") {
+    if (req.method !== "GET") return send(res, 405, { error: "method not allowed" });
+    if (!authed(req)) return send(res, 401, { error: "unauthorized" });
+    const target = url.searchParams.get("url");
+    if (!target) return send(res, 400, { error: "missing url" });
+    return fetchICS(target, 0, (err, text) => {
+      if (err) return send(res, 502, { error: String(err.message || err) });
+      res.writeHead(200, { "Content-Type": "text/calendar; charset=utf-8" });
+      res.end(text);
+    });
+  }
 
   if (parts[0] === "doc" && parts[1]) {
     const id = decodeURIComponent(parts[1]);
