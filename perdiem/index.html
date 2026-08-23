@@ -407,7 +407,11 @@ function sanitize(o){
       label:String(x.label||"").slice(0,80),from:DATE_RE.test(x.from)?x.from:null,
       uid:typeof x.uid==="string"?x.uid.slice(0,200):null,
       at:typeof x.at==="string"?x.at:null})).slice(-200);
-  return {sites,trips:arr(o.trips,seed.trips),calendars:arr(o.calendars,seed.calendars),
+  const okDocs=v=>(Array.isArray(v)?v:[]).filter(d=>d&&typeof d.id==="string"&&DOC_ID_RE.test(d.id)&&d.name)
+    .map(d=>({id:d.id,name:String(d.name).slice(0,120),type:DOC_TYPES.indexOf(d.type)>=0?d.type:"application/octet-stream",
+      size:Number.isFinite(d.size)?d.size:0,at:typeof d.at==="string"?d.at:null})).slice(0,12);
+  const calendars=arr(o.calendars,seed.calendars).map(c=>(c&&typeof c==="object"&&c.docs)?{...c,docs:okDocs(c.docs)}:c);
+  return {sites,trips:arr(o.trips,seed.trips),calendars,
     settings,monthOverrides:obj(o.monthOverrides),shifts,windows,feeds,surprises,
     feedIgnore:arr(o.feedIgnore,[]).filter(x=>typeof x==="string"&&x.length<300).slice(-500),
     travelMigrated:true,phaseMigrated:true,
@@ -480,6 +484,71 @@ function icsRanges(text){
     out.push({from:e.start,to,label:(e.summary||"event").slice(0,60)});
   }
   return out;
+}
+
+/* ════════ ATTACHMENTS — the kids' calendar PDFs ════════
+   A school calendar arrives as a PDF, and the date ranges typed in from it are
+   only half the story: sometimes you just want to look at the page. The plan
+   document stays small — it carries one short reference per file — while the
+   bytes sit beside it on the NAS at /file/<workspace>/<id>. Both of you see the
+   same attachments; opening one pulls it over the tailnet on demand. */
+const DOC_TYPES=["application/pdf","image/png","image/jpeg","image/webp","image/gif"];
+const DOC_MAX=25*1024*1024;
+const DOC_ID_RE=/^[A-Za-z0-9_-]{1,64}$/;
+const isPdfDoc=d=>!!d&&d.type==="application/pdf";
+const newDocId=()=>"d"+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+const docSize=n=>n>=1048576?(Math.round(n/104857.6)/10)+" MB":Math.max(1,Math.round(n/1024))+" KB";
+const calDocs=c=>Array.isArray(c&&c.docs)?c.docs:[];
+const docTypeOf=f=>DOC_TYPES.indexOf(f.type)>=0?f.type:(/\.pdf$/i.test(f.name)?"application/pdf":String(f.type||""));
+
+async function remoteFilePut(c,doc,body){
+  const h={"Content-Type":doc.type||"application/octet-stream"};if(c.tok)h.Authorization="Bearer "+c.tok;
+  const q=`?name=${encodeURIComponent(doc.name)}&type=${encodeURIComponent(doc.type||"")}`;
+  const r=await fetch(`${c.url}/file/${encodeURIComponent(c.id)}/${doc.id}${q}`,{method:"PUT",headers:h,body});
+  if(!r.ok){let m="HTTP "+r.status;try{const j=await r.json();if(j&&j.error)m=j.error;}catch(_){}throw new Error(m);}
+  return await r.json();
+}
+async function remoteFileGet(c,id){
+  const h={};if(c.tok)h.Authorization="Bearer "+c.tok;
+  const r=await fetch(`${c.url}/file/${encodeURIComponent(c.id)}/${id}`,{headers:h,cache:"no-store"});
+  if(r.status===404)throw new Error("not on the shared store — the device that attached it may not have finished syncing");
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  return await r.blob();
+}
+function remoteFileDel(c,id){                 // best effort: the reference is already gone from the plan
+  const h={};if(c.tok)h.Authorization="Bearer "+c.tok;
+  try{fetch(`${c.url}/file/${encodeURIComponent(c.id)}/${id}`,{method:"DELETE",headers:h}).catch(()=>{});}catch(e){}
+}
+// the last few opened files stay in memory, so flipping between them is instant
+const docBlobs=new Map();
+async function docBlob(doc,cfg){
+  if(docBlobs.has(doc.id))return docBlobs.get(doc.id);
+  if(!cfg)throw new Error("connect shared storage to open attachments");
+  const b=await remoteFileGet(cfg,doc.id);
+  docBlobs.set(doc.id,b);
+  while(docBlobs.size>6)docBlobs.delete(docBlobs.keys().next().value);
+  return b;
+}
+
+/* pdf.js is fetched only when a PDF is actually opened, so it costs nothing at
+   start-up. If the CDN can't be reached we hand the file to the browser's own
+   PDF frame instead — which is also what happens for a plain image. */
+const PDFJS_VER="3.11.174";
+const PDFJS_SRC=`https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VER}/pdf.min.js`;
+const PDFJS_WORKER=`https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VER}/pdf.worker.min.js`;
+const PDF_PAGE_CAP=40;
+let pdfjsPromise=null;
+function loadPdfJs(){
+  const ready=()=>{window.pdfjsLib.GlobalWorkerOptions.workerSrc=PDFJS_WORKER;return window.pdfjsLib;};
+  if(window.pdfjsLib)return Promise.resolve(ready());
+  if(pdfjsPromise)return pdfjsPromise;
+  pdfjsPromise=new Promise((res,rej)=>{
+    const el=document.createElement("script");el.src=PDFJS_SRC;el.async=true;
+    el.onload=()=>window.pdfjsLib?res(ready()):rej(new Error("the pdf renderer didn’t load"));
+    el.onerror=()=>{pdfjsPromise=null;rej(new Error("couldn’t reach the pdf renderer"));};
+    document.head.appendChild(el);
+  });
+  return pdfjsPromise;
 }
 
 /* ════════ CALENDAR FEEDS — subscribed webcal/ICS schedules ════════
@@ -997,7 +1066,7 @@ function MonthStrip({y,m,state,sIdx,selected,onTap,cell,cg,wg,winBy,travelBy,pre
   </div>;
 }
 /* desktop calendar filter + colour key */
-function CalFilter({state,mutate}){
+function CalFilter({state,mutate,onOpenDoc}){
   const [open,setOpen]=useState(true);
   const toggle=id=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id===id?{...c,visible:!(c.visible!==false)}:c)}));
   const chip={fontFamily:MONO,fontSize:10.5,fontWeight:700,cursor:"pointer",borderRadius:13,padding:"2px 8px",display:"inline-flex",alignItems:"center",gap:5,background:C.panel};
@@ -1007,9 +1076,11 @@ function CalFilter({state,mutate}){
     <button onClick={()=>setOpen(o=>!o)} style={{border:"none",background:"transparent",color:C.mute,cursor:"pointer",fontFamily:MONO,
       fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase"}}>{open?"▾":"▸"} calendars</button>
     {open&&state.calendars.map(c=>{const on=c.visible!==false;
-      return <button key={c.id} onClick={()=>toggle(c.id)} title={`${(c.ranges||[]).length} ranges${c.out?` · out ${c.out.start}–${c.out.end}`:""}`}
-        style={{...chip,border:`1px solid ${on?c.color:C.line}`,opacity:on?1:0.45,color:C.ink}}>
-        {sw(c.color)}<span>{c.name}</span>{!on&&<span style={{color:C.mute}}>off</span>}</button>;})}
+      return <span key={c.id} style={{display:"inline-flex",alignItems:"center",gap:3}}>
+        <button onClick={()=>toggle(c.id)} title={`${(c.ranges||[]).length} ranges${c.out?` · out ${c.out.start}–${c.out.end}`:""}`}
+          style={{...chip,border:`1px solid ${on?c.color:C.line}`,opacity:on?1:0.45,color:C.ink}}>
+          {sw(c.color)}<span>{c.name}</span>{!on&&<span style={{color:C.mute}}>off</span>}</button>
+        <DocPip cal={c} onOpen={onOpenDoc} size={11}/></span>;})}
     {open&&<span style={{width:1,height:14,background:C.line2,margin:"0 1px"}}/>}
     {open&&key(C.shiftDay,"day")}{open&&key(C.shiftNight,"night")}{open&&key(C.blockTrip,"trip")}
     {open&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.ocean}}>✈ travel</span>}
@@ -1019,7 +1090,7 @@ function CalFilter({state,mutate}){
         <span style={{width:11,height:11,borderRadius:3,border:`1.5px ${d} ${C.gray}`,background:d==="solid"?C.gray:"transparent"}}/>{lab}</span>)}
   </div>;
 }
-function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,placing,onCreateWindow,selTid,selWid,onEdge,onGrabTravel}){
+function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setTool,selected,onTap,onUndo,canUndo,winBy,travelBy,placing,onCreateWindow,selTid,selWid,onEdge,onGrabTravel,onOpenDoc}){
   const tools=[["select","⌖","Select"],["mark","✎","Mark"],["request","▲","Request"],["window","▭","Window"],
     ["schedule","◆","Schedule"],["travel","✈","Travel"],["away","☾","Away"],["erase","⌫","Erase"]];
   const selTrip=selTid&&(state.trips||[]).find(t=>t.id===selTid)||null;
@@ -1064,7 +1135,7 @@ function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setT
         Drag across days to hold a window, then set “will work X of Y” in the readout.</div>}
       {tool==="erase"&&<div style={{fontSize:10.5,color:C.gray,padding:"0 12px 5px"}}>
         Erase clears the sketch layer — marked and requested days, held windows, travel days. Scheduled and worked days are deleted from the readout.</div>}
-      {!mobile&&<CalFilter state={state} mutate={mutate}/>}
+      {!mobile&&<CalFilter state={state} mutate={mutate} onOpenDoc={onOpenDoc}/>}
     </div>
     {/* desktop: each month a one-row strip (Lydia's dense view); phone: one month grid + arrows */}
     <div style={{padding:"8px 12px 40px"}}>
@@ -1100,7 +1171,7 @@ function PhaseBtns({status,past,onSet,small}){
   return <>{items.map(([ph,lab])=><Btn key={ph} small={small} on={status===ph} onClick={()=>onSet(ph)}
     title={PHASE_HINT[ph]}>{small?PHASE_SHORT[ph]:lab}</Btn>)}</>;
 }
-function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
+function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow,onOpenDoc}){
   if(!selected)return <div style={{padding:"16px 14px",color:C.mute,fontSize:12.5}}>
     Tap a day to read or edit it. <b>Mark</b> holds a day; <b>Request</b> asks for it; <b>Schedule</b> commits it.
     A linked calendar promotes requested days to scheduled on its own.</div>;
@@ -1125,7 +1196,8 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
       {allDay?"kids home all day":"out part of the day"}</span>
     <span style={{fontSize:11,color:C.gray}}>home & awake <b style={{color:C.ink}}>{fmtH(awake)}</b></span>
     {dayCals.map(c=><span key={c.id} style={{fontSize:10,fontWeight:700,color:c.color,display:"inline-flex",alignItems:"center",gap:3}}>
-      <span style={{width:6,height:6,borderRadius:6,background:c.color}}/>{c.name}{c.out?` (out ${c.out.start}–${c.out.end})`:""}</span>)}
+      <span style={{width:6,height:6,borderRadius:6,background:c.color}}/>{c.name}{c.out?` (out ${c.out.start}–${c.out.end})`:""}
+      <DocPip cal={c} onOpen={onOpenDoc} size={11}/></span>)}
     {trip&&<span style={{fontSize:10.5,color:C.ocean}}>✈ {trip.name} ({trip.workFactor})</span>}
     {onDel&&<DelX onClick={onDel}/>}
   </div>;
@@ -1159,6 +1231,7 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow}){
     <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
       <b style={{fontSize:14}}>{MON[d.getMonth()]} {d.getDate()}</b>
       <span style={{fontSize:9.5,color:allDay?C.juniper:C.mute}}>{allDay?"home":"school"}</span>
+      {dayCals.map(c=><DocPip key={c.id} cal={c} onOpen={onOpenDoc} size={12}/>)}
       {warn&&<span title={warn} style={{fontSize:11,color:C.warn}}>⚠</span>}
       <div style={{marginLeft:"auto",display:"flex",gap:4}}>
         <PhaseBtns status={status} past={selected<TODAY_S} onSet={setPhase} small/>
@@ -1346,7 +1419,7 @@ function TravelReadout({state,sIdx,dateStr,info,head,awake,mutate,setSelected}){
 }
 
 /* ════════ DRAWER — calendars + trips visibility ════════ */
-function DrawerStrip({state,mutate,goAddTrip,goAddCal,onGrabTrip}){
+function DrawerStrip({state,mutate,goAddTrip,goAddCal,onGrabTrip,onOpenDoc}){
   const [open,setOpen]=useState(false);
   const toggleCal=id=>mutate(s=>({...s,calendars:s.calendars.map(c=>c.id===id?{...c,visible:!c.visible}:c)}));
   const mini={fontFamily:MONO,fontSize:10,fontWeight:700,cursor:"pointer",borderRadius:12,padding:"2px 8px",border:`1px dashed ${C.faint}`,background:"transparent",color:C.gray};
@@ -1358,7 +1431,9 @@ function DrawerStrip({state,mutate,goAddTrip,goAddCal,onGrabTrip}){
         {(state.calendars||[]).filter(c=>c.visible!==false).length} cal · {(state.trips||[]).filter(t=>t.visible!==false).length} trips shown</span>}
     </div>
     {open&&<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"2px 12px 9px",alignItems:"center"}}>
-      {state.calendars.map(c=><Chip key={c.id} on={c.visible!==false} dot={c.color} onClick={()=>toggleCal(c.id)}>{c.name}</Chip>)}
+      {state.calendars.map(c=><span key={c.id} style={{display:"inline-flex",alignItems:"center",gap:3}}>
+        <Chip on={c.visible!==false} dot={c.color} onClick={()=>toggleCal(c.id)}>{c.name}</Chip>
+        <DocPip cal={c} onOpen={onOpenDoc} size={12}/></span>)}
       <button onClick={goAddCal} style={mini} title="add a calendar in Trips & Calendars">+ calendar</button>
       <span style={{width:1,height:14,background:C.line}}/>
       <span style={{fontSize:9.5,color:C.mute}}>drag a trip onto the calendar →</span>
@@ -1392,14 +1467,17 @@ function ImportICS({onImport}){
     </div>}
   </div>;
 }
-function TripsCalsTab({state,mutate,only}){
+function TripsCalsTab({state,mutate,only,cfg,notify,onOpenDoc}){
   const s=state.settings;
   const show=sec=>!only||only===sec;
   const setS=patch=>mutate(x=>({...x,settings:{...x.settings,...patch}}));
   const T=({label,k})=><Field label={label}><input type="time" style={inp} value={s[k]} onChange={e=>setS({[k]:e.target.value})}/></Field>;
   const setCal=(id,patch)=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id===id?{...c,...patch}:c)}));
   const setTrip=(id,patch)=>mutate(st=>({...st,trips:st.trips.map(t=>t.id===id?{...t,...patch}:t)}));
-  const rmItem=(key,id)=>mutate(st=>({...st,[key]:st[key].filter(x=>x.id!==id)}));
+  const rmItem=(key,id)=>{
+    if(key==="calendars"&&cfg){const c=(state.calendars||[]).find(x=>x.id===id);
+      calDocs(c).forEach(d=>{docBlobs.delete(d.id);remoteFileDel(cfg,d.id);});}
+    mutate(st=>({...st,[key]:st[key].filter(x=>x.id!==id)}));};
   const setRange=(cid,i,patch)=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id!==cid?c:{...c,ranges:c.ranges.map((r,j)=>j===i?{...r,...patch}:r)})}));
   const addRange=cid=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id!==cid?c:{...c,ranges:[...(c.ranges||[]),{from:TODAY_S,to:TODAY_S,label:""}]})}));
   const rmRange=(cid,i)=>mutate(st=>({...st,calendars:st.calendars.map(c=>c.id!==cid?c:{...c,ranges:c.ranges.filter((r,j)=>j!==i)})}));
@@ -1447,6 +1525,7 @@ function TripsCalsTab({state,mutate,only}){
         </div>)}
         <button onClick={()=>addRange(c.id)} style={addBtn}>+ date range</button>
       </div>
+      <CalDocs cal={c} cfg={cfg} mutate={mutate} notify={notify} onOpen={onOpenDoc}/>
       <div style={{marginTop:8,paddingTop:7,borderTop:`1px solid ${C.line2}`}}>
         <label style={{fontSize:11,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
           <input type="checkbox" checked={!!c.out} onChange={e=>setCal(c.id,{out:e.target.checked?{start:"09:00",end:"15:00",weekdaysOnly:true}:undefined})}/>
@@ -1681,6 +1760,159 @@ function SurpriseModal({state,sIdx,onKeep,onDrop,onKeepAll,onClose,onGo}){
   </div>;
 }
 
+/* ════════ DOC VIEWER — a kid's calendar PDF, in a modal ════════
+   PDFs render to canvas via pdf.js (reliable on phones, where an <iframe> of a
+   PDF often shows nothing); if that can't load we fall back to the browser's own
+   frame. Either way "open" and "save" always work. */
+function DocModal({doc,calName,cfg,onClose,onOpenStore}){
+  const [phase,setPhase]=useState("loading");   // loading · pages · frame · image · error
+  const [err,setErr]=useState(null);
+  const [pdf,setPdf]=useState(null);
+  const [url,setUrl]=useState(null);
+  const [zoom,setZoom]=useState(1);
+  const [tick,setTick]=useState(0);             // bumped on resize / retry to re-lay-out
+  const pagesRef=useRef(),runRef=useRef(0);
+  useEffect(()=>{
+    let alive=true,made=null;setPhase("loading");setErr(null);setPdf(null);
+    (async()=>{
+      try{
+        const blob=await docBlob(doc,cfg);
+        if(!alive)return;
+        made=URL.createObjectURL(blob);setUrl(made);
+        if(!isPdfDoc(doc)){setPhase("image");return;}
+        let lib=null;
+        try{lib=await loadPdfJs();}catch(e){}
+        if(!alive)return;
+        if(!lib){setPhase("frame");return;}                      // no renderer — let the browser try
+        const d=await lib.getDocument({data:new Uint8Array(await blob.arrayBuffer())}).promise;
+        if(!alive){try{d.destroy();}catch(_){}return;}
+        setPdf(d);setPhase("pages");
+      }catch(e){if(alive){setErr(String(e.message||e));setPhase("error");}}
+    })();
+    return ()=>{alive=false;if(made)URL.revokeObjectURL(made);};
+  },[doc.id,cfg,tick]);
+  // every page onto its own canvas, sized to the modal and the screen's pixel ratio
+  useEffect(()=>{
+    if(phase!=="pages"||!pdf)return;
+    const run=++runRef.current;
+    (async()=>{
+      const host=pagesRef.current;if(!host)return;
+      const wide=Math.max(180,(host.clientWidth||600)-4);
+      host.textContent="";
+      const n=Math.min(pdf.numPages,PDF_PAGE_CAP);
+      for(let i=1;i<=n;i++){
+        const page=await pdf.getPage(i);if(runRef.current!==run)return;
+        const base=page.getViewport({scale:1});
+        const dpr=Math.min(window.devicePixelRatio||1,2);
+        const vp=page.getViewport({scale:(wide/base.width)*zoom*dpr});
+        const cv=document.createElement("canvas");
+        cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);
+        cv.style.cssText=`display:block;margin:0 auto 10px;width:${Math.round(vp.width/dpr)}px;max-width:100%;`
+          +`height:auto;border-radius:4px;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.2)`;
+        host.appendChild(cv);
+        await page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise;
+        if(runRef.current!==run)return;
+      }
+      if(pdf.numPages>n){const more=document.createElement("div");
+        more.textContent=`+${pdf.numPages-n} more pages — use “open” for the rest`;
+        more.style.cssText="text-align:center;font-size:11px;opacity:.6;padding:6px 0 2px";host.appendChild(more);}
+    })();
+    return ()=>{runRef.current++;};
+  },[phase,pdf,zoom,tick]);
+  useEffect(()=>{const h=()=>setTick(v=>v+1);window.addEventListener("resize",h);return ()=>window.removeEventListener("resize",h);},[]);
+  useEffect(()=>{const h=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",h);return ()=>window.removeEventListener("keydown",h);},[onClose]);
+  const retry=()=>{docBlobs.delete(doc.id);setTick(v=>v+1);};
+  const save=()=>{if(!url)return;const a=document.createElement("a");a.href=url;a.download=doc.name;a.click();};
+  const tool={fontFamily:MONO,fontSize:11,fontWeight:700,border:`1px solid ${C.line}`,background:C.panel,
+    color:C.ink,borderRadius:5,cursor:"pointer",padding:"3px 8px"};
+  return <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:800,background:"rgba(0,0,0,.55)",
+    display:"flex",alignItems:"center",justifyContent:"center",padding:"2vh 2vw"}}>
+    <div onClick={e=>e.stopPropagation()} style={{fontFamily:MONO,color:C.ink,background:C.panel,borderRadius:10,
+      width:"min(940px,100%)",height:"min(94vh,100%)",display:"flex",flexDirection:"column",overflow:"hidden",
+      boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:7,padding:"9px 12px",borderBottom:`1px solid ${C.line2}`,flexWrap:"wrap"}}>
+        <span style={{fontSize:13}}>{isPdfDoc(doc)?"📄":"🖼"}</span>
+        <div style={{minWidth:0,flex:"1 1 140px"}}>
+          <div style={{fontSize:12.5,fontWeight:800,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{doc.name}</div>
+          <div style={{fontSize:9.5,color:C.mute}}>{calName?calName+" · ":""}{doc.size?docSize(doc.size):""}</div>
+        </div>
+        {phase==="pages"&&<div style={{display:"flex",alignItems:"center",gap:4}}>
+          <button style={tool} disabled={zoom<=0.6} onClick={()=>setZoom(z=>Math.max(0.6,Math.round((z-0.25)*100)/100))}>−</button>
+          <span style={{fontSize:10.5,color:C.gray,minWidth:38,textAlign:"center"}}>{Math.round(zoom*100)}%</span>
+          <button style={tool} disabled={zoom>=3} onClick={()=>setZoom(z=>Math.min(3,Math.round((z+0.25)*100)/100))}>＋</button>
+        </div>}
+        <button style={tool} onClick={()=>url&&window.open(url,"_blank","noopener")}>↗ open</button>
+        <button style={tool} onClick={save}>⤓ save</button>
+        <button style={{...tool,fontSize:13,padding:"2px 9px"}} onClick={onClose} title="close (esc)">✕</button>
+      </div>
+      <div style={{flex:1,minHeight:0,overflow:"auto",background:C.panel2,padding:phase==="frame"?0:"12px 10px"}}>
+        {phase==="loading"&&<div style={{padding:"20px 14px",fontSize:12,color:C.gray,textAlign:"center"}}>opening {doc.name}…</div>}
+        {phase==="error"&&<div style={{padding:"20px 14px",fontSize:12,color:C.gray,textAlign:"center",lineHeight:1.6}}>
+          <div style={{color:C.danger,fontWeight:700,marginBottom:8}}>Couldn’t open it</div>
+          <div style={{maxWidth:420,margin:"0 auto"}}>{err}</div>
+          <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12}}>
+            <Btn small onClick={retry}>try again</Btn>
+            {!cfg&&<Btn small kind="prim" onClick={()=>{onClose();onOpenStore&&onOpenStore();}}>shared storage</Btn>}
+          </div></div>}
+        {phase==="frame"&&url&&<iframe title={doc.name} src={url} style={{width:"100%",height:"100%",border:0,background:"#fff"}}/>}
+        {phase==="image"&&url&&<img alt={doc.name} src={url} style={{display:"block",margin:"0 auto",maxWidth:"100%",
+          borderRadius:4,background:"#fff",boxShadow:"0 2px 12px rgba(0,0,0,.2)"}}/>}
+        <div ref={pagesRef} style={{display:phase==="pages"?"block":"none"}}/>
+      </div>
+    </div>
+  </div>;
+}
+
+/* the attach/open/remove row that sits under a calendar's date ranges */
+function CalDocs({cal,cfg,mutate,notify,onOpen}){
+  const ref=useRef();const [busy,setBusy]=useState(false);
+  const docs=calDocs(cal);
+  const pick=async e=>{
+    const f=e.target.files[0];e.target.value="";if(!f)return;
+    if(!cfg){notify("Connect shared storage first — attachments live on the NAS, not in the plan.");return;}
+    const type=docTypeOf(f);
+    if(DOC_TYPES.indexOf(type)<0){notify(`PDFs and images only — that one is ${type||"an unknown type"}.`);return;}
+    if(f.size>DOC_MAX){notify(`${f.name} is ${docSize(f.size)} — the limit is ${docSize(DOC_MAX)}.`);return;}
+    const doc={id:newDocId(),name:String(f.name).slice(0,120),type,size:f.size,at:new Date().toISOString()};
+    setBusy(true);
+    try{
+      await remoteFilePut(cfg,doc,f);
+      docBlobs.set(doc.id,f);                                   // already in hand — no need to fetch it back
+      mutate(s=>({...s,calendars:s.calendars.map(c=>c.id===cal.id?{...c,docs:[...calDocs(c),doc]}:c)}));
+      notify(`Attached ${doc.name}.`);
+    }catch(err){notify(`Couldn’t upload — ${err.message||err}`);}
+    finally{setBusy(false);}
+  };
+  const rm=doc=>{
+    if(!confirm(`Remove ${doc.name}?`))return;
+    mutate(s=>({...s,calendars:s.calendars.map(c=>c.id===cal.id?{...c,docs:calDocs(c).filter(d=>d.id!==doc.id)}:c)}));
+    docBlobs.delete(doc.id);
+    if(cfg)remoteFileDel(cfg,doc.id);
+  };
+  return <div style={{marginTop:8,paddingTop:7,borderTop:`1px solid ${C.line2}`}}>
+    <div style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,marginBottom:5}}>
+      The calendar itself <span style={{fontWeight:600,textTransform:"none",letterSpacing:0}}>· the school's PDF, to read on any device</span></div>
+    {docs.map(d=><div key={d.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+      <button onClick={()=>onOpen(d,cal.name)} style={{fontFamily:MONO,fontSize:11.5,fontWeight:700,border:`1px solid ${C.line}`,
+        background:C.panel,color:C.ink,borderRadius:5,cursor:"pointer",padding:"3px 8px",maxWidth:"100%",
+        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isPdfDoc(d)?"📄":"🖼"} {d.name}</button>
+      <span style={{fontSize:10,color:C.mute}}>{d.size?docSize(d.size):""}</span>
+      <button onClick={()=>rm(d)} title="remove" style={{...delBtn,marginLeft:"auto"}}>✕</button>
+    </div>)}
+    <button onClick={()=>ref.current.click()} disabled={busy} style={{...addBtn,opacity:busy?0.5:1}}>
+      {busy?"uploading…":"+ attach PDF"}</button>
+    <input ref={ref} type="file" accept="application/pdf,image/*,.pdf" onChange={pick} style={{display:"none"}}/>
+    {!cfg&&<div style={{fontSize:10,color:C.mute,marginTop:4}}>Needs shared storage — that's where the file lives so you both can open it.</div>}
+  </div>;
+}
+// the little 📄 that opens a calendar's PDF straight from a chip or the readout
+const DocPip=({cal,onOpen,size})=>{
+  const docs=calDocs(cal);if(!docs.length)return null;
+  return <button onClick={e=>{e.stopPropagation();onOpen(docs[0],cal.name);}} title={`open ${docs[0].name}`}
+    style={{fontFamily:MONO,fontSize:size||10,border:"none",background:"transparent",color:"inherit",
+      cursor:"pointer",padding:"0 1px",lineHeight:1}}>📄{docs.length>1?docs.length:""}</button>;
+};
+
 /* ════════ SHARED STORAGE (NAS over Tailscale) ════════ */
 const SYNC_UI={off:{c:"mute",t:"off"},connecting:{c:"ocean",t:"connecting…"},synced:{c:"juniper",t:"synced"},
   saving:{c:"ocean",t:"saving…"},offline:{c:"mute",t:"offline"},error:{c:"danger",t:"error"}};
@@ -1737,6 +1969,7 @@ function App(){
   const [cfg,setCfg]=useState(()=>syncCfg());    // shared-storage endpoint (per-device)
   const [feedBusy,setFeedBusy]=useState({});     // feedId → "checking"
   const [feedStatus,setFeedStatus]=useState(loadFeedStatus);   // per-device check results
+  const [viewDoc,setViewDoc]=useState(null);     // the attachment open in the viewer
   const [snooze,setSnooze]=useState("");         // the surprise set she's already looked at
   const [sync,setSync]=useState(()=>({status:syncCfg()?"connecting":"off"}));
   const [syncModal,setSyncModal]=useState(false);
@@ -1934,6 +2167,7 @@ function App(){
     const iv=setInterval(()=>runDueFeeds(false),60000);
     return ()=>{clearTimeout(t);clearInterval(iv);};},[runDueFeeds,cfg]);
 
+  const openDoc=(doc,calName)=>setViewDoc({doc,calName});
   const surprises=state.surprises||[];
   const sKey=surprises.map(x=>x.id).join("|");                  // a new flag re-opens the alert
   const showSurprise=!!sKey&&snooze!==sKey;
@@ -1959,6 +2193,8 @@ function App(){
       background:C.ocean,color:"#fff",fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:6,boxShadow:"0 6px 18px rgba(0,0,0,.3)"}}>
       ✈ {tripDrag.name}{tripDrag.over?` → ${MON[pd(tripDrag.over).getMonth()]} ${pd(tripDrag.over).getDate()}`:""}</div>}
     {syncModal&&<SyncModal sync={sync} onClose={()=>setSyncModal(false)} onSaved={()=>setCfg(syncCfg())}/>}
+    {viewDoc&&<DocModal doc={viewDoc.doc} calName={viewDoc.calName} cfg={cfg}
+      onClose={()=>setViewDoc(null)} onOpenStore={()=>setSyncModal(true)}/>}
     {showSurprise&&<SurpriseModal state={state} sIdx={sIdx} onClose={()=>setSnooze(sKey)} onGo={goToDay}
       onKeep={x=>mutate(s=>ackSurprises(s,[x.id]))}
       onDrop={x=>mutate(s=>rejectSurprise(s,x))}
@@ -2008,11 +2244,12 @@ function App(){
             {panel==="sites"?<SitesTab state={state} mutate={mutate}/>
               :panel==="feeds"?<FeedsTab state={state} mutate={mutate} busy={feedBusy} status={feedStatus} hasStore={!!cfg}
                  onCheck={f=>checkFeed(f)} onPaste={(f,t)=>applyFeedText(f,t,true)} onOpenStore={()=>setSyncModal(true)}/>
-              :<TripsCalsTab state={state} mutate={mutate} only={panel}/>}
+              :<TripsCalsTab state={state} mutate={mutate} only={panel} cfg={cfg} notify={setToast} onOpenDoc={openDoc}/>}
           </div>
         </div>
       : <>
-        <DrawerStrip state={state} mutate={mutate} goAddTrip={()=>openPanel("trips")} goAddCal={()=>openPanel("family")} onGrabTrip={beginTripDrag}/>
+        <DrawerStrip state={state} mutate={mutate} goAddTrip={()=>openPanel("trips")} goAddCal={()=>openPanel("family")}
+          onGrabTrip={beginTripDrag} onOpenDoc={openDoc}/>
         <Banner agg={agg} goal={state.settings.goal} mobile={mobile} year={viewYM.slice(0,4)}/>
         <MonthBar agg={agg} viewYM={viewYM} mobile={mobile}/>
         <div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
@@ -2020,7 +2257,7 @@ function App(){
             <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} mutate={mutate} viewY={viewY} viewM={viewM} setView={setView}
               tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
               winBy={winBy} travelBy={travelBy} placing={placingSet} onCreateWindow={onCreateWindow}
-              selTid={selTid} selWid={selWid} onEdge={beginEdge} onGrabTravel={beginTravelDrag}/>
+              selTid={selTid} selWid={selWid} onEdge={beginEdge} onGrabTravel={beginTravelDrag} onOpenDoc={openDoc}/>
           </div>
           {/* info box — collapsible; a thin bar when collapsed */}
           {collapsed
@@ -2039,7 +2276,8 @@ function App(){
                 ? <WindowReadout state={state} sIdx={sIdx} wid={selWid} mutate={mutate} onScheduled={()=>setSelWid(null)}/>
                 : selTid&&(state.trips||[]).find(t=>t.id===selTid)
                 ? <TripReadout state={state} tid={selTid} mutate={mutate} onClose={()=>setSelTid(null)}/>
-                : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate} mobile={mobile} setSelected={setSelected} onAddWindow={addWindowAt}/>}
+                : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate} mobile={mobile} setSelected={setSelected}
+                    onAddWindow={addWindowAt} onOpenDoc={openDoc}/>}
             </div>}
         </div>
       </>}

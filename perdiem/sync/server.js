@@ -18,6 +18,11 @@
  * Also proxies calendar feeds: GET /ics?url=<webcal|https url> returns the raw
  * .ics text with our CORS header, so the browser-only app can read shift feeds
  * that send no CORS headers of their own.
+ *
+ * And it holds attachments — the school-calendar PDFs — as plain files under
+ * DATA_DIR/files/<workspace>/, so the plan document itself stays small. The app
+ * keeps only a reference ({id,name,type,size}) in the plan and fetches the bytes
+ * from here when you open one.
  */
 const http = require("http");
 const https = require("https");
@@ -28,15 +33,19 @@ const PORT = parseInt(process.env.PORT || "8787", 10);
 const DATA_DIR = path.resolve(process.env.DATA_DIR || "./data");
 const TOKEN = process.env.TOKEN || "";
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || "*";
-const MAX_BODY = 6 * 1024 * 1024; // 6 MB
+const MAX_BODY = 6 * 1024 * 1024;    // 6 MB — the plan document
+const FILE_MAX = 25 * 1024 * 1024;   // 25 MB — one attachment
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+// what an attachment is allowed to be. Anything else is stored (and served) as
+// an opaque download, so the store can never hand a browser something scriptable.
+const DOC_TYPES = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", ALLOW_ORIGIN);
   res.setHeader("Vary", "Origin");
-  res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, PUT, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Max-Age", "86400");
 }
@@ -51,6 +60,14 @@ function authed(req) {
   return h === "Bearer " + TOKEN;
 }
 const fileFor = (id) => path.join(DATA_DIR, id + ".json");
+
+/* ── attachments ── */
+const docDir = (ws) => path.join(DATA_DIR, "files", ws);
+const docBin = (ws, id) => path.join(docDir(ws), id + ".bin");
+const docMeta = (ws, id) => path.join(docDir(ws), id + ".json");
+function readMeta(ws, id) {
+  try { return JSON.parse(fs.readFileSync(docMeta(ws, id), "utf8")); } catch (e) { return null; }
+}
 
 function readDoc(id) {
   try {
@@ -147,6 +164,81 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/calendar; charset=utf-8" });
       res.end(text);
     });
+  }
+
+  // GET /files/<ws> — what's in the attachment store (for housekeeping and backups)
+  if (parts[0] === "files" && parts[1] && !parts[2]) {
+    const ws = decodeURIComponent(parts[1]);
+    if (!ID_RE.test(ws)) return send(res, 400, { error: "bad workspace id" });
+    if (!authed(req)) return send(res, 401, { error: "unauthorized" });
+    if (req.method !== "GET") return send(res, 405, { error: "method not allowed" });
+    let ids = [];
+    try { ids = fs.readdirSync(docDir(ws)).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)); }
+    catch (e) { /* no directory yet — an empty store */ }
+    return send(res, 200, { files: ids.map((id) => readMeta(ws, id)).filter(Boolean) });
+  }
+
+  // /file/<ws>/<id> — one attachment's bytes
+  if (parts[0] === "file" && parts[1] && parts[2]) {
+    const ws = decodeURIComponent(parts[1]), id = decodeURIComponent(parts[2]);
+    if (!ID_RE.test(ws) || !ID_RE.test(id)) return send(res, 400, { error: "bad id" });
+    if (!authed(req)) return send(res, 401, { error: "unauthorized" });
+
+    if (req.method === "GET" || req.method === "HEAD") {
+      const meta = readMeta(ws, id);
+      let stat; try { stat = fs.statSync(docBin(ws, id)); } catch (e) { return send(res, 404, { error: "not found" }); }
+      const type = meta && DOC_TYPES.has(meta.type) ? meta.type : "application/octet-stream";
+      const name = String((meta && meta.name) || id).replace(/[^\w .,()-]+/g, "_").slice(0, 80);
+      res.writeHead(200, {
+        "Content-Type": type,
+        "Content-Length": stat.size,
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": `inline; filename="${name}"`,
+        "Cache-Control": "no-store",
+      });
+      if (req.method === "HEAD") return res.end();
+      return fs.createReadStream(docBin(ws, id)).pipe(res);
+    }
+    if (req.method === "PUT") {
+      const rawType = url.searchParams.get("type") || req.headers["content-type"] || "";
+      const type = DOC_TYPES.has(rawType) ? rawType : "application/octet-stream";
+      const name = String(url.searchParams.get("name") || id).slice(0, 120);
+      const declared = parseInt(req.headers["content-length"] || "0", 10);
+      if (declared > FILE_MAX) return send(res, 413, { error: "file too large" });   // refuse before reading a byte
+      fs.mkdirSync(docDir(ws), { recursive: true });
+      const tmp = docBin(ws, id) + ".tmp";
+      const out = fs.createWriteStream(tmp);
+      let size = 0, failed = false;
+      // answer first, then drop the connection — destroying the socket up front
+      // would take the response with it and the client would see nothing.
+      const bail = (code, msg) => {
+        if (failed) return; failed = true;
+        req.unpipe(out); out.destroy();
+        fs.unlink(tmp, () => {});
+        res.writeHead(code, { "Content-Type": "application/json", "Connection": "close" });
+        res.end(JSON.stringify({ error: msg }), () => req.destroy());
+      };
+      req.on("data", (c) => { size += c.length; if (size > FILE_MAX) bail(413, "file too large"); });
+      req.on("error", () => bail(400, "read error"));
+      out.on("error", () => bail(500, "write error"));
+      req.pipe(out);
+      out.on("finish", () => {
+        if (failed) return;
+        try {
+          fs.renameSync(tmp, docBin(ws, id));
+          const meta = { id, name, type, size, at: new Date().toISOString() };
+          fs.writeFileSync(docMeta(ws, id), JSON.stringify(meta));
+          send(res, 200, meta);
+        } catch (e) { bail(500, "write error"); }
+      });
+      return;
+    }
+    if (req.method === "DELETE") {
+      try { fs.unlinkSync(docBin(ws, id)); } catch (e) { /* already gone */ }
+      try { fs.unlinkSync(docMeta(ws, id)); } catch (e) { /* already gone */ }
+      return send(res, 200, { ok: true });
+    }
+    return send(res, 405, { error: "method not allowed" });
   }
 
   if (parts[0] === "doc" && parts[1]) {

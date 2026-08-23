@@ -4,12 +4,14 @@ A tiny store that lets both of you share **one living plan** across devices, wit
 putting anything on the public web. The Per Diem app (served from GitHub Pages) talks
 to this service, which runs on your **NAS** and is reachable **only on your tailnet**.
 
-It does two jobs:
+It does three jobs:
 
 1. **Shared storage** — one JSON document per workspace, synced between your devices.
 2. **Calendar proxy** — fetches subscribed `webcal://` schedule feeds on the app's
    behalf, because scheduler sites don't send CORS headers and a browser can't read
    them directly. See [Calendar feeds](#calendar-feeds) below.
+3. **Attachments** — holds the kids' school-calendar PDFs as plain files, so the plan
+   document stays small. See [Calendar PDFs](#calendar-pdfs) below.
 
 - **Access = network reachability.** Your devices (on Tailscale) can reach it; the rest
   of the internet cannot. There's no public URL to leak or brute-force.
@@ -37,7 +39,15 @@ ALLOW_ORIGIN="https://michaelstinnett.com" node server.js   # add PORT=… TOKEN
 Env vars: `PORT` (8787), `DATA_DIR` (./data), `ALLOW_ORIGIN` (set to `https://michaelstinnett.com`),
 `TOKEN` (optional — if set, every request must send `Authorization: Bearer <TOKEN>`).
 
-Endpoints: `GET /health` · `GET|PUT /doc/<workspace>` · `GET /ics?url=<feed url>`.
+Endpoints:
+
+| | |
+|---|---|
+| `GET /health` | liveness |
+| `GET`, `PUT` `/doc/<workspace>` | the plan document |
+| `GET /ics?url=<feed url>` | calendar-feed proxy |
+| `GET`, `PUT`, `DELETE` `/file/<workspace>/<id>` | one attachment |
+| `GET /files/<workspace>` | what attachments exist |
 
 ## 2. Expose it over Tailscale (with HTTPS)
 
@@ -104,9 +114,29 @@ Feed *definitions* are shared through the workspace; *when this device last chec
 kept in that device's `localStorage`, so an idle check writes nothing and never wakes the
 other phone.
 
+## Calendar PDFs
+
+The schools publish their year as a PDF. Attach it to the matching calendar —
+**Menu → Family time settings → the calendar → attach PDF** — and either of you can
+open it from the app: tap the 📄 next to the calendar in the drawer, or on any day
+that calendar covers, straight from the day's readout.
+
+The plan document only ever holds a reference (`{id, name, type, size}`); the bytes
+live here under `DATA_DIR/files/<workspace>/` as `<id>.bin` next to a small `<id>.json`
+of metadata. That keeps the synced document small and quick. Attachments therefore
+**need shared storage connected** — there's nowhere else to put them.
+
+- PDFs and images (PNG, JPEG, WebP, GIF), 25 MB each, 12 per calendar. Anything else is
+  stored and served as an opaque download, never as something a browser would run.
+- Viewing renders the PDF to canvas with pdf.js, loaded from the CDN only when you
+  actually open one — phones often show nothing for a PDF in an `<iframe>`, and this
+  works everywhere. If the CDN can't be reached it falls back to the browser's own
+  frame, and **open** / **save** work regardless.
+- Removing an attachment deletes it here too; so does deleting the calendar.
+
 ## Notes
 
-- **Back up `./data`** — that's your plans.
+- **Back up `./data`** — that's your plans (and `./data/files`, the calendar PDFs).
 - Multiple workspaces are free: use different names (e.g. `shared`, `lydia-scratch`).
 - The chip shows status: ● synced / saving / offline / error. "Updated from another device"
   toasts when the other person's change lands.
