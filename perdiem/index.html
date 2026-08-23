@@ -738,10 +738,17 @@ function reconcile(state,sIdx,feed,parsed,nowStr,opts){
     }
   });
 
-  // shifts this feed placed that have since vanished from the span it publishes
+  /* Shifts this feed placed that have since vanished — but a feed is a MOVING
+     WINDOW. It publishes a rolling span, and shifts don't disappear because they
+     were cancelled; they disappear because the window slid past them. Deleting
+     those would quietly erase real history, so a shift only counts as cancelled
+     when it's missing from the *interior* of the span the feed just published:
+     after today, and strictly between its first and last event. Behind the
+     window, ahead of it, on either edge where the boundary is ambiguous, or
+     today itself — all left exactly as they are. */
   const dates=events.map(e=>e.date).sort(),lo=dates[0],hi=dates[dates.length-1];
   const uids=new Set(events.map(e=>e.uid)),days=new Set(dates);
-  const gone=shifts.filter(s=>mine(s)&&s.date>=nowStr&&s.date>=lo&&s.date<=hi&&!uids.has(s.source.uid)&&!days.has(s.date));
+  const gone=shifts.filter(s=>mine(s)&&s.date>nowStr&&s.date>lo&&s.date<hi&&!uids.has(s.source.uid)&&!days.has(s.date));
   if(gone.length){
     const ids=new Set(gone.map(s=>s.id));
     shifts=shifts.filter(s=>!ids.has(s.id));
@@ -2162,10 +2169,27 @@ function App(){
       for(const f of feeds)if(force||feedDue(f,statusRef.current[f.id]))await checkFeed(f,{silent:true});
     }finally{feedRun.current=false;}
   },[checkFeed]);
-  // first pass waits for the shared-storage pull to land, so we reconcile against the shared plan
-  useEffect(()=>{const t=setTimeout(()=>runDueFeeds(false),cfg?5000:1500);
+  /* When feeds get checked:
+       · on open — always, once the shared plan has landed, so what you see is current
+       · while open — on each feed's own interval (hourly by default)
+       · on coming back — a phone freezes a backgrounded tab and its timers, so
+         returning to the app catches up on anything that fell due meanwhile
+     All three go through the same due/idempotent path, so none of them can
+     double up or write when there's no news. */
+  const feedOpened=useRef(false);
+  useEffect(()=>{
+    if(feedOpened.current)return;
+    if(cfg&&sync.status==="connecting")return;      // reconcile against the shared plan, not the stale local one
+    feedOpened.current=true;
+    const t=setTimeout(()=>runDueFeeds(true),600);
+    return ()=>clearTimeout(t);
+  },[cfg,sync.status,runDueFeeds]);
+  useEffect(()=>{
     const iv=setInterval(()=>runDueFeeds(false),60000);
-    return ()=>{clearTimeout(t);clearInterval(iv);};},[runDueFeeds,cfg]);
+    const wake=()=>{if(document.visibilityState!=="hidden")runDueFeeds(false);};
+    document.addEventListener("visibilitychange",wake);window.addEventListener("focus",wake);
+    return ()=>{clearInterval(iv);document.removeEventListener("visibilitychange",wake);window.removeEventListener("focus",wake);};
+  },[runDueFeeds]);
 
   const openDoc=(doc,calName)=>setViewDoc({doc,calName});
   const surprises=state.surprises||[];
