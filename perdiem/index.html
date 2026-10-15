@@ -391,7 +391,8 @@ function cleanPayments(v,ids){
 
 /* ════════ persistence + sanitize ════════
    Every load path normalises onto seed defaults and drops invalid
-   records, so a partial or old-shape saved state can never crash render. */
+   records, so a partial or old-shape saved state can never crash render.
+   Adding or reshaping a synced field? Bump SCHEMA (shared storage, below). */
 const DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
 function sanitize(o){
   if(!o||typeof o!=="object")return seedState();
@@ -476,9 +477,19 @@ async function remoteGet(c){
   return await r.json();
 }
 async function remotePut(c,data){
-  const r=await fetch(`${c.url}/doc/${encodeURIComponent(c.id)}`,{method:"PUT",headers:syncHeaders(c),body:JSON.stringify({data})});
+  const r=await fetch(`${c.url}/doc/${encodeURIComponent(c.id)}`,{method:"PUT",headers:syncHeaders(c),body:JSON.stringify({data:{...data,schema:SCHEMA}})});
   if(!r.ok)throw new Error("HTTP "+r.status);
   return await r.json();
+}
+/* ── version guard: devices don't all reload at once, so old and new code share one doc ──
+   Every doc is stamped with the SCHEMA of the code that wrote it. A doc stamped higher than
+   ours means this tab is stale: it stops writing (so it can't strip fields it doesn't know)
+   until it reloads. A doc missing a top-level field we keep was written by an older device
+   that never knew the field, so we keep our copy and write it back. (Unstamped docs predate
+   the guard and count as 1.) */
+const SCHEMA=2;
+function fromRemote(raw,local){
+  return {pure:sanitize(raw),merged:sanitize({...(local||{}),...raw}),newer:(Number(raw.schema)||1)>SCHEMA};
 }
 function load(){
   const fromUrl=readHash();                                  // a share-link wins on first load
@@ -2094,7 +2105,7 @@ const DocPip=({cal,onOpen,size})=>{
 
 /* ════════ SHARED STORAGE (NAS over Tailscale) ════════ */
 const SYNC_UI={off:{c:"mute",t:"off"},connecting:{c:"ocean",t:"connecting…"},synced:{c:"juniper",t:"synced"},
-  saving:{c:"ocean",t:"saving…"},offline:{c:"mute",t:"offline"},error:{c:"danger",t:"error"}};
+  saving:{c:"ocean",t:"saving…"},offline:{c:"mute",t:"offline"},error:{c:"danger",t:"error"},stale:{c:"warn",t:"paused — reload"}};
 function SyncModal({sync,onClose,onSaved}){
   const c=syncCfg()||{url:"",tok:"",id:"shared"};
   const [url,setUrl]=useState(c.url),[tok,setTok]=useState(c.tok),[id,setId]=useState(c.id||"shared"),[test,setTest]=useState(null);
@@ -2153,6 +2164,9 @@ function App(){
   const [sync,setSync]=useState(()=>({status:syncCfg()?"connecting":"off"}));
   const [syncModal,setSyncModal]=useState(false);
   const remoteJson=useRef(null),rev=useRef(0),saveTimer=useRef();
+  const stateRef=useRef(state);stateRef.current=state;
+  const [update,setUpdate]=useState(null);       // null | "app" (a newer deploy is live) | "data" (the plan was saved by newer code)
+  const staleData=useRef(false);                 // set once a newer-schema doc is seen: this tab stops writing
 
   useEffect(()=>{try{localStorage.setItem("perDiemNext",JSON.stringify(state));}catch(e){}},[state]);
   useEffect(()=>{const m=window.matchMedia&&window.matchMedia("(max-width:760px)");if(!m)return;
@@ -2271,18 +2285,24 @@ function App(){
   useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),4000);return ()=>clearTimeout(t);},[toast]);
   // ── shared storage: initial pull (or create), debounced push, poll for the other device ──
   const applyRemote=v=>{past.current=[];setCanUndo(false);setState(v);};
+  // take a pulled doc: remoteJson is the doc as written, so anything we carried forward differs and gets pushed back
+  const takeRemote=r=>{const {pure,merged,newer}=fromRemote(r.data,stateRef.current);
+    if(newer){staleData.current=true;setUpdate("data");}
+    remoteJson.current=JSON.stringify(pure);rev.current=r.rev;applyRemote(merged);
+    setSync({status:newer?"stale":"synced",rev:r.rev,at:r.updatedAt});};
   useEffect(()=>{
     if(!cfg){setSync({status:"off"});return;}
     let alive=true;setSync({status:"connecting"});
     (async()=>{try{
       const r=await remoteGet(cfg);if(!alive)return;
-      if(r.data){const v=sanitize(r.data);if(v){remoteJson.current=JSON.stringify(v);rev.current=r.rev;applyRemote(v);setSync({status:"synced",rev:r.rev,at:r.updatedAt});return;}}
+      if(r.data){takeRemote(r);return;}
       const p=await remotePut(cfg,state);if(!alive)return;remoteJson.current=JSON.stringify(state);rev.current=p.rev;setSync({status:"synced",rev:p.rev,at:p.updatedAt});
     }catch(e){if(alive)setSync({status:"error",err:String(e.message||e)});}})();
     return ()=>{alive=false;};
   },[cfg]);
   useEffect(()=>{
-    if(!cfg)return;const js=JSON.stringify(state);if(js===remoteJson.current)return;   // unchanged / just-pulled → don't echo back
+    if(!cfg||staleData.current)return;                                                  // stale code never writes
+    const js=JSON.stringify(state);if(js===remoteJson.current)return;   // unchanged / just-pulled → don't echo back
     clearTimeout(saveTimer.current);setSync(s=>s.status==="synced"?{...s,status:"saving"}:s);
     saveTimer.current=setTimeout(async()=>{try{const p=await remotePut(cfg,state);remoteJson.current=js;rev.current=p.rev;setSync({status:"synced",rev:p.rev,at:p.updatedAt});}
       catch(e){setSync(s=>({...s,status:"error",err:String(e.message||e)}));}},800);
@@ -2292,14 +2312,36 @@ function App(){
     if(!cfg)return;
     const iv=setInterval(async()=>{try{
       const r=await remoteGet(cfg);
-      if(r.rev>rev.current&&r.data){const v=sanitize(r.data);if(v){remoteJson.current=JSON.stringify(v);rev.current=r.rev;applyRemote(v);setSync({status:"synced",rev:r.rev,at:r.updatedAt});setToast("Updated from another device");}}
-      else setSync(s=>(s.status==="offline"||s.status==="error")?{status:"synced",rev:rev.current}:s);
+      if(r.rev>rev.current&&r.data){takeRemote(r);setToast("Updated from another device");}
+      else setSync(s=>(s.status==="offline"||s.status==="error")?{status:staleData.current?"stale":"synced",rev:rev.current}:s);
     }catch(e){setSync(s=>s.status==="saving"?s:{...s,status:"offline"});}},7000);
     return ()=>clearInterval(iv);
   },[cfg]);
+  // ── stale-tab guard: notice a newer deploy (the page's Last-Modified moves) and reload onto it ──
+  useEffect(()=>{
+    const deployOf=r=>r.headers.get("last-modified")||r.headers.get("etag")||"";
+    let base="",alive=true;
+    fetch(location.pathname,{cache:"force-cache"}).then(r=>{if(r.ok)base=deployOf(r);}).catch(()=>{});   // the copy this tab is running
+    const check=async back=>{
+      if(!base)return;
+      try{const r=await fetch(location.pathname,{method:"HEAD",cache:"no-store"});const s=deployOf(r);
+        if(!alive||!r.ok||!s||s===base)return;
+        setUpdate(u=>u||"app");
+        // just brought to the front with nothing waiting to sync → reload before she starts in. At most once per
+        // two minutes, so a deploy that hasn't finished publishing can't loop.
+        const idle=!syncCfg()||staleData.current||JSON.stringify(stateRef.current)===remoteJson.current;
+        if(!back||!idle)return;
+        try{if(Date.now()-(+sessionStorage.getItem("pdReloadAt")||0)<120000)return;sessionStorage.setItem("pdReloadAt",String(Date.now()));}
+        catch(e){return;}
+        location.reload();
+      }catch(e){}};
+    const onVis=()=>{if(document.visibilityState==="visible")check(true);};
+    document.addEventListener("visibilitychange",onVis);
+    const iv=setInterval(()=>check(false),30*60000);
+    return ()=>{alive=false;document.removeEventListener("visibilitychange",onVis);clearInterval(iv);};
+  },[]);
   /* ── calendar feeds: pull, reconcile, and flag what she didn't ask for ──
      Every check is idempotent, so a missed hour or a double-check costs nothing. */
-  const stateRef=useRef(state);stateRef.current=state;
   const statusRef=useRef(feedStatus);statusRef.current=feedStatus;
   const feedRun=useRef(false);
   const stamp=(id,patch)=>setFeedStatus(m=>{const n={...m,[id]:{...(m[id]||{}),...patch,at:new Date().toISOString()}};saveFeedStatus(n);return n;});
@@ -2406,6 +2448,12 @@ function App(){
         <input ref={fileRef} type="file" accept=".json,application/json" onChange={importJSON} style={{display:"none"}}/>
       </div>
     </div>
+    {update&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",padding:"6px 14px",
+      background:C.ink,color:C.bg,fontSize:11.5,fontWeight:700,flexShrink:0}}>
+      <span>{update==="data"?"Another device is on a newer Per Diem. Reload to keep editing — changes here won’t sync until you do."
+        :"A newer Per Diem is available."}</span>
+      <button onClick={()=>location.reload()} style={{fontFamily:MONO,fontSize:11,fontWeight:800,cursor:"pointer",borderRadius:4,
+        padding:"3px 10px",border:`1px solid ${C.bg}`,background:C.bg,color:C.ink}}>Reload</button></div>}
     {menu&&<div onClick={()=>setMenu(false)} style={{position:"fixed",inset:0,zIndex:600,background:"rgba(0,0,0,.35)",display:"flex",justifyContent:"flex-end"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:300,maxWidth:"86vw",height:"100%",background:C.panel,boxShadow:"-8px 0 24px rgba(0,0,0,.25)",overflow:"auto",display:"flex",flexDirection:"column"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderBottom:`1px solid ${C.line2}`}}>

@@ -168,3 +168,8 @@ of metadata. That keeps the synced document small and quick. Attachments therefo
   toasts when the other person's change lands.
 - Conflicts (both saving in the same few seconds) resolve last-write-wins; the loser's device
   pulls the winner on its next poll. For a 2-person tool that's rarely-to-never an issue.
+- **Mixed versions are safe.** Every save is stamped with the app's `schema`. A device still
+  running older code that sees a newer stamp shows "reload" and stops saving, so it can't strip
+  fields it doesn't know. If an older, pre-guard copy does save without a field (e.g. earnings
+  `payments`), the next up-to-date device to pull puts its copy back. Tabs also notice a new
+  deploy and reload themselves when brought back to the front.
