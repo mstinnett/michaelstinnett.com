@@ -361,10 +361,13 @@ function aggregate(state,sIdx,viewYM){
 /* ─── earnings summary: what each site should pay for a month, and what it did ───
    Expected = that month's worked + scheduled shifts at the site's rates (a worked
    day's hand-entered actual wins). What was paid, and when, is typed in by hand and
-   kept in state.payments — "YYYY-MM|siteId" → {amount?, date?} — so it syncs. */
+   kept in state.payments — "YYYY-MM|siteId" → [{amount?, date?}, …] — so it syncs.
+   Usually one payment; a site that pays in parts (biweekly) gets one per deposit. */
 const CATCHUP="_catchup";                       // a catch-up month's lump sum, checked off like a site
 const payKey=(ym,sid)=>`${ym}|${sid}`;
 const PAY_KEY_RE=/^(\d{4}-\d{2})\|(.{1,80})$/;
+const MAX_PAYS=6;                               // deposits against one site-month
+const hasPay=p=>Number.isFinite(p.amount)||!!p.date;
 // "$1,234.50" → 1234.5 · "" → null · junk → NaN
 const parseMoney=v=>{const t=String(v==null?"":v).replace(/[$,\s]/g,"");if(t==="")return null;const n=+t;return Number.isFinite(n)?Math.round(n*100)/100:NaN;};
 // year's shifts → by[ym][siteId]={pay,n,worked,scheduled}, plus req[ym]={n,pay} of requested days (not counted)
@@ -379,13 +382,16 @@ function expectedFor(state,sIdx,year){
 }
 function cleanPayments(v,ids){
   const out={};
+  const one=p=>{if(!p||typeof p!=="object")return null;const r={};
+    if(Number.isFinite(p.amount))r.amount=Math.round(p.amount*100)/100;
+    if(DATE_RE.test(p.date))r.date=p.date;
+    return hasPay(r)?r:null;};
   Object.entries(v&&typeof v==="object"&&!Array.isArray(v)?v:{}).forEach(([k,p])=>{
     const m=PAY_KEY_RE.exec(k);if(!m||!p||typeof p!=="object")return;
     if(m[2]!==CATCHUP&&!ids.has(m[2]))return;
-    const r={};
-    if(Number.isFinite(p.amount))r.amount=Math.round(p.amount*100)/100;
-    if(DATE_RE.test(p.date))r.date=p.date;
-    if(r.amount!=null||r.date)out[k]=r;});
+    // one-time migration: a single {amount,date} (schema 2) becomes a one-payment list
+    const list=(Array.isArray(p)?p:[p]).map(one).filter(Boolean).slice(0,MAX_PAYS);
+    if(list.length)out[k]=list;});
   return out;
 }
 
@@ -488,7 +494,7 @@ async function remotePut(c,data){
    until it reloads. A doc missing a top-level field we keep was written by an older device
    that never knew the field, so we keep our copy and write it back. (Unstamped docs predate
    the guard and count as 1.) */
-const SCHEMA=2;
+const SCHEMA=3;                                 // 2: the guard · 3: payments became a list per site-month
 function fromRemote(raw,local){
   return {pure:sanitize(raw),merged:sanitize({...(local||{}),...raw}),newer:(Number(raw.schema)||1)>SCHEMA};
 }
@@ -1647,7 +1653,7 @@ function SitesTab({state,mutate}){
   const rmSite=sid=>{const site=state.sites.find(x=>x.id===sid);
     if(state.sites.length<=1){alert("Keep at least one site.");return;}
     const nS=state.shifts.filter(x=>x.siteId===sid).length,nW=(state.windows||[]).filter(w=>w.siteId===sid).length;
-    const ofSite=k=>k.endsWith("|"+sid),nP=Object.keys(state.payments||{}).filter(ofSite).length;
+    const ofSite=k=>k.endsWith("|"+sid),nP=Object.entries(state.payments||{}).reduce((n,[k,l])=>n+(ofSite(k)?l.length:0),0);
     if(!confirm(`Delete ${site.name}?`+((nS||nW)?` This also removes ${nS} shift(s) and ${nW} window(s) at this site.`:"")
       +(nP?` Its ${nP} recorded payment(s) go too.`:"")))return;
     mutate(s=>({...s,sites:s.sites.filter(x=>x.id!==sid),shifts:s.shifts.filter(x=>x.siteId!==sid),windows:(s.windows||[]).filter(w=>w.siteId!==sid),
@@ -1706,8 +1712,10 @@ function MoneyInput({value,onChange,style,placeholder}){
     onBlur={()=>{if(isNaN(parseMoney(s)))setS(show(value));}}/>;
 }
 const fmtDiff=d=>Math.abs(d)<1?"$0":(d>0?"+":"−")+fmt$(Math.abs(d));
-function PayRow({row,ended,onPay}){
-  const {site,rec,e}=row,catchup=row.sid===CATCHUP,paid=Number.isFinite(rec.amount),d=paid?rec.amount-row.exp:0;
+function PayRow({row,ended,onPay,onAdd,onDrop}){
+  const {site,recs,e,paid}=row,catchup=row.sid===CATCHUP,d=paid?row.paid$-row.exp:0;
+  const lines=recs.length?recs:[{}],more=hasPay(lines[lines.length-1])&&lines.length<MAX_PAYS;   // + once the last one has something in it
+  const tiny={...delBtn,fontSize:11,padding:"1px 6px",flexShrink:0};
   const st=paid?(Math.abs(d)<1?{t:"✓ matches",c:C.juniper}:{t:`✓ ${fmt$(Math.abs(d))} ${d<0?"short":"over"}`,c:C.warn})
     :ended?{t:"○ to check",c:C.warn}:{t:"○ not paid yet",c:C.mute};
   const detail=catchup?"lump sum from Earnings settings"
@@ -1727,11 +1735,18 @@ function PayRow({row,ended,onPay}){
         <div style={{fontSize:10,fontWeight:800,color:st.c,whiteSpace:"nowrap"}}>{st.t}</div>
       </div>
     </div>
-    <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",justifyContent:"flex-end",marginLeft:"auto"}}>
-      <span style={{fontSize:10.5,color:C.gray}}>paid $</span>
-      <MoneyInput value={rec.amount} onChange={v=>onPay({amount:v})} placeholder="—" style={{...inp,width:92,padding:"4px 6px",fontSize:12}}/>
-      <span style={{fontSize:10.5,color:C.gray}}>on</span>
-      <input type="date" value={rec.date||""} onChange={ev=>onPay({date:ev.target.value})} style={{...inp,width:"auto",padding:"3px 5px",fontSize:11}}/>
+    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,marginLeft:"auto",maxWidth:"100%",minWidth:0}}>
+      {/* one line per payment, never wrapped: on a narrow phone the date field gives way instead */}
+      {lines.map((rec,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:4,justifyContent:"flex-end",maxWidth:"100%"}}>
+        <span style={{fontSize:10.5,color:C.gray,whiteSpace:"nowrap"}}>{i?"then $":"paid $"}</span>
+        <MoneyInput value={rec.amount} onChange={v=>onPay(i,{amount:v})} placeholder="—" style={{...inp,width:84,flexShrink:0,padding:"4px 6px",fontSize:12}}/>
+        <span style={{fontSize:10.5,color:C.gray}}>on</span>
+        <input type="date" value={rec.date||""} onChange={ev=>onPay(i,{date:ev.target.value})} style={{...inp,width:"auto",minWidth:0,flex:"0 1 auto",padding:"3px 5px",fontSize:11}}/>
+        {lines.length>1&&<button onClick={()=>onDrop(i)} title="remove this payment" style={tiny}>✕</button>}
+        {/* the + keeps its slot on every line, so fields line up across rows whether or not it shows */}
+        <button onClick={onAdd} title="add another payment for this month (biweekly, in parts)"
+          style={{...tiny,fontWeight:800,visibility:i===lines.length-1&&more?"visible":"hidden"}}>+</button>
+      </div>)}
     </div>
   </div>;
 }
@@ -1739,25 +1754,33 @@ function EarningsSummary({state,sIdx,mutate}){
   const [year,setYear]=useState(YEAR);
   const {by,req}=useMemo(()=>expectedFor(state,sIdx,year),[state.shifts,sIdx,year]);
   const pays=state.payments||{},nowYM=TODAY_S.slice(0,7);
-  const setPay=(ym,sid,patch)=>mutate(s=>{
-    const all={...(s.payments||{})},k=payKey(ym,sid),cur={...(all[k]||{}),...patch};
+  // edit one site-month's list of payments. A line cleared mid-edit stays put (sanitize drops blanks on the
+  // next load); the record goes only once every line is empty.
+  const editPays=(ym,sid,fn)=>mutate(s=>{
+    const all={...(s.payments||{})},k=payKey(ym,sid),list=fn([...(all[k]||[])]);
+    if(list.some(hasPay))all[k]=list;else delete all[k];
+    return {...s,payments:all};});
+  const setPay=(ym,sid,i,patch)=>editPays(ym,sid,list=>{
+    const cur={...(list[i]||{}),...patch};
     if(!Number.isFinite(cur.amount))delete cur.amount;
     if(!DATE_RE.test(cur.date||""))delete cur.date;
-    if(cur.amount==null&&!cur.date)delete all[k];else all[k]=cur;
-    return {...s,payments:all};});
+    list[i]=cur;return list;});
+  const addPay=(ym,sid)=>editPays(ym,sid,list=>list.length<MAX_PAYS?[...list,{}]:list);
+  const dropPay=(ym,sid,i)=>editPays(ym,sid,list=>list.filter((_,j)=>j!==i));
   // a catch-up month is one lump sum; otherwise one row per site that has shifts — or a payment recorded against it
   const months=MONL.map((name,i)=>{
     const ym=`${year}-${String(i+1).padStart(2,"0")}`,ov=(state.monthOverrides||{})[ym],lump=Number.isFinite(ov);
     const exp=lump?{}:(by[ym]||{}),rows=[];
     if(lump)rows.push({sid:CATCHUP,exp:ov});
     state.sites.forEach(site=>{const e=exp[site.id];if(e||pays[payKey(ym,site.id)])rows.push({sid:site.id,site,e,exp:e?e.pay:0});});
-    rows.forEach(r=>{r.rec=pays[payKey(ym,r.sid)]||{};r.paid=Number.isFinite(r.rec.amount);});
-    const tot=rows.reduce((t,r)=>({exp:t.exp+r.exp,paid:t.paid+(r.paid?r.rec.amount:0),n:t.n+(r.paid?1:0)}),{exp:0,paid:0,n:0});
+    rows.forEach(r=>{r.recs=pays[payKey(ym,r.sid)]||[];const amts=r.recs.filter(p=>Number.isFinite(p.amount));
+      r.paid=amts.length>0;r.paid$=amts.reduce((t,p)=>t+p.amount,0);});
+    const tot=rows.reduce((t,r)=>({exp:t.exp+r.exp,paid:t.paid+r.paid$,n:t.n+(r.paid?1:0)}),{exp:0,paid:0,n:0});
     return {ym,name,rows,tot,ended:ym<nowYM,current:ym===nowYM,req:lump?null:req[ym]};
   });
   const Y={exp:0,paid:0,diff:0,rows:0,checked:0,due:0,due$:0};
   months.forEach(m=>m.rows.forEach(r=>{Y.exp+=r.exp;Y.rows++;
-    if(r.paid){Y.paid+=r.rec.amount;Y.checked++;Y.diff+=r.rec.amount-r.exp;}
+    if(r.paid){Y.paid+=r.paid$;Y.checked++;Y.diff+=r.paid$-r.exp;}
     else if(m.ended){Y.due++;Y.due$+=r.exp;}}));
   return <div style={{padding:"16px 16px 60px",maxWidth:760}}>
     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
@@ -1775,7 +1798,8 @@ function EarningsSummary({state,sIdx,mutate}){
     <div style={{fontSize:11,color:C.gray,lineHeight:1.55,marginBottom:12}}>
       <b>Expected</b> is each site's worked and scheduled shifts that month, at its rates — or the actual pay entered on a
       worked day. Requested and marked days don't count until they're on the schedule. When a payment comes in, type
-      what was paid and the date: the row checks off, and it's saved with the plan, so it syncs to both of you.
+      what was paid and the date: the row checks off, and it's saved with the plan, so it syncs to both of you. A site
+      that pays a month in parts (biweekly): tap <b>+</b> beside the first payment to add the next.
     </div>
     {months.map(m=><div key={m.ym} style={{border:`1px solid ${m.current?C.faint:C.line2}`,borderRadius:8,background:C.panel,marginBottom:8,overflow:"hidden"}}>
       <div style={{display:"flex",alignItems:"baseline",gap:"2px 8px",padding:"8px 11px",flexWrap:"wrap"}}>
@@ -1786,7 +1810,8 @@ function EarningsSummary({state,sIdx,mutate}){
             ? <>expected <b style={{color:C.ink}}>{fmt$(m.tot.exp)}</b>{m.tot.n?<> · paid <b style={{color:C.juniper}}>{fmt$(m.tot.paid)}</b></>:null} · {m.tot.n}/{m.rows.length} checked</>
             : <span style={{color:C.mute}}>no shifts</span>}</span>
       </div>
-      {m.rows.map(r=><PayRow key={r.sid} row={r} ended={m.ended} onPay={patch=>setPay(m.ym,r.sid,patch)}/>)}
+      {m.rows.map(r=><PayRow key={r.sid} row={r} ended={m.ended} onPay={(i,patch)=>setPay(m.ym,r.sid,i,patch)}
+        onAdd={()=>addPay(m.ym,r.sid)} onDrop={i=>dropPay(m.ym,r.sid,i)}/>)}
       {m.req&&<div style={{fontSize:10,color:C.mute,padding:"5px 11px 7px",borderTop:`1px solid ${C.line2}`}}>
         + {m.req.n} requested ({fmt$(m.req.pay)}) — not counted until {m.req.n===1?"it's":"they're"} scheduled</div>}
     </div>)}
