@@ -76,8 +76,28 @@ function readDoc(id) {
     return { rev: 0, updatedAt: null, data: null };
   }
 }
-function writeDoc(id, data) {
+/* ── version guard ───────────────────────────────────────────────────────────
+ * The app stamps each save with `schema`, the shape of plan its code knows.
+ * Devices don't all reload when a new version ships, and the app drops fields
+ * it doesn't recognise, so a stale tab's save would erase newer data.
+ *   stamped lower than what's stored → refused (409); the app asks for a reload
+ *   unstamped (a tab older than the guard, which can't be asked) → taken, but
+ *     any top-level field it left out is kept from the stored doc, stamp and all
+ * Returns the data to store, or null to refuse.
+ */
+const schemaOf = (data) => Number(data && data.schema) || 0;    // 0 = unstamped
+function guardWrite(prev, data) {
+  const had = prev.data;
+  if (!had || typeof had !== "object" || !data || typeof data !== "object") return data;
+  const was = schemaOf(had), now = schemaOf(data);
+  if (now && now < was) return null;
+  if (!now && was) return { ...had, ...data };
+  return data;
+}
+function writeDoc(id, incoming) {
   const prev = readDoc(id);
+  const data = guardWrite(prev, incoming);
+  if (data === null) return { refused: true, schema: schemaOf(prev.data) };
   const doc = { rev: (prev.rev || 0) + 1, updatedAt: new Date().toISOString(), data };
   const tmp = fileFor(id) + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(doc));
@@ -257,6 +277,7 @@ const server = http.createServer((req, res) => {
         try {
           const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           const d = writeDoc(id, body.data);
+          if (d.refused) return send(res, 409, { error: "stale app — reload", schema: d.schema });
           send(res, 200, { rev: d.rev, updatedAt: d.updatedAt });
         } catch (e) { send(res, 400, { error: "bad body" }); }
       });

@@ -170,6 +170,10 @@ of metadata. That keeps the synced document small and quick. Attachments therefo
   pulls the winner on its next poll. For a 2-person tool that's rarely-to-never an issue.
 - **Mixed versions are safe.** Every save is stamped with the app's `schema`. A device still
   running older code that sees a newer stamp shows "reload" and stops saving, so it can't strip
-  fields it doesn't know. If an older, pre-guard copy does save without a field (e.g. earnings
-  `payments`), the next up-to-date device to pull puts its copy back. Tabs also notice a new
-  deploy and reload themselves when brought back to the front.
+  fields it doesn't know. The service enforces the same rule: a save stamped lower than what's
+  stored gets `409`, and a save with no stamp (a tab older than the guard) is taken but keeps any
+  top-level field it left out (e.g. earnings `payments`). Tabs also notice a new deploy and
+  reload themselves when brought back to the front.
+- **Updating the service:** replace `server.js` next to the Dockerfile and run
+  `docker compose up -d --build` — the image copies the file in at build time, so a file copied
+  into a running container is lost when it's recreated. `./data` is a volume and survives.
