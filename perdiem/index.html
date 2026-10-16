@@ -80,6 +80,8 @@ const YEAR=TODAY.getFullYear();
 const ds=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const pd=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
 const ad=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r;};
+const dayBefore=s=>ds(ad(pd(s),-1));
+const fmtLongDay=s=>{const d=pd(s);return `${MON[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;};
 const mk=s=>s.slice(0,7);                         // month key YYYY-MM
 const fmt$=v=>"$"+Math.round(v).toLocaleString();
 const fmtK=v=>"$"+(Math.round(v/100)/10).toLocaleString()+"k";
@@ -189,7 +191,25 @@ function shiftInterval(site,type){            // [startHour, endHour] within the
   const e=resolveEntry(site,type),start=parseHM(entryStartStr(e));
   return [start,start+entryHours(e)];
 }
-function shiftPay(site,type){const e=resolveEntry(site,type);return (+e.rate||0)*entryHours(e);}
+/* a site's rates can change on a date (usually Jan 1): site.rateChanges = [{id, from, rates:{slot → $/hr}}].
+   A shift is priced at the rate in effect on the day it starts: the latest change on or before that date
+   that sets its slot, else the slot's own starting rate. A change mid-shift doesn't split the shift. */
+function rateOn(site,e,date){
+  let r=+e.rate||0,at="";
+  if(date)((site&&site.rateChanges)||[]).forEach(c=>{const v=c.rates&&c.rates[e.shift];
+    if(c.from<=date&&c.from>=at&&Number.isFinite(v)){r=v;at=c.from;}});     // ties: the later one listed wins
+  return r;
+}
+function cleanRateChanges(v,menu){
+  const slots=new Set((menu||[]).map(m=>m.shift)),by={};
+  (Array.isArray(v)?v:[]).forEach(c=>{if(!c||!DATE_RE.test(c.from))return;
+    const rates={};
+    Object.entries(c.rates&&typeof c.rates==="object"?c.rates:{}).forEach(([k,r])=>{if(slots.has(k)&&Number.isFinite(r)&&r>=0)rates[k]=r;});
+    const prev=by[c.from];                                                   // one change per date
+    by[c.from]={id:String((prev&&prev.id)||c.id||("r"+Math.random().toString(36).slice(2))),from:c.from,rates:{...(prev?prev.rates:{}),...rates}};});
+  return Object.values(by).sort((a,b)=>a.from<b.from?-1:a.from>b.from?1:0).slice(-24);
+}
+function shiftPay(site,type,date){const e=resolveEntry(site,type);return rateOn(site,e,date)*entryHours(e);}
 /* a single shift may carry its own start/hours — that's how a feed-imported shift
    keeps the exact times the schedule published, while still billing at the site's rate */
 function entryFor(site,sh){
@@ -200,7 +220,7 @@ function entryFor(site,sh){
   return over?o:base;
 }
 const shiftIntervalOf=(site,sh)=>{const e=entryFor(site,sh),st=parseHM(entryStartStr(e));return [st,st+entryHours(e)];};
-const shiftPayOf=(site,sh)=>{const e=entryFor(site,sh);return (+e.rate||0)*entryHours(e);};
+const shiftPayOf=(site,sh)=>{const e=entryFor(site,sh);return rateOn(site,e,sh&&sh.date)*entryHours(e);};
 const shiftCatOf=(site,sh)=>entryNight(entryFor(site,sh))?"night":"day";
 const shiftLabelOf=(site,sh)=>entryLabel(entryFor(site,sh));
 
@@ -296,7 +316,7 @@ function windowBand(w,state,sIdx){
   const lo=perDay.slice(0,X).reduce((a,b)=>a+b,0),hi=perDay.slice(Y-X).reduce((a,b)=>a+b,0);
   const b=windowBrackets(w,sIdx);let travel=0;[...b.before,...b.after].forEach(dt=>{travel+=dayAwakeHours(dt,state);});
   const r=x=>Math.round(x*10)/10;
-  return {Y,X,min:r(lo+travel),max:r(hi+travel),travel:r(travel),money:X*(site?shiftPay(site,w.type):0)};
+  return {Y,X,min:r(lo+travel),max:r(hi+travel),travel:r(travel),money:X*(site?shiftPay(site,w.type,w.from):0)};
 }
 // materialize a window into X scheduled shifts on its X lowest-impact days
 function scheduleWindow(state,sIdx,w){
@@ -409,6 +429,9 @@ function sanitize(o){
   sites=sites.map(s=>s.name==="Boston ED"
     ?{...s,name:"BMC South",menu:[{shift:"d7",rate:245},{shift:"d6",rate:245},{shift:"d10",rate:245},{shift:"d11",rate:245},{shift:"n22",rate:290},{shift:"n23",rate:290}]}
     :s);
+  // dated rate changes: valid dates, numeric rates for slots the site still has
+  sites=sites.map(s=>{if(!("rateChanges" in s))return s;const {rateChanges,...rest}=s,rc=cleanRateChanges(rateChanges,s.menu);
+    return rc.length?{...rest,rateChanges:rc}:rest;});
   // one-time travel migration: remote sites get a return travel day (afterDays ≥ 1); runs once
   if(o.travelMigrated!==true)sites=sites.map(s=>{
     if(s.reach==="local")return s;const tv=s.travel||TRAVEL_DEFAULT[s.reach]||{};
@@ -494,7 +517,7 @@ async function remotePut(c,data){
    until it reloads. A doc missing a top-level field we keep was written by an older device
    that never knew the field, so we keep our copy and write it back. (Unstamped docs predate
    the guard and count as 1.) */
-const SCHEMA=3;                                 // 2: the guard · 3: payments became a list per site-month
+const SCHEMA=4;                                 // 2: the guard · 3: payments became a list per site-month · 4: dated site rates
 function fromRemote(raw,local){
   return {pure:sanitize(raw),merged:sanitize({...(local||{}),...raw}),newer:(Number(raw.schema)||1)>SCHEMA};
 }
@@ -1650,6 +1673,16 @@ function SitesTab({state,mutate}){
   const setSiteF=(sid,patch)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,...patch})}));
   const setReach=(sid,reach)=>mutate(s=>({...s,sites:s.sites.map(x=>x.id!==sid?x:{...x,reach,travel:TRAVEL_DEFAULT[reach]||TRAVEL_DEFAULT.local})}));   // reset travel to the reach default
   const addSite=()=>mutate(s=>({...s,sites:[...s.sites,{id:"site"+Date.now(),name:"New site",reach:"local",menu:[{shift:"d7",rate:200}],travel:TRAVEL_DEFAULT.local}]}));
+  // dated rate changes. A new one defaults to the next Jan 1 after today and after any change already set,
+  // and starts from the rates in effect then, so only the slots that moved need editing.
+  const editChanges=(sid,fn)=>mutate(s=>({...s,sites:s.sites.map(x=>{if(x.id!==sid)return x;
+    const rc=fn(x.rateChanges||[],x);if(rc.length)return {...x,rateChanges:rc};const {rateChanges,...rest}=x;return rest;})}));
+  const addChange=sid=>editChanges(sid,(rc,x)=>{
+    const y=Math.max(YEAR,...rc.map(c=>+c.from.slice(0,4)))+1,from=`${y}-01-01`;
+    return [...rc,{id:"r"+Date.now().toString(36),from,rates:Object.fromEntries(x.menu.map(m=>[m.shift,rateOn(x,m,from)]))}];});
+  const setChangeFrom=(sid,id,from)=>{if(DATE_RE.test(from))editChanges(sid,rc=>rc.map(c=>c.id===id?{...c,from}:c));};   // a cleared date snaps back
+  const setChangeRate=(sid,id,slot,v)=>editChanges(sid,rc=>rc.map(c=>c.id===id?{...c,rates:{...c.rates,[slot]:v}}:c));
+  const rmChange=(sid,id)=>editChanges(sid,rc=>rc.filter(c=>c.id!==id));
   const rmSite=sid=>{const site=state.sites.find(x=>x.id===sid);
     if(state.sites.length<=1){alert("Keep at least one site.");return;}
     const nS=state.shifts.filter(x=>x.siteId===sid).length,nW=(state.windows||[]).filter(w=>w.siteId===sid).length;
@@ -1659,7 +1692,7 @@ function SitesTab({state,mutate}){
     mutate(s=>({...s,sites:s.sites.filter(x=>x.id!==sid),shifts:s.shifts.filter(x=>x.siteId!==sid),windows:(s.windows||[]).filter(w=>w.siteId!==sid),
       payments:Object.fromEntries(Object.entries(s.payments||{}).filter(([k])=>!ofSite(k)))}));};
   return <div style={{padding:"16px 16px 60px",overflow:"auto",maxWidth:760}}>
-    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>Each site's <b>menu</b> is the specific shifts it offers — pick from these on a day. Edit name, reach, rates, travel; add or remove shifts and sites.</div>
+    <div style={{fontSize:11,color:C.gray,marginBottom:12}}>Each site's <b>menu</b> is the specific shifts it offers — pick from these on a day. Edit name, reach, rates, travel; add or remove shifts and sites. When a site's rates change (usually Jan 1), add <b>new rates from a date</b>: every shift that starts on or after it is paid the new rate.</div>
     {state.sites.map(s=>{
       return <div key={s.id} style={{padding:"12px 0",borderBottom:`1px solid ${C.line2}`}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
@@ -1686,7 +1719,28 @@ function SitesTab({state,mutate}){
           {s.menu.length>1&&<button onClick={()=>rmShift(s.id,m.shift)} title="remove shift"
             style={{fontFamily:MONO,fontSize:12,border:`1px solid ${C.line}`,background:C.panel,color:C.gray,borderRadius:5,cursor:"pointer",padding:"2px 7px"}}>✕</button>}
         </div>;})}</div>
-      <button onClick={()=>addShift(s.id)} style={{...addBtn,marginTop:8}}>+ shift</button>
+      <div style={{display:"flex",alignItems:"center",gap:"4px 10px",flexWrap:"wrap",marginTop:8}}>
+        <button onClick={()=>addShift(s.id)} style={addBtn}>+ shift</button>
+        {(s.rateChanges||[]).length>0&&<span style={{fontSize:10,color:C.mute}}>
+          these rates apply until {fmtLongDay(dayBefore(s.rateChanges.reduce((m,c)=>c.from<m?c.from:m,s.rateChanges[0].from)))}</span>}
+      </div>
+      {(s.rateChanges||[]).map(c=><div key={c.id} style={{marginTop:10,padding:"8px 10px",border:`1px solid ${C.line2}`,borderRadius:6}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute}}>New rates from</span>
+          <input type="date" value={c.from} onChange={e=>setChangeFrom(s.id,c.id,e.target.value)} style={{...inp,width:"auto",padding:"3px 6px",fontSize:11.5}}/>
+          <button onClick={()=>rmChange(s.id,c.id)} title="remove this rate change" style={{...delBtn,marginLeft:"auto"}}>✕</button>
+        </div>
+        {s.menu.map(m=>{const hrs=entryHours(m),night=entryNight(m),was=rateOn(s,m,dayBefore(c.from)),
+          cur=Number.isFinite(c.rates[m.shift])?c.rates[m.shift]:was;
+          return <div key={m.shift} style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,flexWrap:"wrap",marginTop:6}}>
+            <span style={{minWidth:84}}>{entryLabel(m)}</span>
+            <span style={{fontSize:9.5,fontWeight:800,color:siteShiftCol(s,night?"night":"day"),minWidth:38}}>{night?"NIGHT":"DAY"}</span>
+            <span style={{color:C.gray}}>$/hr</span>
+            <NumInput value={cur} min="0" onChange={v=>setChangeRate(s.id,c.id,m.shift,v)} style={{...inp,width:70,padding:"3px 6px"}}/>
+            <span style={{color:C.mute}}>= {fmt$(cur*hrs)}{cur!==was?` · was $${was}/hr`:""}</span>
+          </div>;})}
+      </div>)}
+      <button onClick={()=>addChange(s.id)} style={{...addBtn,marginTop:8}}>+ new rates from a date</button>
       {s.reach!=="local"&&(()=>{const tv=s.travel||TRAVEL_DEFAULT[s.reach]||TRAVEL_DEFAULT.local;
         return <div style={{marginTop:10,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
           <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>Travel</span>
