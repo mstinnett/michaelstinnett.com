@@ -163,7 +163,7 @@ function seedState(){
   // a held window at a travel site: hold 7 days (incl. a weekend), work 2; a travel day bookends it
   const windows=[{id:"w1",siteId:"santa_fe",type:"day",from:"2026-10-17",to:"2026-10-23",x:2}];
   const aways=[{id:"a1",date:"2026-09-28",kind:"travel"},{id:"a2",date:"2026-07-13",kind:"away"}];   // manually-placed demo days
-  return {sites,trips,calendars,shifts,monthOverrides,settings,windows,aways,payments:{},
+  return {sites,trips,calendars,shifts,monthOverrides,settings,windows,aways,payments:{},parked:[],
     feeds:[],surprises:[],feedIgnore:[],travelMigrated:true,phaseMigrated:true};
 }
 
@@ -382,11 +382,14 @@ function aggregate(state,sIdx,viewYM){
    Expected = that month's worked + scheduled shifts at the site's rates (a worked
    day's hand-entered actual wins). What was paid, and when, is typed in by hand and
    kept in state.payments — "YYYY-MM|siteId" → [{amount?, date?}, …] — so it syncs.
-   Usually one payment; a site that pays in parts (biweekly) gets one per deposit. */
+   Usually one payment; a site that pays in parts (biweekly) gets one per deposit.
+   A payment recorded on the Earnings match page also says who paid it and which of
+   that site-month's shifts it covers: {…, from?, shifts?:[date…], m?} (m ties together
+   the parts of one deposit that spans two months). */
 const CATCHUP="_catchup";                       // a catch-up month's lump sum, checked off like a site
 const payKey=(ym,sid)=>`${ym}|${sid}`;
 const PAY_KEY_RE=/^(\d{4}-\d{2})\|(.{1,80})$/;
-const MAX_PAYS=6;                               // deposits against one site-month
+const MAX_PAYS=8;                               // deposits against one site-month
 const hasPay=p=>Number.isFinite(p.amount)||!!p.date;
 // "$1,234.50" → 1234.5 · "" → null · junk → NaN
 const parseMoney=v=>{const t=String(v==null?"":v).replace(/[$,\s]/g,"");if(t==="")return null;const n=+t;return Number.isFinite(n)?Math.round(n*100)/100:NaN;};
@@ -400,18 +403,180 @@ function expectedFor(state,sIdx,year){
     e.pay+=payOf(sh,sIdx);e.n++;e[b]++;});
   return {by,req};
 }
+const MATCH_ID_RE=/^[a-z0-9]{1,16}$/;
+const cleanFrom=v=>typeof v==="string"?v.replace(/\s+/g," ").trim().slice(0,40):"";
 function cleanPayments(v,ids){
   const out={};
-  const one=p=>{if(!p||typeof p!=="object")return null;const r={};
+  const one=(p,ym)=>{if(!p||typeof p!=="object")return null;const r={};
     if(Number.isFinite(p.amount))r.amount=Math.round(p.amount*100)/100;
     if(DATE_RE.test(p.date))r.date=p.date;
-    return hasPay(r)?r:null;};
+    if(!hasPay(r))return null;
+    const from=cleanFrom(p.from);if(from)r.from=from;
+    if(Array.isArray(p.shifts)){const sh=[...new Set(p.shifts.filter(d=>DATE_RE.test(d)&&mk(d)===ym))].sort().slice(0,31);
+      if(sh.length)r.shifts=sh;}
+    if(MATCH_ID_RE.test(p.m))r.m=p.m;
+    return r;};
   Object.entries(v&&typeof v==="object"&&!Array.isArray(v)?v:{}).forEach(([k,p])=>{
     const m=PAY_KEY_RE.exec(k);if(!m||!p||typeof p!=="object")return;
     if(m[2]!==CATCHUP&&!ids.has(m[2]))return;
     // one-time migration: a single {amount,date} (schema 2) becomes a one-payment list
-    const list=(Array.isArray(p)?p:[p]).map(one).filter(Boolean).slice(0,MAX_PAYS);
+    const list=(Array.isArray(p)?p:[p]).map(x=>one(x,m[1])).filter(Boolean).slice(0,MAX_PAYS);
     if(list.length)out[k]=list;});
+  return out;
+}
+// deposits saved on the Earnings match page to figure out later: [{id, amount, date, from?}]
+function cleanParked(v){
+  return (Array.isArray(v)?v:[]).filter(p=>p&&Number.isFinite(p.amount)&&p.amount>0&&DATE_RE.test(p.date))
+    .map(p=>{const r={id:MATCH_ID_RE.test(p.id)?p.id:"k"+Math.random().toString(36).slice(2,10),
+      amount:Math.round(p.amount*100)/100,date:p.date},from=cleanFrom(p.from);if(from)r.from=from;return r;}).slice(-50);
+}
+
+/* ─── earnings match: which worked shifts has money already covered, and what could a new deposit be? ───
+   Per site-month, a payment that lists its shifts covers exactly those. Any money beyond them, plus
+   every payment typed on the Earnings summary (which lists none), covers the month's other worked
+   shifts oldest-first; a shift that money only partly reaches is still owed the rest. Whatever is
+   left over is "over"; listed shifts paid less than they should be leave the month "short". It's the
+   same sum the Earnings summary row does, so the two pages always agree. */
+const daysBetween=(a,b)=>Math.round((pd(b)-pd(a))/864e5);
+const MATCH_WINDOW=120;                         // "still unpaid" looks back this far: 90 days + time to get paid
+const USUAL_LAG=35;                             // days to get paid, until a site has payments to learn from
+// a payer's bank text → a short key: "ORIG CO NAME:VITUITY PAYROL… DIR DEP PPD" → "VITUITY"
+const PAYER_NOISE=new Set(("PAYROLL PAYROL PAYRL DIR DEP DIRECT DEPOSIT ACH CREDIT CR PPD CCD ID ORIG CO NAME ENTRY DESCR DESC "+
+  "SEC TRACE INDN IND WEB ONLINE TRANSFER XFER FROM PAYMENT PMT INC LLC LTD CORP PC PLLC PA THE OF AND CASH").split(" "));
+const payerKey=s=>String(s||"").toUpperCase().replace(/[^A-Z ]+/g," ").split(/\s+/).filter(w=>w.length>1&&!PAYER_NOISE.has(w)).slice(0,2).join(" ");
+function payCoverage(state,sIdx){
+  const pays=state.payments||{},cells={};
+  const cell=(ym,sid)=>{const k=payKey(ym,sid);return cells[k]||(cells[k]={key:k,ym,sid,shifts:[],recs:pays[k]||[]});};
+  state.shifts.forEach(sh=>{if(bucketOf(sh)==="worked"&&sIdx[sh.siteId])cell(mk(sh.date),sh.siteId).shifts.push(sh);});
+  Object.keys(pays).forEach(k=>{const m=PAY_KEY_RE.exec(k);if(m&&sIdx[m[2]])cell(m[1],m[2]);});
+  const rows=[],lagBy={},payers={};
+  Object.values(cells).forEach(c=>{
+    c.shifts.sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+    const listed=new Set();c.recs.forEach(r=>(r.shifts||[]).forEach(d=>listed.add(d)));
+    c.paid=c.recs.reduce((t,r)=>t+(Number.isFinite(r.amount)?r.amount:0),0);c.exp=0;
+    let pool=c.paid;
+    c.rows=c.shifts.map(sh=>{const pay=payOf(sh,sIdx);c.exp+=pay;return {sh,site:c.sid,date:sh.date,pay,owed:pay,listed:listed.has(sh.date)};});
+    c.rows.forEach(r=>{if(r.listed){pool-=r.pay;r.owed=0;}});
+    c.rows.forEach(r=>{if(r.listed)return;
+      if(pool>=r.pay-1){pool-=r.pay;r.owed=0;}
+      else if(pool>1){r.owed=Math.round((r.pay-pool)*100)/100;r.part=true;pool=0;}});
+    c.diff=Math.round(pool*100)/100;            // + paid beyond every worked shift · − listed shifts paid short
+    rows.push(...c.rows);
+    // how long this site takes to pay, and who pays it
+    const lastShift=c.shifts.length?c.shifts[c.shifts.length-1].date:null;
+    c.recs.forEach(r=>{
+      const ls=(r.shifts&&r.shifts.length)?r.shifts[r.shifts.length-1]:lastShift;
+      if(r.date&&ls){const lag=daysBetween(ls,r.date);if(lag>=0&&lag<=150)(lagBy[c.sid]||(lagBy[c.sid]=[])).push(lag);}
+      const key=payerKey(r.from);if(!key)return;
+      const p=payers[key]||(payers[key]={key,label:r.from,sites:new Set(),last:""});
+      p.sites.add(c.sid);if((r.date||"")>=p.last){p.last=r.date||p.last;p.label=r.from;}});
+  });
+  const lag={};Object.entries(lagBy).forEach(([sid,l])=>{l.sort((a,b)=>a-b);lag[sid]=l[Math.floor((l.length-1)/2)];});
+  return {cells:Object.values(cells),rows,lag,payers};
+}
+/* What could this deposit pay? Pay covers a stretch of dates, so look for runs of consecutive
+   unpaid worked shifts at one site (within 45 days) that add up to it: exact (±$1) first, then
+   within 5%. Ties go to the site this payer has paid before, then the run that ends about as long
+   before the deposit as that site usually takes, then the oldest. If no run fits, say what the
+   amount equals in a site's shift prices — a hint that shifts are missing from the calendar. */
+function matchDeposit(amount,date,from,cov,state){
+  const key=payerKey(from),known=key?cov.payers[key]||null:null,bySite={};
+  cov.rows.forEach(r=>{if(r.owed>0.5&&r.date<date&&daysBetween(r.date,date)<=400)(bySite[r.site]||(bySite[r.site]=[])).push(r);});
+  const runs=[];
+  Object.entries(bySite).forEach(([sid,list])=>{list.sort((a,b)=>a.date<b.date?-1:1);
+    for(let i=0;i<list.length;i++){let sum=0;
+      for(let j=i;j<list.length&&j-i<31;j++){
+        if(daysBetween(list[i].date,list[j].date)>45)break;
+        sum+=list[j].owed;const diff=Math.round((amount-sum)*100)/100;   // + deposit is more than the shifts
+        const kind=Math.abs(diff)<=1?"exact":Math.abs(diff)<=amount*0.05?"close":null;
+        if(kind)runs.push({kind,site:sid,rows:list.slice(i,j+1),sum,diff,lag:daysBetween(list[j].date,date)});
+        if(sum>amount*1.05+1)break;}}});
+  runs.forEach(c=>{const u=Number.isFinite(cov.lag[c.site])?cov.lag[c.site]:USUAL_LAG;
+    c.score=(c.kind==="exact"?0:100)+(known?(known.sites.has(c.site)?0:50):0)
+      +Math.min(5,Math.abs(c.lag-u)/Math.max(7,u))*10+(c.kind==="close"?Math.abs(c.diff)/amount*400:0)
+      -daysBetween(c.rows[0].date,date)*1e-4;});
+  runs.sort((a,b)=>a.score-b.score);
+  const picks=[],overlap=(a,b)=>a.site===b.site&&a.rows.some(r=>b.rows.includes(r));
+  runs.forEach(c=>{if(picks.length<3&&!picks.some(p=>overlap(p,c)))picks.push(c);});
+  const shapes=[];
+  if(!picks.length){
+    const at=ds(ad(pd(date),-30));
+    (known?state.sites.filter(s=>known.sites.has(s.id)):state.sites).forEach(site=>{
+      const prices=[];site.menu.forEach(e=>{const p=Math.round(rateOn(site,e,at)*entryHours(e)*100)/100;if(p>0&&!prices.some(x=>Math.abs(x-p)<0.5))prices.push(p);});
+      prices.forEach((a,i)=>{
+        for(let n=1;n<=15;n++)if(Math.abs(n*a-amount)<=1)shapes.push({site,parts:[[n,a]]});
+        prices.slice(i+1).forEach(b=>{for(let n=1;n<15;n++)for(let k=1;n+k<=15;k++)if(Math.abs(n*a+k*b-amount)<=1)shapes.push({site,parts:[[n,a],[k,b]]});});});});
+  }
+  return {picks,shapes:shapes.slice(0,4),known};
+}
+// record a deposit against chosen shifts: one payment per site-month they fall in (split by what each
+// month's shifts are owed), all sharing one id so the match page can show and undo it as one deposit
+function recordMatch(s,{amount,date,from},sid,rows,m){
+  const groups={};rows.forEach(r=>{(groups[mk(r.date)]||(groups[mk(r.date)]=[])).push(r);});
+  const yms=Object.keys(groups).sort(),tot=rows.reduce((t,r)=>t+r.owed,0)||1,all={...(s.payments||{})};
+  let left=amount;
+  yms.forEach((ym,i)=>{const g=groups[ym],owed=g.reduce((t,r)=>t+r.owed,0);
+    const part=i===yms.length-1?Math.round(left*100)/100:Math.round(amount*owed/tot*100)/100;left-=part;
+    const k=payKey(ym,sid),rec={amount:part,date,shifts:g.map(r=>r.date).sort(),m};if(from)rec.from=from;
+    all[k]=[...(all[k]||[]).filter(hasPay),rec];});
+  return {...s,payments:all};
+}
+function removeMatch(s,m){
+  const all={};Object.entries(s.payments||{}).forEach(([k,l])=>{const keep=l.filter(r=>r.m!==m);if(keep.length)all[k]=keep;});
+  return {...s,payments:all};
+}
+// pasted text → {amount, date, from}: "+$8,200.00", "8,200.00 USD", or a whole copied line
+const mkDate=(y,m,d)=>{if(!(m>=1&&m<=12&&d>=1&&d<=31))return null;if(y<100)y+=2000;const t=new Date(y,m-1,d);return t.getMonth()===m-1?ds(t):null;};
+const noYear=(m,d)=>{const s=mkDate(YEAR,m,d);return s&&s>TODAY_S?mkDate(YEAR-1,m,d):s;};
+function parsePasted(text){
+  let t=String(text||"").replace(/−/g,"-").slice(0,400),x;const out={};
+  const MON_RX=/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/i;
+  if((x=/\b(\d{4})-(\d{2})-(\d{2})\b/.exec(t)))out.date=mkDate(+x[1],+x[2],+x[3]);
+  else if((x=/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/.exec(t)))out.date=x[3]?mkDate(+x[3],+x[1],+x[2]):noYear(+x[1],+x[2]);
+  else if((x=MON_RX.exec(t))){const m=MON.findIndex(n=>n.toLowerCase()===x[1].toLowerCase())+1;out.date=x[3]?mkDate(+x[3],m,+x[2]):noYear(m,+x[2]);}
+  else if(/\byesterday\b/i.test(t))out.date=ds(ad(TODAY,-1));
+  else if(/\btoday\b/i.test(t))out.date=TODAY_S;
+  if(x&&out.date)t=t.replace(x[0]," ");
+  if(!out.date)delete out.date;
+  const nums=[...t.matchAll(/(\$?)\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?/g)]
+    .map(n=>({s:n[0],dollar:!!n[1],fmt:!!n[3]||n[2].includes(","),v:parseFloat(n[2].replace(/,/g,"")+(n[3]||""))}));
+  const best=nums.find(n=>n.dollar)||nums.find(n=>n.fmt)||nums.filter(n=>n.v>=10).sort((a,b)=>b.v-a.v)[0];
+  if(best&&best.v>0){out.amount=Math.round(best.v*100)/100;t=t.replace(best.s," ");}
+  const name=t.replace(/\b(USD|pending|posted|paychecks?|income|direct|deposits?|today|yesterday)\b/gi," ").replace(/[^A-Za-z0-9&'.\- ]+/g," ").replace(/\s+/g," ").trim();
+  if(/[A-Za-z]{3}/.test(name))out.from=cleanFrom(name);
+  return out;
+}
+// a bank CSV (Monarch "Download transactions", Fidelity account history) → money-in rows
+function parseCSV(text){
+  const rows=[];let row=[],f="",q=false;
+  for(let i=0;i<text.length;i++){const ch=text[i];
+    if(q){if(ch==='"'){if(text[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}
+    else if(ch==='"')q=true;
+    else if(ch===","){row.push(f);f="";}
+    else if(ch==="\n"||ch==="\r"){if(ch==="\r"&&text[i+1]==="\n")i++;row.push(f);rows.push(row);row=[];f="";}
+    else f+=ch;}
+  if(f||row.length){row.push(f);rows.push(row);}
+  return rows;
+}
+function depositsFromCSV(text){
+  const rows=parseCSV(String(text||"").replace(/^﻿/,""));
+  const hi=rows.findIndex(r=>r.some(c=>/date/i.test(c))&&r.some(c=>/amount/i.test(c)));
+  if(hi<0)return null;
+  const h=rows[hi].map(c=>c.trim()),col=(...res)=>{for(const re of res){const i=h.findIndex(c=>re.test(c));if(i>=0)return i;}return -1;};
+  const di=col(/^(run |transaction |posted |post )?date$/i,/^(?!.*settle).*date/i),ai=col(/^amount/i,/amount/i),
+    ni=col(/original statement/i,/^action$/i,/description/i,/merchant/i,/payee|name|memo/i),ci=col(/category/i);
+  const csvDate=v=>{const s=String(v||"").trim();let x;
+    if((x=/^(\d{4})-(\d{2})-(\d{2})/.exec(s)))return mkDate(+x[1],+x[2],+x[3]);
+    if((x=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(s)))return mkDate(+x[3],+x[1],+x[2]);return null;};
+  const csvMoney=v=>{const s=String(v||"").trim(),neg=/^\(.*\)$/.test(s)||/^-/.test(s),n=parseFloat(s.replace(/[^0-9.]/g,""));
+    return Number.isFinite(n)?(neg?-n:n):NaN;};
+  const out=[];
+  rows.slice(hi+1).forEach(r=>{if(r.length<2)return;
+    const date=csvDate(r[di]),amount=csvMoney(r[ai]),from=ni>=0?cleanFrom(r[ni]):"";
+    if(!date||!(amount>0))return;
+    if(ci>=0&&/transfer/i.test(r[ci]||""))return;                       // Monarch: moving money between accounts
+    if(/dividend|reinvest|interest/i.test(from))return;                  // Fidelity: investment income
+    out.push({date,amount:Math.round(amount*100)/100,from});});
   return out;
 }
 
@@ -476,6 +641,7 @@ function sanitize(o){
   return {sites,trips:arr(o.trips,seed.trips),calendars,
     settings,monthOverrides:obj(o.monthOverrides),shifts,windows,feeds,surprises,
     payments:cleanPayments(o.payments,ids),
+    parked:cleanParked(o.parked),
     feedIgnore:arr(o.feedIgnore,[]).filter(x=>typeof x==="string"&&x.length<300).slice(-500),
     travelMigrated:true,phaseMigrated:true,
     aways:arr(o.aways,[]).filter(a=>a&&DATE_RE.test(a.date)).map(a=>({id:String(a.id||("a"+Math.random().toString(36).slice(2))),date:a.date,kind:a.kind==="away"?"away":"travel",...(a.coarse==="half"?{coarse:"half"}:{})}))};
@@ -517,7 +683,8 @@ async function remotePut(c,data){
    until it reloads. A doc missing a top-level field we keep was written by an older device
    that never knew the field, so we keep our copy and write it back. (Unstamped docs predate
    the guard and count as 1.) */
-const SCHEMA=4;                                 // 2: the guard · 3: payments became a list per site-month · 4: dated site rates
+const SCHEMA=5;                                 // 2: the guard · 3: payments became a list per site-month · 4: dated site rates
+                                                // 5: payments say who paid and which shifts (Earnings match) · parked deposits
 function fromRemote(raw,local){
   return {pure:sanitize(raw),merged:sanitize({...(local||{}),...raw}),newer:(Number(raw.schema)||1)>SCHEMA};
 }
@@ -1871,6 +2038,241 @@ function EarningsSummary({state,sIdx,mutate}){
     </div>)}
   </div>;
 }
+/* ════════ EARNINGS MATCH — what is this deposit for? ════════
+   Copy a deposit's amount in Monarch, paste it here, and the page finds the worked shifts it pays
+   (matchDeposit). Recording it writes a payment into the same state.payments the Earnings summary
+   reads, so that row checks off there. Below: what's still unpaid, on a rolling 90-day view. */
+const fmtC=v=>"$"+(+v).toLocaleString(undefined,{minimumFractionDigits:Math.round(v*100)%100?2:0,maximumFractionDigits:2});
+const fmtDay=s=>{const d=pd(s);return `${MON[d.getMonth()]} ${d.getDate()}`;};
+const fmtSpan=(a,b)=>a===b?fmtDay(a):mk(a)===mk(b)?`${fmtDay(a)}–${pd(b).getDate()}`:`${fmtDay(a)}–${fmtDay(b)}`;
+const plural=(n,w)=>`${n} ${w}${n===1?"":"s"}`;
+const matchHdr={fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,margin:"16px 0 6px"};
+const matchCard={border:`1px solid ${C.line2}`,borderRadius:8,background:C.panel,padding:"10px 11px"};
+const SiteBadge=({site})=><span style={{fontSize:9.5,fontWeight:800,padding:"2px 5px",borderRadius:5,flexShrink:0,color:"#fff",
+  background:siteShiftCol(site,"day")}}>{siteCode(site)}</span>;
+function EarningsMatch({state,sIdx,mutate}){
+  const [amt,setAmt]=useState(""),[date,setDate]=useState(TODAY_S),[from,setFrom]=useState("");
+  const [parkedId,setParkedId]=useState(null),[pick,setPick]=useState(null),[choice,setChoice]=useState(0);
+  const [done,setDone]=useState(null),[msg,setMsg]=useState(""),[fileRows,setFileRows]=useState(null),[showOld,setShowOld]=useState(false);
+  const top=useRef(),fileIn=useRef();
+  const cov=useMemo(()=>payCoverage(state,sIdx),[state.shifts,state.payments,sIdx]);
+  const amount=parseMoney(amt),ok=Number.isFinite(amount)&&amount>0,day=DATE_RE.test(date)&&date<=TODAY_S?date:TODAY_S;
+  const res=useMemo(()=>ok?matchDeposit(amount,day,from,cov,state):null,[ok,amount,day,from,cov,state.sites]);
+  useEffect(()=>{setChoice(0);},[amount,day,from]);
+  const canRead=typeof navigator!=="undefined"&&navigator.clipboard&&typeof navigator.clipboard.readText==="function";
+
+  const reset=()=>{setAmt("");setFrom("");setDate(TODAY_S);setParkedId(null);setPick(null);setChoice(0);};
+  const toTop=()=>{try{top.current.scrollIntoView({behavior:"smooth",block:"start"});}catch(e){}};
+  const loadDeposit=(a,d,f,pid)=>{setAmt(String(a));setDate(d||TODAY_S);setFrom(f||"");setParkedId(pid||null);setPick(null);setDone(null);setMsg("");toTop();};
+  // a paste can be just the amount or a whole copied line; a date or name in it fills those in too
+  const applyText=t=>{const p=parsePasted(t);setDone(null);setMsg("");setPick(null);
+    setAmt(Number.isFinite(p.amount)?String(p.amount):String(t||"").trim().slice(0,20));
+    if(p.date)setDate(p.date);if(p.from)setFrom(f=>f||p.from);};
+  const pasteBtn=async()=>{try{applyText(await navigator.clipboard.readText());}
+    catch(e){setMsg("Couldn't read what you copied — long-press the amount box and choose Paste.");}};
+  const record=(rows,sid)=>{
+    const yms=[...new Set(rows.map(r=>mk(r.date)))];
+    const full=yms.filter(ym=>((state.payments||{})[payKey(ym,sid)]||[]).filter(hasPay).length>=MAX_PAYS);
+    if(full.length){setMsg(`${sIdx[sid].name} already has ${MAX_PAYS} payments in ${full.map(ym=>MONL[+ym.slice(5)-1]).join(" and ")} — remove one on the Earnings summary first.`);return;}
+    const m=(Date.now().toString(36)+Math.random().toString(36).slice(2,5)).slice(-12),who=cleanFrom(from),pid=parkedId;
+    mutate(s=>{const n=recordMatch(s,{amount,date:day,from:who},sid,rows,m);
+      return pid?{...n,parked:(n.parked||[]).filter(p=>p.id!==pid)}:n;});
+    setDone({m,text:`${fmtC(amount)}${who?` from ${who}`:""} → ${sIdx[sid].name}, ${plural(rows.length,"shift")} ${fmtSpan(rows[0].date,rows[rows.length-1].date)}`});
+    reset();setMsg("");};
+  const park=()=>{const who=cleanFrom(from),id=parkedId||("k"+Date.now().toString(36));
+    mutate(s=>({...s,parked:[...(s.parked||[]).filter(p=>p.id!==id),{id,amount,date:day,...(who?{from:who}:{})}].slice(-50)}));
+    reset();setDone(null);setMsg(`Saved ${fmtC(amount)} for later — it's in the list below.`);};
+  const startPick=()=>{const best=res&&res.picks[0];
+    setPick({site:best?best.site:(res&&res.known?[...res.known.sites][0]:state.sites[0].id),sel:[]});};
+
+  // shifts to tick by hand: this site's unpaid worked shifts up to the deposit date
+  const pickRows=pick?cov.rows.filter(r=>r.site===pick.site&&r.owed>0.5&&r.date<=day&&daysBetween(r.date,day)<=365)
+    .sort((a,b)=>a.date<b.date?-1:1):[];
+  const picked=pickRows.filter(r=>pick.sel.includes(r.date)),pickedSum=picked.reduce((t,r)=>t+r.owed,0);
+
+  // ── the rolling picture ──
+  const from90=ds(ad(TODAY,-90)),cut=ds(ad(TODAY,-MATCH_WINDOW));
+  const unpaid=cov.rows.filter(r=>r.owed>0.5),older=unpaid.filter(r=>r.date<cut);
+  const shown=showOld?unpaid:unpaid.filter(r=>r.date>=cut),recent=unpaid.filter(r=>r.date>=cut);
+  const groups=Object.values(shown.reduce((g,r)=>{const k=r.site+"|"+mk(r.date);(g[k]||(g[k]={key:k,site:sIdx[r.site],rows:[]})).rows.push(r);return g;},{}))
+    .map(g=>{g.rows.sort((a,b)=>a.date<b.date?-1:1);const last=g.rows[g.rows.length-1].date,known=Number.isFinite(cov.lag[g.site.id]);
+      const usual=known?cov.lag[g.site.id]:USUAL_LAG,age=daysBetween(last,TODAY_S);
+      return {...g,first:g.rows[0].date,last,owed:g.rows.reduce((t,r)=>t+r.owed,0),part:g.rows.some(r=>r.part),age,usual,known,late:age>usual+10};})
+    .sort((a,b)=>a.first<b.first?-1:1);
+  const sumOwed=l=>l.reduce((t,r)=>t+r.owed,0);
+  let rec$=0;const recN=new Set(),byM={};
+  Object.entries(state.payments||{}).forEach(([k,l])=>{const km=PAY_KEY_RE.exec(k);l.forEach((r,i)=>{
+    if(r.date&&r.date>=from90&&r.date<=TODAY_S&&Number.isFinite(r.amount)){rec$+=r.amount;recN.add(r.m||k+i);}
+    if(r.m&&km){const g=byM[r.m]||(byM[r.m]={m:r.m,date:r.date,from:r.from,amount:0,site:km[2],dates:[]});
+      g.amount+=r.amount||0;g.dates.push(...(r.shifts||[]));}});});
+  const matches=Object.values(byM).filter(g=>g.date&&g.date>=from90&&sIdx[g.site]).sort((a,b)=>a.date<b.date?1:-1).slice(0,8);
+  const diffs=cov.cells.filter(c=>Math.abs(c.diff)>1&&c.recs.some(r=>r.date&&r.date>=from90)).sort((a,b)=>a.ym<b.ym?-1:1);
+  const short$=diffs.reduce((t,c)=>t+(c.diff<0?-c.diff:0),0),shortN=diffs.filter(c=>c.diff<0).length;
+  const parked=[...(state.parked||[])].reverse();
+  const payers=Object.values(cov.payers).sort((a,b)=>a.last<b.last?1:-1).slice(0,6);
+
+  const onFile=e=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(!f)return;
+    const rd=new FileReader();
+    rd.onload=()=>{const rows=depositsFromCSV(String(rd.result||""));
+      if(!rows){setFileRows(null);setMsg("That file has no Date and Amount columns. Export transactions as a CSV from Monarch or Fidelity on the web.");return;}
+      const seen=[];Object.values(state.payments||{}).forEach(l=>l.forEach(r=>{if(r.date&&Number.isFinite(r.amount))seen.push(r);}));
+      (state.parked||[]).forEach(p=>seen.push(p));
+      const fresh=rows.filter(r=>!seen.some(p=>Math.abs(p.amount-r.amount)<0.01&&Math.abs(daysBetween(p.date,r.date))<=2))
+        .sort((a,b)=>a.date<b.date?1:-1).slice(0,40);
+      setFileRows(fresh);setMsg(fresh.length?"":"Nothing new in that file — every deposit in it is already recorded or saved.");};
+    rd.readAsText(f);};
+
+  const best=res&&(res.picks[choice]||res.picks[0]),site=best&&sIdx[best.site];
+  const timing=c=>{const known=Number.isFinite(cov.lag[c.site]);
+    return `paid ${plural(c.lag,"day")} after the last shift`+(known?` · ${sIdx[c.site].name} usually pays in ~${cov.lag[c.site]}`:"");};
+  const payerNote=c=>{const k=res.known,who=cleanFrom(from);
+    if(k)return k.sites.has(c.site)?`${k.label} has paid ${sIdx[c.site].name} before`
+      :`${k.label} has paid ${[...k.sites].map(id=>sIdx[id]?sIdx[id].name:"?").join(", ")} before — not this site`;
+    return who?`${who} is new — it'll be remembered for ${sIdx[c.site].name}`:"";};
+  const shiftLine=rows=>{const t=rows.slice(0,8).map(r=>fmtDay(r.date)+(shiftCatOf(sIdx[r.site],r.sh)==="night"?" night":"")+(r.part?` (${fmtC(r.owed)} left)`:""));
+    return t.join(" · ")+(rows.length>8?` · +${rows.length-8} more`:"");};
+  const diffWord=d=>Math.abs(d)<=1?"adds up exactly":`${fmtC(Math.abs(d))} ${d<0?"short":"over"} of what these shifts pay`;
+  const row={display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderTop:`1px solid ${C.line2}`};
+
+  return <div style={{padding:"16px 16px 60px",maxWidth:760}}>
+    <div ref={top} style={{fontSize:11,color:C.gray,lineHeight:1.55,marginBottom:10}}>
+      Copy a deposit's amount in Monarch and paste it here — Per Diem looks for the worked shifts it pays.
+      Recording it checks the payment off on the <b>Earnings summary</b>.</div>
+    <div style={matchCard}>
+      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <span style={{fontSize:20,fontWeight:800,color:C.gray}}>$</span>
+        <input value={amt} inputMode="decimal" placeholder="paste an amount" aria-label="deposit amount"
+          onChange={e=>{setAmt(e.target.value);setDone(null);setMsg("");}}
+          onPaste={e=>{const t=e.clipboardData&&e.clipboardData.getData("text");if(t){e.preventDefault();applyText(t);}}}
+          style={{...inp,fontSize:20,fontWeight:800,padding:"7px 9px",flex:1,minWidth:0,fontVariantNumeric:"tabular-nums"}}/>
+        {canRead&&<Btn onClick={pasteBtn}>Paste</Btn>}
+        {(amt||from)&&<button onClick={()=>{reset();setMsg("");}} title="clear" style={{...delBtn,padding:"6px 8px"}}>✕</button>}
+      </div>
+      <div style={{display:"flex",gap:"6px 10px",marginTop:8,flexWrap:"wrap",alignItems:"center"}}>
+        <label style={{fontSize:10.5,color:C.gray,display:"inline-flex",alignItems:"center",gap:4}}>on
+          <input type="date" value={date} max={TODAY_S} onChange={e=>setDate(e.target.value||TODAY_S)} style={{...inp,width:"auto",padding:"4px 6px",fontSize:12}}/></label>
+        <label style={{fontSize:10.5,color:C.gray,display:"inline-flex",alignItems:"center",gap:4,flex:"1 1 170px",minWidth:0}}>from
+          <input value={from} placeholder="who paid (optional)" onChange={e=>setFrom(e.target.value)} style={{...inp,padding:"4px 6px",fontSize:12,minWidth:0}}/></label>
+      </div>
+      {payers.length>0&&!from&&<div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:8}}>
+        {payers.map(p=><button key={p.key} onClick={()=>setFrom(p.label)} title={[...p.sites].map(id=>sIdx[id]?sIdx[id].name:"").join(", ")}
+          style={{...addBtn,padding:"3px 8px",fontSize:10.5}}>{p.label}</button>)}</div>}
+      {parkedId&&<div style={{fontSize:10,color:C.mute,marginTop:6}}>from your saved-for-later list</div>}
+    </div>
+    {msg&&<div style={{fontSize:11,color:C.gray,marginTop:8,lineHeight:1.5}}>{msg}</div>}
+    {done&&<div style={{...matchCard,borderLeft:`3px solid ${C.juniper}`,marginTop:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+      <span style={{fontSize:11.5,flex:"1 1 200px",lineHeight:1.5}}><b style={{color:C.juniper}}>✓ Recorded</b> {done.text}. It's checked off on the Earnings summary.</span>
+      <Btn small onClick={()=>{mutate(s=>removeMatch(s,done.m));setDone(null);}}>Undo</Btn></div>}
+
+    {ok&&res&&!pick&&<>
+      <div style={matchHdr}>{best?(best.kind==="exact"?"Exact match":"Close, not exact"):"No run of shifts adds up"}</div>
+      {best&&<div style={{...matchCard,borderLeft:`3px solid ${best.kind==="exact"?C.juniper:C.warn}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:7}}>
+          <SiteBadge site={site}/><b style={{fontSize:13,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{site.name}</b>
+          <b style={{marginLeft:"auto",fontSize:13,fontVariantNumeric:"tabular-nums"}}>{fmtC(best.sum)}</b></div>
+        <div style={{fontSize:12,marginTop:5}}>{plural(best.rows.length,"shift")} · {fmtSpan(best.rows[0].date,best.rows[best.rows.length-1].date)}</div>
+        <div style={{fontSize:10.5,color:C.gray,marginTop:2,lineHeight:1.5}}>{shiftLine(best.rows)}</div>
+        <div style={{fontSize:11,fontWeight:700,color:best.kind==="exact"?C.juniper:C.warn,marginTop:6}}>{diffWord(best.diff)}</div>
+        <div style={{fontSize:10.5,color:C.gray,marginTop:2,lineHeight:1.5}}>{timing(best)}{payerNote(best)?<><br/>{payerNote(best)}</>:null}</div>
+        <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+          <Btn kind="prim" onClick={()=>record(best.rows,best.site)}>✓ Record as paid</Btn></div>
+      </div>}
+      {res.picks.length>1&&<><div style={matchHdr}>Also possible</div>
+        <div style={{...matchCard,padding:"0 11px"}}>{res.picks.map((c,i)=>i===choice?null:
+          <div key={i} style={{...row,borderTop:"none",borderBottom:`1px solid ${C.line2}`,fontSize:11.5}}>
+            <SiteBadge site={sIdx[c.site]}/>
+            <span style={{minWidth:0,flex:1}}>{plural(c.rows.length,"shift")} · {fmtSpan(c.rows[0].date,c.rows[c.rows.length-1].date)}
+              <span style={{color:C.gray}}> · {c.kind==="exact"?"exact":`${fmtC(Math.abs(c.diff))} ${c.diff<0?"short":"over"}`}</span></span>
+            <Btn small onClick={()=>setChoice(i)}>Show</Btn></div>)}</div></>}
+      {!best&&<div style={{...matchCard,fontSize:11.5,lineHeight:1.6}}>
+        {res.shapes.length
+          ? <>Nothing unpaid on the calendar adds up to {fmtC(amount)}. It does equal
+              {res.shapes.map((h,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
+                <SiteBadge site={h.site}/><span>{h.parts.map(([n,p])=>`${n} × ${fmtC(p)}`).join(" + ")} at {h.site.name}</span></div>)}
+              <div style={{color:C.gray,marginTop:4}}>— maybe shifts that aren't on the calendar yet, or are already counted as paid.</div></>
+          : <>Nothing unpaid on the calendar adds up to {fmtC(amount)}, even within 5%. Pick the shifts yourself, or save it for later.</>}
+      </div>}
+      <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+        <button onClick={startPick} style={addBtn}>Pick shifts myself</button>
+        <button onClick={park} style={addBtn}>Save for later</button></div>
+    </>}
+
+    {ok&&pick&&<div style={{...matchCard,marginTop:12}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <b style={{fontSize:12.5}}>Which shifts does {fmtC(amount)} pay?</b>
+        <select value={pick.site} onChange={e=>setPick({site:e.target.value,sel:[]})} style={{...inp,width:"auto",padding:"4px 6px",fontSize:12,marginLeft:"auto"}}>
+          {state.sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+      <div style={{marginTop:6}}>{pickRows.length?pickRows.map(r=>{const on=pick.sel.includes(r.date);
+        return <label key={r.sh.id} style={{...row,fontSize:12,cursor:"pointer"}}>
+          <input type="checkbox" checked={on} onChange={()=>setPick(p=>({...p,sel:on?p.sel.filter(d=>d!==r.date):[...p.sel,r.date]}))}/>
+          <span>{DOW[pd(r.date).getDay()]} {fmtDay(r.date)} <span style={{color:C.gray}}>· {shiftLabelOf(sIdx[r.site],r.sh)}</span></span>
+          {r.part&&<span style={{fontSize:10,color:C.warn}}>part paid</span>}
+          <span style={{marginLeft:"auto",fontVariantNumeric:"tabular-nums"}}>{fmtC(r.owed)}</span></label>;})
+        :<div style={{fontSize:11,color:C.mute,padding:"8px 0"}}>No unpaid worked shifts at {sIdx[pick.site].name} up to {fmtDay(day)}.</div>}</div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,flexWrap:"wrap"}}>
+        <span style={{fontSize:11,color:C.gray}}>ticked <b style={{color:C.ink}}>{fmtC(pickedSum)}</b>{picked.length?` · ${diffWord(Math.round((amount-pickedSum)*100)/100).replace(" of what these shifts pay","")}`:""}</span>
+        <span style={{marginLeft:"auto",display:"flex",gap:6}}>
+          <Btn small onClick={()=>setPick(null)}>Back</Btn>
+          <Btn small kind="prim" disabled={!picked.length} onClick={()=>record(picked,pick.site)}>✓ Record as paid</Btn></span></div>
+    </div>}
+
+    {parked.length>0&&<><div style={matchHdr}>Saved for later · {parked.length}</div>
+      <div style={{...matchCard,padding:"0 11px"}}>{parked.map((p,i)=><div key={p.id} style={{...row,borderTop:i?row.borderTop:"none",fontSize:11.5}}>
+        <span style={{minWidth:0,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{fmtDay(p.date)} · <b>{fmtC(p.amount)}</b>
+          {p.from?<span style={{color:C.gray}}> · {p.from}</span>:null}</span>
+        <Btn small onClick={()=>loadDeposit(p.amount,p.date,p.from,p.id)}>Try</Btn>
+        <button onClick={()=>mutate(s=>({...s,parked:(s.parked||[]).filter(x=>x.id!==p.id)}))} title="remove" style={delBtn}>✕</button></div>)}</div></>}
+
+    <div style={matchHdr}>Last 90 days · since {fmtDay(from90)}</div>
+    <div style={{display:"flex",gap:"10px 18px",flexWrap:"wrap",padding:"10px 12px",border:`1px solid ${C.line2}`,borderRadius:8,background:C.panel}}>
+      <Stat label="Received" value={fmt$(rec$)} sub={plural(recN.size,"payment")} accent={C.juniper}/>
+      <Stat label="Still unpaid" value={fmt$(sumOwed(recent))} sub={plural(recent.length,"shift")} accent={recent.length?C.warn:C.mute}/>
+      <Stat label="Paid short" value={fmt$(short$)} sub={shortN?plural(shortN,"month"):"none"} accent={shortN?C.warn:C.mute}/>
+    </div>
+
+    <div style={matchHdr}>Still unpaid</div>
+    {groups.length
+      ? <div style={{...matchCard,padding:"0 11px"}}>{groups.map((g,i)=><div key={g.key} style={{...row,borderTop:i?row.borderTop:"none"}}>
+          <SiteBadge site={g.site}/>
+          <div style={{minWidth:0,flex:1}}>
+            <div style={{fontSize:12,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{g.site.name} · {fmtSpan(g.first,g.last)}</div>
+            <div style={{fontSize:10.5,color:g.late?C.warn:C.gray}}>{plural(g.rows.length,"shift")}{g.part?" (one part paid)":""} · {plural(g.age,"day")} ago
+              {g.late?" · late":""}{g.known?` · usually paid in ~${g.usual} days`:""}</div></div>
+          <b style={{fontSize:12.5,fontVariantNumeric:"tabular-nums"}}>{fmtC(g.owed)}</b></div>)}</div>
+      : <div style={{fontSize:11,color:C.mute}}>Every worked shift since {fmtDay(cut)} has a payment against it.</div>}
+    {older.length>0&&<button onClick={()=>setShowOld(v=>!v)} style={{...addBtn,marginTop:8}}>
+      {showOld?"Hide":"Show"} {plural(older.length,"older unpaid shift")} ({fmt$(sumOwed(older))})</button>}
+
+    {diffs.length>0&&<><div style={matchHdr}>Paid a different amount</div>
+      <div style={{...matchCard,padding:"0 11px"}}>{diffs.map((c,i)=><div key={c.key} style={{...row,borderTop:i?row.borderTop:"none",fontSize:11.5}}>
+        <SiteBadge site={sIdx[c.sid]}/>
+        <span style={{minWidth:0,flex:1}}>{sIdx[c.sid].name} · {MONL[+c.ym.slice(5)-1]}</span>
+        <b style={{color:C.warn,whiteSpace:"nowrap"}}>{fmtC(Math.abs(c.diff))} {c.diff<0?"short":"over"}</b></div>)}</div></>}
+
+    {matches.length>0&&<><div style={matchHdr}>Matched here</div>
+      <div style={{...matchCard,padding:"0 11px"}}>{matches.map((g,i)=>{const dd=[...g.dates].sort();
+        return <div key={g.m} style={{...row,borderTop:i?row.borderTop:"none",fontSize:11.5}}>
+          <SiteBadge site={sIdx[g.site]}/>
+          <span style={{minWidth:0,flex:1}}>{fmtDay(g.date)} · <b>{fmtC(g.amount)}</b>{g.from?<span style={{color:C.gray}}> · {g.from}</span>:null}
+            {dd.length?<span style={{color:C.gray}}> → {fmtSpan(dd[0],dd[dd.length-1])}</span>:null}</span>
+          <button onClick={()=>{if(confirm(`Remove this ${fmtC(g.amount)} payment from the Earnings summary?`))mutate(s=>removeMatch(s,g.m));}}
+            title="undo this match" style={{...delBtn,fontSize:10.5}}>undo</button></div>;})}</div></>}
+
+    <div style={{marginTop:22,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+      <button onClick={()=>fileIn.current.click()} style={addBtn}>Import from a file ›</button>
+      <span style={{fontSize:10,color:C.mute}}>a CSV of transactions from Monarch or Fidelity (on the web)</span>
+      <input ref={fileIn} type="file" accept=".csv,text/csv,text/plain" onChange={onFile} style={{display:"none"}}/></div>
+    {fileRows&&fileRows.length>0&&<div style={{...matchCard,marginTop:8,padding:"0 11px"}}>
+      <div style={{...row,borderTop:"none",fontSize:11,color:C.gray}}>
+        <span style={{flex:1}}>{plural(fileRows.length,"deposit")} not recorded yet — tap one to match it</span>
+        <button onClick={()=>setFileRows(null)} style={delBtn}>✕</button></div>
+      {fileRows.map((r,i)=><button key={i} onClick={()=>{setFileRows(null);loadDeposit(r.amount,r.date,r.from);}}
+        style={{...row,width:"100%",background:"transparent",border:"none",borderTop:row.borderTop,cursor:"pointer",textAlign:"left",fontFamily:"inherit",color:C.ink,fontSize:11.5}}>
+        <span style={{minWidth:0,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{fmtDay(r.date)}{r.from?<span style={{color:C.gray}}> · {r.from}</span>:null}</span>
+        <b style={{fontVariantNumeric:"tabular-nums"}}>{fmtC(r.amount)}</b></button>)}
+    </div>}
+  </div>;
+}
 function AddShift({avail,onAdd}){
   const [sel,setSel]=useState(avail[0]?avail[0].id:"");
   if(!avail.length)return null;
@@ -2224,7 +2626,7 @@ function App(){
   const [state,setState]=useState(load);
   const past=useRef([]);
   const [canUndo,setCanUndo]=useState(false);
-  const [panel,setPanel]=useState(null);     // null = calendar; else "trips"|"sites"|"summary"|"feeds"|"earnings"|"family"
+  const [panel,setPanel]=useState(null);     // null = calendar; else "trips"|"sites"|"summary"|"match"|"feeds"|"earnings"|"family"
   const [menu,setMenu]=useState(false);      // hamburger overlay
   const [collapsed,setCollapsed]=useState(false);   // info box collapsed
   const [tool,setTool]=useState("select");
@@ -2354,9 +2756,9 @@ function App(){
     const sh=state.shifts.find(s=>s.date===selected);
     if(w)setLastSite(w.siteId);else if(sh)setLastSite(sh.siteId);},[selected,selWid,state.shifts,state.windows]);
 
-  const MENU_SECTIONS=[["trips","✈ Trips"],["sites","⌂ Sites"],["summary","▤ Earnings summary"],["feeds","⟳ Calendar feeds"],
+  const MENU_SECTIONS=[["trips","✈ Trips"],["sites","⌂ Sites"],["summary","▤ Earnings summary"],["match","⇄ Earnings match"],["feeds","⟳ Calendar feeds"],
     ["earnings","$ Earnings settings"],["family","☺ Family time settings"]];
-  const PANEL_TITLE={trips:"Trips",sites:"Sites",summary:"Earnings summary",feeds:"Calendar feeds",earnings:"Earnings settings",family:"Family time settings"};
+  const PANEL_TITLE={trips:"Trips",sites:"Sites",summary:"Earnings summary",match:"Earnings match",feeds:"Calendar feeds",earnings:"Earnings settings",family:"Family time settings"};
   const openPanel=p=>{setPanel(p);setMenu(false);};
   const themeIcon={system:"◐",light:"☀",dark:"☾"}[theme];
   const cycle=()=>setTheme(t=>t==="system"?"light":t==="light"?"dark":"system");
@@ -2568,6 +2970,7 @@ function App(){
           <div style={{flex:1,minHeight:0,overflow:"auto"}}>
             {panel==="sites"?<SitesTab state={state} mutate={mutate}/>
               :panel==="summary"?<EarningsSummary state={state} sIdx={sIdx} mutate={mutate}/>
+              :panel==="match"?<EarningsMatch state={state} sIdx={sIdx} mutate={mutate}/>
               :panel==="feeds"?<FeedsTab state={state} mutate={mutate} busy={feedBusy} status={feedStatus} hasStore={!!cfg}
                  onCheck={f=>checkFeed(f)} onPaste={(f,t)=>applyFeedText(f,t,true)} onOpenStore={()=>setSyncModal(true)}/>
               :<TripsCalsTab state={state} mutate={mutate} only={panel} cfg={cfg} notify={setToast} onOpenDoc={openDoc}/>}
