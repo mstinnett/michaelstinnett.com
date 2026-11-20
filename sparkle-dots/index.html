@@ -56,15 +56,12 @@ body{
 .dot{
   appearance:none; border:0; width:60px; height:60px; border-radius:50%; padding:0; cursor:pointer; position:relative;
   touch-action:manipulation; flex:none; background-size:200% 200%; display:grid; place-items:center; color:var(--ink);
-  box-shadow:inset 0 -6px 0 rgba(0,0,0,.16), inset 0 3px 5px rgba(255,255,255,.45), 0 4px 0 rgba(0,0,0,.10), 0 8px 14px rgba(68,64,79,.16);
-  transition:transform .12s ease;
+  box-shadow:none; transition:transform .12s ease;
 }
-.dot::after{content:""; position:absolute; left:20%; top:12%; width:36%; height:24%; border-radius:50%; background:rgba(255,255,255,.55); filter:blur(1.5px); pointer-events:none}
-.dot:active{transform:translateY(2px)}
+.dot:active{transform:scale(.94)}
 .dot svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;position:relative;z-index:1}
-.dot.plain{background:var(--button)}
-.dot.plain::after{background:rgba(255,255,255,.8)}
-.dot[aria-pressed="true"]{transform:translateY(2px); box-shadow:inset 0 -3px 0 rgba(0,0,0,.16), inset 0 3px 5px rgba(255,255,255,.45), 0 0 0 4px var(--paper), 0 0 0 7px var(--ink)}
+.dot.plain{background:var(--button); box-shadow:inset 0 0 0 1.5px var(--soft)}
+.dot[aria-pressed="true"]{box-shadow:0 0 0 4px var(--paper), 0 0 0 7px var(--ink)}
 .drift{animation:drift 9s ease-in-out infinite}
 @keyframes drift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
 .sep{width:28px;height:2px;border-radius:2px;background:var(--soft);flex:none}
@@ -107,7 +104,7 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
 .voice input{flex:1; min-width:0}
 .mic{appearance:none; border:0; flex:none; width:72px; height:72px; border-radius:50%; display:grid; place-items:center; cursor:pointer; touch-action:manipulation; color:#fff; position:relative;
   background:conic-gradient(from 200deg,#efa9a0,#f5cf8f,#bfdba7,#a6cfe6,#c4b5e6,#efa9a0);
-  box-shadow:inset 0 -5px 0 rgba(0,0,0,.14), inset 0 3px 5px rgba(255,255,255,.45), 0 4px 0 rgba(0,0,0,.10), 0 8px 14px rgba(68,64,79,.16)}
+  box-shadow:none}
 .mic svg{width:32px; height:32px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))}
 .mic[aria-pressed="true"]::after{content:""; position:absolute; inset:-8px; border-radius:50%; border:4px solid #e5735c; animation:listen 1.1s ease-in-out infinite}
 @keyframes listen{0%,100%{transform:scale(1); opacity:.9} 50%{transform:scale(1.12); opacity:.35}}
