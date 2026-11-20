@@ -813,15 +813,20 @@ const shotDB = (() => { let p = null; return () => p || (p = new Promise((ok, ba
   try { const r = indexedDB.open('sparkle-dots', 1); r.onupgradeneeded = () => r.result.createObjectStore('shots', {keyPath:'id'}); r.onsuccess = () => ok(r.result); r.onerror = () => bad(r.error); } catch(e){ bad(e); }
 })); })();
 const idb = (mode, fn) => shotDB().then(db => new Promise((ok, bad) => { const st = db.transaction('shots', mode).objectStore('shots'), r = fn(st); r.onsuccess = () => ok(r.result); r.onerror = () => bad(r.error); }));
-async function shotsAll(){   // database pictures plus any kept in memory after a failed write (for example, storage full)
-  let stored = []; try { stored = await idb('readonly', st => st.getAll()); } catch(e){}
+async function shotsStored(){ try { return await idb('readonly', st => st.getAll()); } catch(e){ return []; } }
+async function shotsAll(){   // database pictures plus any kept in memory after a failed write (for example, storage full); newest five
+  const stored = await shotsStored();
   const seen = new Set(stored.map(s => s.id));
   return [...stored, ...shotMem.filter(s => !seen.has(s.id))].sort((a, b) => b.id - a.id).slice(0, SHOT_KEEP);
 }
 async function shotAdd(blob){
   const shot = {id: Date.now(), blob};
-  try { await idb('readwrite', st => st.put(shot)); const all = await shotsAll(); for (const old of all.slice(SHOT_KEEP)) await idb('readwrite', st => st.delete(old.id)); }
-  catch(e){ shotMem.push(shot); shotMem = shotMem.sort((a, b) => b.id - a.id).slice(0, SHOT_KEEP); }
+  try { await idb('readwrite', st => st.put(shot)); }
+  catch(e){ shotMem.push(shot); }
+  // keep only the newest five across storage and memory, deleting the rest from both
+  const stored = await shotsStored(), all = [...stored, ...shotMem].sort((a, b) => b.id - a.id), keep = new Set(all.slice(0, SHOT_KEEP).map(s => s.id));
+  for (const old of stored) if (!keep.has(old.id)) { try { await idb('readwrite', st => st.delete(old.id)); } catch(e){} }
+  shotMem = shotMem.filter(s => keep.has(s.id));
 }
 async function shotRemove(id){ shotMem = shotMem.filter(s => s.id !== id); try { await idb('readwrite', st => st.delete(id)); } catch(e){} }
 
