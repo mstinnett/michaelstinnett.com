@@ -783,19 +783,25 @@ function startVoice(){
   if (magicBusy) return;
   if (listening){ listening.stop(); return; }
   document.activeElement && document.activeElement.blur && document.activeElement.blur();
+  // with an OpenAI key, record and transcribe there: the iPad's built-in recognizer often ends without words in home-screen apps
+  if (getKey() && navigator.mediaDevices && window.MediaRecorder){
+    let ac = null;
+    try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){}   // made inside the tap so iPadOS lets it run
+    return recordForOpenAI(ac);
+  }
   if (SR) return listenOnDevice();
-  if (getKey() && navigator.mediaDevices && window.MediaRecorder) return recordForOpenAI();
   setStatus("Voice isn't available here. Type it instead.");
 }
 function listenOnDevice(){
   let r;
   try { r = new SR(); } catch(e){ return getKey() && window.MediaRecorder ? recordForOpenAI() : setStatus("Voice isn't available here. Type it instead."); }
   r.lang = navigator.language || 'en-US'; r.interimResults = true; r.maxAlternatives = 1; r.continuous = false;
-  let text = '', fallback = false;
+  let text = '', fallback = false, gotError = false;
   const session = listening = {cancelled:false, stop: () => { try { r.stop(); } catch(e){} }, cancel: () => { try { r.abort(); } catch(e){} }};
   setMic(true); setStatus('Listening… say what the sticker should be.');
   r.onresult = e => { text = [...e.results].map(x => x[0].transcript).join(' ').trim(); $('magicText').value = text; };
   r.onerror = e => {
+    gotError = true;
     if ((e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'network') && getKey() && window.MediaRecorder){ fallback = true; return; }
     if (e.error === 'no-speech') setStatus("I didn't hear anything. Tap the microphone and try again.");
     else if (e.error === 'not-allowed') setStatus('The microphone is turned off for this page. Allow it in Settings, or type instead.');
@@ -804,16 +810,19 @@ function listenOnDevice(){
   r.onend = () => {
     if (session.cancelled) return;
     if (listening === session){ listening = null; setMic(false); }
-    if (fallback) recordForOpenAI(); else heardIt(text);
+    if (fallback) recordForOpenAI(null);
+    else if (!heardIt(text) && !gotError) setStatus("I didn't catch that. Tap the microphone and try again.");
   };
   try { r.start(); } catch(e){ listening = null; setMic(false); if (getKey() && window.MediaRecorder) recordForOpenAI(); }
 }
-async function recordForOpenAI(){
+async function recordForOpenAI(ac){
   // claim the session before asking for the microphone, so a second tap or closing the box cancels it
   let stream = null, rec = null, timer = null;
   const session = listening = {cancelled:false,
     stop: () => { if (rec){ clearTimeout(timer); if (rec.state !== 'inactive') rec.stop(); } else session.cancel(); },
-    cancel: () => { session.cancelled = true; clearTimeout(timer); if (rec && rec.state !== 'inactive') rec.stop(); if (stream) stream.getTracks().forEach(t => t.stop()); if (listening === session){ listening = null; setMic(false); } }};
+    cancel: () => { session.cancelled = true; clearTimeout(timer); if (rec && rec.state !== 'inactive') rec.stop(); if (stream) stream.getTracks().forEach(t => t.stop()); closeAudio(); if (listening === session){ listening = null; setMic(false); } }};
+  let heardSpeech = false, raf = 0;
+  const closeAudio = () => { cancelAnimationFrame(raf); if (ac && ac.state !== 'closed') ac.close().catch(() => {}); };
   setMic(true); setStatus('Getting the microphone ready…');
   try { stream = await navigator.mediaDevices.getUserMedia({audio:true}); }
   catch(e){ if (!session.cancelled){ session.cancel(); setStatus('The microphone is turned off for this page. Allow it in Settings, or type instead.'); } return; }
@@ -823,19 +832,23 @@ async function recordForOpenAI(){
   const chunks = [];
   rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   rec.onstop = async () => {
-    stream.getTracks().forEach(t => t.stop());
+    stream.getTracks().forEach(t => t.stop()); closeAudio();
     if (session.cancelled) return;
     if (listening === session){ listening = null; setMic(false); }
     const blob = new Blob(chunks, {type: rec.mimeType || type || 'audio/mp4'});
-    if (blob.size < 2000){ setStatus("I didn't hear anything. Tap the microphone and try again."); return; }
+    if (blob.size < 1000 || (ac && !heardSpeech)){ setStatus("I didn't hear anything. Tap the microphone and try again."); return; }
     setStatus('Got it, writing that down…');
     const ext = /webm/.test(blob.type) ? 'webm' : /ogg/.test(blob.type) ? 'ogg' : 'm4a';
     for (const model of ['gpt-4o-mini-transcribe', 'whisper-1']){
       try {
         const fd = new FormData(); fd.append('file', blob, 'speech.' + ext); fd.append('model', model);
         const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {method:'POST', headers:{'Authorization':'Bearer ' + getKey()}, body:fd});
-        if (res.status === 400 || res.status === 404) continue;
-        if (!res.ok){ setStatus(res.status === 401 ? "The OpenAI key didn't work. Check it under Key." : "I couldn't hear that. Tap the microphone and try again."); return; }
+        if (res.status === 404 || (res.status === 400 && model !== 'whisper-1')) continue;
+        if (!res.ok){
+          const err = await res.json().catch(() => ({}));
+          setStatus(res.status === 401 ? "The OpenAI key didn't work. Check it under Key." : "OpenAI couldn't read the recording" + (err.error && err.error.message ? ': ' + err.error.message : '.'));
+          return;
+        }
         const out = await res.json();
         if (session.cancelled || $('magicSheet').hidden) return;
         if (!heardIt(out.text)) setStatus("I didn't catch any words. Tap the microphone and try again.");
@@ -844,8 +857,30 @@ async function recordForOpenAI(){
     }
     setStatus("I couldn't hear that. Tap the microphone and try again.");
   };
-  rec.start(); setMic(true); setStatus('Listening… tap the microphone when you are done.');
-  timer = setTimeout(session.stop, 6000);
+  rec.start(); setMic(true); setStatus('Listening… say what the sticker should be.');
+  timer = setTimeout(session.stop, 8000);   // never record longer than 8 seconds
+  // stop on its own a moment after she stops talking
+  if (ac){
+    try {
+      if (ac.state === 'suspended') ac.resume().catch(() => {});
+      const src = ac.createMediaStreamSource(stream), an = ac.createAnalyser(); an.fftSize = 1024; src.connect(an);
+      const buf = new Float32Array(an.fftSize), t0 = performance.now();
+      let floor = 0.01, quietSince = 0;
+      const tick = () => {
+        if (session.cancelled || rec.state === 'inactive') return;
+        an.getFloatTimeDomainData(buf);
+        let sum = 0; for (let i=0;i<buf.length;i++) sum += buf[i]*buf[i];
+        const rms = Math.sqrt(sum/buf.length), now = performance.now();
+        if (now - t0 < 300) floor = Math.max(floor, rms);                         // learn the room's background level
+        const loud = rms > Math.max(0.02, floor*2.5);
+        if (loud){ heardSpeech = true; quietSince = 0; }
+        else if (heardSpeech){ if (!quietSince) quietSince = now; else if (now - quietSince > 1200) return session.stop(); }
+        else if (now - t0 > 5000) return session.stop();                            // nothing said at all
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+    } catch(e){ heardSpeech = true; }   // no level meter: fall back to the time limit and the tap
+  } else heardSpeech = true;
 }
 $('micBtn').addEventListener('click', startVoice);
 
