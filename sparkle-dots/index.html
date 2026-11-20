@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Sparkle Dots</title>
+<meta name="apple-mobile-web-app-title" content="Sparkle Dots">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#ffffff">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<style>
+:root{
+  /* One quiet surface: plain white; eight muted crayons as glossy chips; every control in one column on the right. No words for the child. */
+  --paper:#ffffff;
+  --ink:#44404f;
+  --soft:#e4e2e8;
+  --button:#f6f5f8;
+  --shade:#eceaf0;
+  --display:ui-rounded, "SF Pro Rounded", system-ui, -apple-system, sans-serif;
+  color-scheme: light;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--paper); color:var(--ink); font-family:var(--display); overflow:hidden;
+  -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+}
+.app{
+  height:100%; display:grid; gap:10px;
+  padding:max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  grid-template-columns:auto minmax(0,1fr) auto;
+  grid-template-areas:"stickers stage controls";
+}
+.controls{grid-area:controls; display:flex; flex-direction:column; align-items:center; justify-content:space-between; gap:16px; min-height:0}
+.topbar{display:flex; gap:14px; align-items:flex-start}
+.palette{display:flex; flex-direction:row; gap:14px; align-items:flex-start; padding:6px; overflow:auto; scrollbar-width:none; min-height:0}
+.palette::-webkit-scrollbar{display:none}
+.col{display:flex; flex-direction:column; gap:12px; align-items:center}
+
+.btn{
+  appearance:none; border:0; background:var(--button); color:var(--ink);
+  width:72px; height:72px; border-radius:50%; display:grid; place-items:center; padding:0; flex:none;
+  box-shadow:inset 0 -4px 0 rgba(0,0,0,.07), 0 3px 0 var(--soft), 0 8px 16px rgba(68,64,79,.10);
+  cursor:pointer; touch-action:manipulation; transition:transform .12s ease, box-shadow .12s ease;
+}
+.btn:active{transform:translateY(2px) scale(.97)}
+.btn svg{width:32px;height:32px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.btn[aria-expanded="true"],.btn[aria-pressed="true"]{box-shadow:0 0 0 4px var(--paper), 0 0 0 7px var(--ink), 0 8px 16px rgba(68,64,79,.10)}
+.btn:focus-visible,.dot:focus-visible,.pull:focus-visible{outline:3px dashed var(--ink); outline-offset:5px}
+
+/* glossy 3D chips */
+.dot{
+  appearance:none; border:0; width:60px; height:60px; border-radius:50%; padding:0; cursor:pointer; position:relative;
+  touch-action:manipulation; flex:none; background-size:200% 200%; display:grid; place-items:center; color:var(--ink);
+  box-shadow:inset 0 -6px 0 rgba(0,0,0,.16), inset 0 3px 5px rgba(255,255,255,.45), 0 4px 0 rgba(0,0,0,.10), 0 8px 14px rgba(68,64,79,.16);
+  transition:transform .12s ease;
+}
+.dot::after{content:""; position:absolute; left:20%; top:12%; width:36%; height:24%; border-radius:50%; background:rgba(255,255,255,.55); filter:blur(1.5px); pointer-events:none}
+.dot:active{transform:translateY(2px)}
+.dot svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;position:relative;z-index:1}
+.dot.plain{background:var(--button)}
+.dot.plain::after{background:rgba(255,255,255,.8)}
+.dot[aria-pressed="true"]{transform:translateY(2px); box-shadow:inset 0 -3px 0 rgba(0,0,0,.16), inset 0 3px 5px rgba(255,255,255,.45), 0 0 0 4px var(--paper), 0 0 0 7px var(--ink)}
+.drift{animation:drift 9s ease-in-out infinite}
+@keyframes drift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+.sep{width:28px;height:2px;border-radius:2px;background:var(--soft);flex:none}
+
+.stage{grid-area:stage; position:relative; display:grid; place-items:center; min-width:0; min-height:0; overflow:hidden; border-radius:18px}
+canvas#cv{display:block; touch-action:none}
+
+/* pull-down shade for clearing: the tab lives top right; pulling it lowers a shade over the picture */
+.shade{position:absolute; left:0; right:0; top:0; height:0; background:var(--shade); border-radius:0 0 18px 18px;
+  box-shadow:0 6px 18px rgba(68,64,79,.12); pointer-events:none; z-index:3;
+  background-image:repeating-linear-gradient(0deg, rgba(255,255,255,.35) 0 2px, transparent 2px 26px)}
+.pull{appearance:none; border:0; width:72px; height:72px; border-radius:22px 22px 36px 36px; background:var(--shade); color:var(--ink);
+  display:grid; place-items:center; cursor:grab; touch-action:none; position:relative; z-index:6; flex:none;
+  box-shadow:inset 0 -5px 0 rgba(0,0,0,.07), 0 3px 0 var(--soft), 0 8px 16px rgba(68,64,79,.10)}
+.pull svg{width:32px;height:32px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.anim-shade .shade{transition:height .3s ease}
+.anim-pull{transition:transform .3s ease}
+
+/* sticker palette (left) */
+.stickers{grid-area:stickers; display:flex; flex-direction:column; gap:16px; align-items:center; justify-content:center; overflow:auto; scrollbar-width:none; padding:6px; min-height:0}
+.stkcols{display:flex; flex-direction:row; gap:12px}
+.stktools{display:flex; flex-direction:column; align-items:center; gap:12px}
+.size{display:flex; align-items:center; gap:6px}
+.size .tiny,.size .big{width:14px; height:14px; border-radius:50%; background:var(--soft); flex:none}
+.size .big{width:26px; height:26px}
+input[type=range].scale{-webkit-appearance:none; appearance:none; width:96px; height:36px; background:transparent; touch-action:none; margin:0}
+input[type=range].scale::-webkit-slider-runnable-track{height:10px; border-radius:5px; background:var(--soft)}
+input[type=range].scale::-webkit-slider-thumb{-webkit-appearance:none; width:34px; height:34px; margin-top:-12px; border-radius:50%; background:var(--button); box-shadow:inset 0 -4px 0 rgba(0,0,0,.08), 0 3px 8px rgba(68,64,79,.25)}
+input[type=range].scale::-moz-range-track{height:10px; border-radius:5px; background:var(--soft)}
+input[type=range].scale::-moz-range-thumb{width:34px; height:34px; border:0; border-radius:50%; background:var(--button); box-shadow:0 3px 8px rgba(68,64,79,.25)}
+input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-offset:4px}
+.stickers::-webkit-scrollbar{display:none}
+.dot.stk canvas{width:46px; height:46px; position:relative; z-index:1; pointer-events:none}
+.dot.magic{background:conic-gradient(from 200deg,#efa9a0,#f5cf8f,#bfdba7,#a6cfe6,#c4b5e6,#efa9a0)}
+
+.scrim{position:fixed; inset:0; background:rgba(68,64,79,.28); display:grid; place-items:center; padding:20px; z-index:10}
+.scrim[hidden]{display:none}
+.sheet{background:var(--paper); border-radius:28px; box-shadow:0 20px 60px rgba(68,64,79,.2); padding:24px; width:min(440px,100%); display:flex; flex-direction:column; gap:14px; font-size:17px}
+.sheet h2{margin:0; font-size:20px; font-weight:700}
+.sheet p{margin:0; color:#6c6778; font-size:15px; line-height:1.4}
+.sheet input{font:inherit; font-size:18px; padding:12px 14px; border-radius:14px; border:2px solid var(--soft); background:var(--button); color:var(--ink); width:100%}
+.sheet input:focus-visible{outline:none; border-color:var(--ink)}
+.preview{height:150px; display:grid; place-items:center; background:var(--button); border-radius:18px}
+.preview canvas{width:130px; height:130px}
+.sheet .row{display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap}
+.textbtn{appearance:none; border:0; font:inherit; font-size:16px; font-weight:600; color:var(--ink); background:var(--button); border-radius:999px; padding:10px 18px; cursor:pointer; touch-action:manipulation}
+.textbtn.primary{background:var(--ink); color:#fff}
+.textbtn[disabled]{opacity:.45; cursor:default}
+.textbtn:focus-visible{outline:3px dashed var(--ink); outline-offset:2px}
+
+@media (orientation:portrait){
+  .app{grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) auto; grid-template-areas:"controls" "stage" "stickers"}
+  .stickers{flex-direction:row; justify-content:center}
+  .stkcols{flex-direction:column}
+  .stktools{flex-direction:column}
+  .controls{flex-direction:row; align-items:center; justify-content:space-between}
+  .topbar{order:2}
+  .palette{flex-direction:column; overflow-x:auto}
+  .col{flex-direction:row}
+  .sep{width:2px;height:28px}
+}
+@media (prefers-reduced-motion:reduce){ .drift{animation:none} .anim-shade .shade,.anim-pull{transition:none} }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="stickers" id="stickers" aria-label="Stickers"></aside>
+  <main class="stage" id="stage">
+    <canvas id="cv" aria-label="Dots to draw on"></canvas>
+    <div class="shade" id="shade"></div>
+  </main>
+
+  <aside class="controls" aria-label="Controls">
+    <div class="topbar">
+      <button class="btn" id="undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 6L4 11l5 5"/><path d="M4 11h10a5 5 0 0 1 0 10h-3"/></svg></button>
+      <button class="pull" id="pull" aria-label="Pull down to clear the picture"><svg viewBox="0 0 24 24"><path d="M7 8l5 5 5-5"/><path d="M7 13l5 5 5-5"/></svg></button>
+    </div>
+    <div class="palette" id="right" aria-label="Colors"></div>
+  </aside>
+</div>
+
+<div class="scrim" id="magicSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="magicTitle">
+    <h2 id="magicTitle">Make a sticker</h2>
+    <div id="keyBox" hidden>
+      <p>Paste an OpenAI API key to draw stickers with ChatGPT's image model. The key is saved only on this device. Use a key with a monthly spending limit.</p>
+      <input id="keyInput" type="password" placeholder="sk-…" autocomplete="off" aria-label="OpenAI API key">
+      <p style="margin-top:4px">Image model</p>
+      <input id="modelInput" type="text" value="gpt-image-2.6-sunburst" autocomplete="off" aria-label="Image model">
+      <div class="row" style="margin-top:4px">
+        <button class="textbtn" id="keyForget">Remove key</button>
+        <button class="textbtn" id="keyCancel">Close</button>
+        <button class="textbtn primary" id="keySave">Save key</button>
+      </div>
+    </div>
+    <div id="makeBox">
+      <p id="magicHint">Describe it in a few words.</p>
+      <input id="magicText" type="text" maxlength="60" placeholder="a sleepy cat in a teacup" autocomplete="off">
+      <div class="preview" id="magicPreview"><p id="magicStatus">Your sticker will appear here.</p></div>
+      <div class="row">
+        <button class="textbtn" id="keyOpen" style="margin-right:auto">Key</button>
+        <button class="textbtn" id="magicClose">Close</button>
+        <button class="textbtn" id="magicGo">Draw it</button>
+        <button class="textbtn primary" id="magicAdd" disabled>Add sticker</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ================= palette ================= */
+const C = {coral:'#e5735c', mustard:'#f0b545', sage:'#93bb8a', teal:'#4c9a96', sky:'#7fb2d6', lavender:'#a497cf', blush:'#efa9a0', plum:'#44404f'};
+const COLORS = [['Coral',C.coral],['Mustard',C.mustard],['Sage',C.sage],['Teal',C.teal],['Sky',C.sky],['Lavender',C.lavender],['Blush',C.blush],['Plum',C.plum]];
+const GRADS = [[C.coral, C.mustard], [C.sky, C.lavender], [C.sage, C.teal], [C.blush, C.lavender]];
+const MAGIC = {
+  rainbow: {name:'Slow rainbow', css:'repeating-linear-gradient(135deg,#f2a3a3 0,#f5cf8f 5px,#bfdba7 10px,#a6cfe6 15px,#c4b5e6 20px,#f2a3a3 25px)'},
+  shimmer: {name:'Shimmer',      css:'repeating-linear-gradient(135deg,#efa9a0 0,#f7e3c6 7px,#a6cfe6 14px,#f7e3c6 21px,#efa9a0 28px)'},
+};
+const hex2rgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+const PAPER = hex2rgb('#ffffff');
+const SHIM = ['#efa9a0','#f3c9b4','#a6cfe6','#c4b5e6'].map(hex2rgb);
+const hexCache = {}; const rgbOf = h => hexCache[h] || (hexCache[h] = hex2rgb(h));
+function hue2(p,q,t){ if(t<0)t+=1; if(t>1)t-=1; if(t<1/6) return p+(q-p)*6*t; if(t<.5) return q; if(t<2/3) return p+(q-p)*(2/3-t)*6; return p; }
+function hslInto(h, s, l, out){ h = (((h%360)+360)%360)/360; const q = l<.5 ? l*(1+s) : l+s-l*s, p = 2*l-q; out[0]=hue2(p,q,h+1/3)*255; out[1]=hue2(p,q,h)*255; out[2]=hue2(p,q,h-1/3)*255; }
+function loopInto(rgb, t, out){ t = ((t%1)+1)%1; const n = rgb.length, s = t*n, i = (s|0)%n, f = s-(s|0), a = rgb[i], b = rgb[(i+1)%n]; for (let k=0;k<3;k++) out[k] = a[k]+(b[k]-a[k])*f; }
+const isAnimated = ink => !!ink && ink.k === 'm';
+function inkInto(ink, t, T, out){
+  if (ink.k === 'c'){ const c = rgbOf(ink.v); out[0]=c[0]; out[1]=c[1]; out[2]=c[2]; return; }
+  if (ink.k === 'g'){ const a = rgbOf(GRADS[ink.v][0]), b = rgbOf(GRADS[ink.v][1]); const w = Math.abs(((t % 2) + 2) % 2 - 1); for (let k=0;k<3;k++) out[k] = a[k]+(b[k]-a[k])*w; return; }
+  if (ink.v === 'rainbow'){ hslInto(t*180 - T*40, .62, .74, out); return; }
+  loopInto(SHIM, t*0.5 - T*0.12, out);
+  const ph = (((t*0.5 - T*0.18) % 3) + 3) % 3, sh = ph < .5 ? Math.sin(ph/.5*Math.PI)*0.55 : 0;
+  for (let k=0;k<3;k++) out[k] += (255-out[k])*sh;
+}
+const tmp = [0,0,0];
+function inkCss(ink, t, T){ inkInto(ink, t, T, tmp); return `rgb(${tmp[0]|0},${tmp[1]|0},${tmp[2]|0})`; }
+function swatchCss(ink){ if (ink.k==='c') return ink.v; if (ink.k==='g') return `repeating-linear-gradient(135deg,${GRADS[ink.v][0]} 0,${GRADS[ink.v][1]} 9px,${GRADS[ink.v][0]} 18px)`; return MAGIC[ink.v].css; }
+
+/* ================= state ================= */
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const SPEED = reduce ? 0.3 : 1;
+const DENSITY = {few:105, some:80, lots:60};
+let density = 'some';
+let GW = 14, GH = 12;            // dots across, dots down
+let segs = [], seeds = [], sparks = [], stickers = [];
+let mode = 'draw';               // draw | sticker | erase
+let stickerPick = 'star';
+let stickerScale = 1.3, shuffle = false, sizePreview = null;   // sizePreview: {until} while the size slider is in use
+let ink = {k:'c', v:C.coral};
+let mirror = false, soundOn = true;
+let undoStack = [];
+
+/* ================= shape detection (raster) ================= */
+const K = 36;                    // raster pixels per dot spacing
+let RW, RH, lab, labD, queue;
+const wallCv = document.createElement('canvas'), wctx = wallCv.getContext('2d', {willReadFrequently:true});
+const fillCv = document.createElement('canvas'), fctx = fillCv.getContext('2d');
+let fillImg;
+let faces = [], boxes = [], fillDirty = true;
+function allocRaster(){
+  RW = GW*K; RH = GH*K;
+  wallCv.width = fillCv.width = RW; wallCv.height = fillCv.height = RH;
+  lab = new Int32Array(RW*RH); labD = new Int32Array(RW*RH); queue = new Int32Array(RW*RH);
+  fillImg = fctx.createImageData(RW, RH);
+}
+const toR = i => (i + 0.5)*K;
+
+function recompute(autoFill){
+  const N = RW*RH;
+  wctx.clearRect(0,0,RW,RH);
+  wctx.strokeStyle = '#000'; wctx.lineWidth = 2.6; wctx.lineCap = 'round';
+  wctx.beginPath();
+  segs.forEach(s => { wctx.moveTo(toR(s.a[0]), toR(s.a[1])); wctx.lineTo(toR(s.b[0]), toR(s.b[1])); });
+  wctx.stroke();
+  const px = wctx.getImageData(0,0,RW,RH).data;
+  for (let p=0;p<N;p++) lab[p] = px[p*4+3] > 40 ? -1 : -2;
+
+  const info = [{box:[0,0,RW,RH]}]; let next = 1;
+  for (let p0=0;p0<N;p0++){
+    if (lab[p0] !== -2) continue;
+    let qh = 0, qt = 0, border = false, sx = 0, sy = 0, x0 = RW, y0 = RH, x1 = 0, y1 = 0;
+    queue[qt++] = p0; lab[p0] = next;
+    while (qh < qt){
+      const p = queue[qh++], x = p % RW, y = (p / RW) | 0;
+      sx += x; sy += y; if (x<x0) x0=x; if (x>x1) x1=x; if (y<y0) y0=y; if (y>y1) y1=y;
+      if (x===0 || y===0 || x===RW-1 || y===RH-1) border = true;
+      if (x>0    && lab[p-1]  === -2){ lab[p-1]  = next; queue[qt++] = p-1; }
+      if (x<RW-1 && lab[p+1]  === -2){ lab[p+1]  = next; queue[qt++] = p+1; }
+      if (y>0    && lab[p-RW] === -2){ lab[p-RW] = next; queue[qt++] = p-RW; }
+      if (y<RH-1 && lab[p+RW] === -2){ lab[p+RW] = next; queue[qt++] = p+RW; }
+    }
+    if (border){ for (let i=0;i<qt;i++) lab[queue[i]] = 0; }
+    else {
+      const cx = sx/qt, cy = sy/qt; let best = queue[0], bd = 1e9;
+      for (let i=0;i<qt;i++){ const p = queue[i], dx = p%RW - cx, dy = ((p/RW)|0) - cy, d = dx*dx+dy*dy; if (d < bd){ bd = d; best = p; } }
+      info.push({area:qt, center:best, box:[x0-3, y0-3, x1+3, y1+3]}); next++;
+    }
+  }
+  boxes = info.map(i => i.box);
+
+  faces = [null]; const keep = [];
+  seeds.sort((a,b) => b.born - a.born);
+  for (const s of seeds){
+    if (s.x < 0 || s.y < 0 || s.x >= RW || s.y >= RH) continue;
+    let p = s.y*RW + s.x;
+    if (lab[p] === -1){
+      let found = -1;
+      for (let r=1; r<=6 && found<0; r++) for (let dy=-r; dy<=r && found<0; dy++) for (let dx=-r; dx<=r; dx++){
+        const x = s.x+dx, y = s.y+dy; if (x<0||y<0||x>=RW||y>=RH) continue;
+        const q = y*RW+x; if (lab[q] > 0 && !faces[lab[q]]){ found = q; break; }
+      }
+      if (found < 0) continue;
+      p = found; s.x = p % RW; s.y = (p/RW)|0;
+    }
+    const k = lab[p];
+    if (k > 0 && !faces[k]){ faces[k] = s; keep.push(s); }
+  }
+  seeds = keep;
+
+  const created = [];
+  if (autoFill){
+    const now = performance.now();
+    for (let k=1;k<info.length;k++){
+      if (faces[k] || info[k].area < 6) continue;
+      const c = info[k].center, s = {x:c%RW, y:(c/RW)|0, ink:{...ink}, born:now};
+      seeds.push(s); faces[k] = s; created.push(s);
+    }
+  }
+
+  labD.set(lab);
+  for (let pass=0; pass<2; pass++){
+    for (let p=0;p<N;p++){
+      if (labD[p] !== -1) continue;
+      const x = p % RW, y = (p/RW)|0; let v = -1;
+      const n = [x>0?labD[p-1]:-1, x<RW-1?labD[p+1]:-1, y>0?labD[p-RW]:-1, y<RH-1?labD[p+RW]:-1];
+      for (const q of n){ if (q > 0){ v = q; break; } }
+      if (v > 0) labD[p] = -(v+10);
+    }
+    for (let p=0;p<N;p++) if (labD[p] <= -10) labD[p] = -labD[p]-10;
+  }
+  fillDirty = true;
+  return created;
+}
+function regionAt(fx, fy){ const x = Math.min(RW-1, Math.max(0, Math.floor((fx+.5)*K))), y = Math.min(RH-1, Math.max(0, Math.floor((fy+.5)*K))); return labD[y*RW+x]; }
+
+/* ================= canvas ================= */
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const stage = document.getElementById('stage');
+let SP = 80, CW = 400, CH = 300, dpr = 1;
+function fit(){
+  const w = stage.clientWidth, h = stage.clientHeight;
+  SP = Math.min(w/GW, h/GH); CW = GW*SP; CH = GH*SP;
+  dpr = Math.min(3, window.devicePixelRatio || 1);
+  cv.style.width = CW + 'px'; cv.style.height = CH + 'px';
+  cv.width = Math.round(CW*dpr); cv.height = Math.round(CH*dpr);
+}
+new ResizeObserver(fit).observe(stage);
+function gridForScreen(){ GW = 14; GH = 12; }
+
+const TINT = 0;
+function renderFills(T, now){
+  let anim = false;
+  for (let k=1;k<faces.length;k++){ const f = faces[k]; if (f && f.ink && (isAnimated(f.ink) || now - f.born < 600)) anim = true; }
+  if (!anim && !fillDirty) return;
+  fillDirty = false;
+  const d = fillImg.data, out = [0,0,0];
+  const alpha = faces.map(f => f && f.ink ? Math.min(1, Math.max(0, (now - f.born)/550))*255 : 0);
+  for (let p=0, y=0; y<RH; y++){
+    for (let x=0; x<RW; x++, p++){
+      const k = labD[p], o = p*4, f = k > 0 ? faces[k] : null;
+      if (!f || !f.ink){ d[o+3] = 0; continue; }
+      inkInto(f.ink, (x + y)/K, T, out);   // one page-wide gradient that repeats about once per square
+      d[o]   = out[0] + (PAPER[0]-out[0])*TINT;
+      d[o+1] = out[1] + (PAPER[1]-out[1])*TINT;
+      d[o+2] = out[2] + (PAPER[2]-out[2])*TINT;
+      d[o+3] = alpha[k];
+    }
+  }
+  fctx.putImageData(fillImg, 0, 0);
+}
+
+/* flat stickers in the palette */
+function poly(c, pts){ c.beginPath(); pts.forEach(([x,y],i) => i ? c.lineTo(x,y) : c.moveTo(x,y)); c.closePath(); }
+const STICKERS = {
+  star(c){ const p=[]; for (let i=0;i<10;i++){ const a = -Math.PI/2 + i*Math.PI/5, r = i%2 ? .2 : .46; p.push([Math.cos(a)*r, Math.sin(a)*r+.03]); } poly(c,p); c.fillStyle=C.mustard; c.fill(); },
+  heart(c){ c.beginPath(); c.moveTo(0,.38); c.bezierCurveTo(-.55,0,-.32,-.46,0,-.18); c.bezierCurveTo(.32,-.46,.55,0,0,.38); c.fillStyle=C.coral; c.fill(); },
+  flower(c){ c.fillStyle=C.blush; for (let i=0;i<5;i++){ const a = i*Math.PI*2/5 - Math.PI/2; c.beginPath(); c.arc(Math.cos(a)*.22, Math.sin(a)*.22, .17, 0, 7); c.fill(); } c.fillStyle=C.mustard; c.beginPath(); c.arc(0,0,.13,0,7); c.fill(); },
+  sun(c){ c.strokeStyle=C.mustard; c.lineWidth=.07; c.lineCap='round'; for (let i=0;i<8;i++){ const a=i*Math.PI/4; c.beginPath(); c.moveTo(Math.cos(a)*.32,Math.sin(a)*.32); c.lineTo(Math.cos(a)*.45,Math.sin(a)*.45); c.stroke(); } c.fillStyle=C.mustard; c.beginPath(); c.arc(0,0,.24,0,7); c.fill(); },
+  moon(c){ c.beginPath(); c.arc(0,0,.38,Math.PI*.35,Math.PI*1.65,false); c.arc(.16,-.02,.3,Math.PI*1.45,Math.PI*.55,true); c.closePath(); c.fillStyle=C.lavender; c.fill(); },
+  cloud(c){ c.fillStyle='#c9dbe8'; [[-.2,.06,.17],[.02,-.06,.22],[.22,.06,.16]].forEach(([x,y,r]) => { c.beginPath(); c.arc(x,y,r,0,7); c.fill(); }); c.fillRect(-.2,.06,.42,.17); },
+  rainbow(c){ c.lineWidth=.085; [C.coral,C.mustard,C.sage,C.sky].forEach((col,i) => { c.strokeStyle=col; c.beginPath(); c.arc(0,.2,.4-i*.085,Math.PI,0); c.stroke(); }); },
+  unicorn(c){
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    [[-.13,-.17,.1,C.coral],[-.24,-.04,.11,C.mustard],[-.29,.12,.1,C.sky],[-.29,.28,.09,C.lavender]].forEach(([x,y,r,col]) => { c.fillStyle = col; c.beginPath(); c.arc(x,y,r,0,7); c.fill(); });
+    c.beginPath(); c.moveTo(-.2,.44); c.lineTo(-.2,.02); c.quadraticCurveTo(-.16,-.2,.04,-.21); c.quadraticCurveTo(.16,-.2,.22,-.08);
+    c.lineTo(.37,.07); c.quadraticCurveTo(.43,.17,.32,.21); c.lineTo(.2,.2); c.quadraticCurveTo(.1,.18,.07,.24); c.lineTo(.12,.44); c.closePath();
+    c.fillStyle = '#ffffff'; c.fill(); c.strokeStyle = '#8f88a3'; c.lineWidth = .028; c.stroke();
+    c.beginPath(); c.moveTo(-.07,-.17); c.lineTo(-.02,-.34); c.lineTo(.04,-.2); c.closePath(); c.fillStyle = '#ffffff'; c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(.06,-.2); c.lineTo(.2,-.47); c.lineTo(.15,-.15); c.closePath(); c.fillStyle = C.mustard; c.fill();
+    c.fillStyle = C.plum; c.beginPath(); c.arc(.14,-.05,.028,0,7); c.fill();
+    c.fillStyle = 'rgba(239,169,160,.7)'; c.beginPath(); c.arc(.24,.09,.045,0,7); c.fill();
+  },
+  leaf(c){ c.save(); c.rotate(-.6); c.beginPath(); c.moveTo(0,-.42); c.quadraticCurveTo(.3,0,0,.42); c.quadraticCurveTo(-.3,0,0,-.42); c.fillStyle=C.sage; c.fill(); c.strokeStyle='#6f9a67'; c.lineWidth=.035; c.beginPath(); c.moveTo(0,-.32); c.lineTo(0,.36); c.stroke(); c.restore(); },
+};
+function drawSticker(c, name, x, y, size, rot, scale){ c.save(); c.translate(x, y); c.rotate(rot); c.scale(size*scale, size*scale); STICKERS[name](c); c.restore(); }
+
+/* custom stickers made with Claude, kept on this device */
+let customs = [];
+const customImg = {};
+try { customs = JSON.parse(localStorage.getItem('sparkle-dots-custom-v1') || '[]'); } catch(e){ customs = []; }
+function saveCustoms(){ try { localStorage.setItem('sparkle-dots-custom-v1', JSON.stringify(customs)); } catch(e){} }
+function loadCustom(c, done){
+  const img = new Image();
+  img.onload = () => { customImg[c.id] = img; outlineCache.clear(); if (done) done(); };
+  img.src = c.png || ('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(c.svg));
+}
+function sparkShape(c, x, y, r){
+  c.beginPath(); c.moveTo(x, y-r);
+  c.quadraticCurveTo(x, y, x+r, y); c.quadraticCurveTo(x, y, x, y+r); c.quadraticCurveTo(x, y, x-r, y); c.quadraticCurveTo(x, y, x, y-r);
+}
+function drawRaw(c, name, x, y, size){   // returns false if not ready
+  if (name === 'sparkle'){ c.fillStyle = '#f2c55c'; sparkShape(c, x, y, size*0.42); c.fill(); return true; }
+  if (name.startsWith('custom:')){ const img = customImg[name.slice(7)]; if (!img) return false; c.drawImage(img, x-size*0.46, y-size*0.46, size*0.92, size*0.92); return true; }
+  if (!STICKERS[name]) return false;
+  drawSticker(c, name, x, y, size, 0, 1); return true;
+}
+/* bitmap of a sticker with a thin dark outline, cached by size */
+const outlineCache = new Map();
+function outlined(name, px, ring){
+  px = Math.max(24, Math.round(px/4)*4);
+  const key = name + '@' + px + '@' + ring;
+  if (outlineCache.has(key)) return outlineCache.get(key);
+  const pad = Math.ceil(ring) + 4, W = px + pad*2;
+  const base = document.createElement('canvas'); base.width = base.height = W;
+  if (!drawRaw(base.getContext('2d'), name, W/2, W/2, px)) return null;
+  const sil = document.createElement('canvas'); sil.width = sil.height = W;
+  const sc = sil.getContext('2d'); sc.drawImage(base, 0, 0); sc.globalCompositeOperation = 'source-in'; sc.fillStyle = '#26232d'; sc.fillRect(0, 0, W, W);
+  const out = document.createElement('canvas'); out.width = out.height = W;
+  const oc = out.getContext('2d');
+  for (let a=0; a<16; a++) oc.drawImage(sil, Math.cos(a*Math.PI/8)*ring, Math.sin(a*Math.PI/8)*ring);
+  oc.drawImage(base, 0, 0);
+  outlineCache.set(key, out);
+  return out;
+}
+
+function softStar(x, y, r, a){
+  ctx.globalAlpha = a; ctx.fillStyle = '#f2c55c'; ctx.strokeStyle = '#26232d'; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+  sparkShape(ctx, x, y, r); ctx.stroke(); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+const hash = (a,b,k=0) => { const x = Math.sin(a*127.1 + b*311.7 + k*74.7)*43758.5453; return x - Math.floor(x); };
+const easeOut = k => 1 - Math.pow(1-k, 3);
+const LINE = '#26232d';
+
+let rings = [], drag = null;
+function frame(now){
+  const T = now/1000*SPEED;
+  const P = i => (i + 0.5)*SP;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,CW,CH);
+
+  renderFills(T, now);
+  ctx.imageSmoothingEnabled = true; ctx.drawImage(fillCv, 0, 0, CW, CH);
+
+  ctx.fillStyle = 'rgba(38,35,48,.2)';   // light gray on white, a darker tint on fills
+  const dr = Math.max(3, SP*0.055);
+  for (let j=0;j<GH;j++) for (let i=0;i<GW;i++){ ctx.beginPath(); ctx.arc(P(i), P(j), dr, 0, 7); ctx.fill(); }
+
+  const lw = Math.max(5, Math.min(10, SP*0.1));
+  ctx.lineCap = 'round'; ctx.lineWidth = lw; ctx.strokeStyle = LINE;
+  segs.forEach(s => {
+    const f = s.born ? easeOut(Math.max(0, Math.min(1, (now - s.born)/200))) : 1;
+    if (f <= 0) return;
+    const x1 = P(s.a[0]), y1 = P(s.a[1]), x2 = x1 + (P(s.b[0])-x1)*f, y2 = y1 + (P(s.b[1])-y1)*f;
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  });
+
+  if (drag && drag.moved){
+    const x1 = P(drag.last[0]), y1 = P(drag.last[1]);
+    if (mode === 'erase'){
+      ctx.setLineDash([2, lw*1.4]); ctx.strokeStyle = 'rgba(68,64,79,.45)';
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(drag.fx*SP, drag.fy*SP); ctx.stroke(); ctx.setLineDash([]);
+    } else {
+      ctx.globalAlpha = 0.3; ctx.strokeStyle = LINE;
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(drag.fx*SP, drag.fy*SP); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = mode === 'erase' ? 'rgba(68,64,79,.35)' : LINE;
+    ctx.beginPath(); ctx.arc(x1, y1, lw*1.3, 0, 7); ctx.fill();
+  }
+
+  rings = rings.filter(r => now - r.born < 500);
+  rings.forEach(r => { const k = (now - r.born)/500; ctx.globalAlpha = (1-k)*0.5; ctx.strokeStyle = r.color; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(r.x, r.y, lw*0.6 + k*SP*0.45, 0, 7); ctx.stroke(); ctx.globalAlpha = 1; });
+
+  sparks.forEach((p, n) => {
+    const s = Math.sin(T*1.8 + hash(n, p.x*7 + p.y)*6.28);      // gentle twinkle; never disappears
+    softStar(P(p.x), P(p.y), SP*0.22*((p.s || 1.3)/1.3)*(0.82 + 0.18*s), 0.78 + 0.22*s);
+  });
+
+  stickers.forEach(s => {
+    const k = s.born ? Math.min(1, (now - s.born)/260) : 1, sc = 0.85 + 0.15*easeOut(k);
+    const bmp = outlined(s.e, s.s*SP*dpr, 2*dpr); if (!bmp) return;
+    const w = bmp.width/dpr*sc;
+    ctx.save(); ctx.translate(P(s.x), P(s.y)); ctx.rotate(s.rot); ctx.drawImage(bmp, -w/2, -w/2, w, w); ctx.restore();
+  });
+
+  if (sizePreview){
+    const k = sizePreview.until ? Math.max(0, 1 - (now - sizePreview.until)/350) : 1;
+    if (k <= 0) sizePreview = null;
+    else {
+      const cxp = CW/2, cyp = CH/2;
+      ctx.globalAlpha = 0.6*k;
+      if (stickerPick === 'sparkle') softStar(cxp, cyp, SP*0.22*(stickerScale/1.3), 1);
+      else { const bmp = outlined(stickerPick, stickerScale*SP*dpr, 2*dpr); if (bmp){ const w = bmp.width/dpr; ctx.drawImage(bmp, cxp - w/2, cyp - w/2, w, w); } }
+      ctx.globalAlpha = 0.35*k; ctx.strokeStyle = '#44404f'; ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+      const rr = stickerScale*SP*0.55; ctx.beginPath(); ctx.arc(cxp, cyp, rr, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  requestAnimationFrame(frame);
+}
+
+/* ================= sound ================= */
+let actx = null;
+function ensureAudio(){
+  if (!actx){ try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ actx = null; } }
+  if (actx && actx.state === 'suspended') actx.resume().catch(()=>{});
+}
+function tone(freq, dur=0.35, vol=0.035, when=0){
+  return;  // the toy is silent
+  if (!soundOn || !actx) return;
+  try {
+    const t = actx.currentTime + when, o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t+0.008); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+    o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t+dur+0.03);
+  } catch(e){}
+}
+const PENTA = [0,2,4,7,9];
+function noteFor(j){ const i = Math.round((GH-1-j)/(GH-1)*9); return 293.66*Math.pow(2, (12*Math.floor(i/5) + PENTA[i%5])/12); }
+
+/* ================= editing ================= */
+function snapshot(){ const clean = a => a.map(o => ({...o, born:0})); return JSON.stringify({GW, GH, density, segs:clean(segs), seeds:clean(seeds), sparks, stickers:clean(stickers)}); }
+function restore(json){
+  const d = JSON.parse(json);
+  GW = d.GW; GH = d.GH; density = d.density || density;
+  segs = d.segs || []; seeds = d.seeds || []; sparks = d.sparks || []; stickers = d.stickers || [];
+  allocRaster(); recompute(false); fit(); syncSettings();
+}
+function pushUndo(){ undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); }
+function save(){ try { localStorage.setItem('sparkle-dots-white-v4', snapshot()); } catch(e){} }
+
+const same = (a,b) => !!a && !!b && a.k === b.k && a.v === b.v;
+const mirX = x => GW - 1 - x;
+function gcd(a, b){ while (b){ [a, b] = [b, a % b]; } return a; }
+function pieces(a, b){  // split a line at every dot it passes through
+  const dx = b[0]-a[0], dy = b[1]-a[1], g = gcd(Math.abs(dx), Math.abs(dy)) || 1, out = [];
+  for (let i=0;i<g;i++) out.push([[a[0]+dx*i/g, a[1]+dy*i/g], [a[0]+dx*(i+1)/g, a[1]+dy*(i+1)/g]]);
+  return out;
+}
+function segKey(a, b){ const k1 = a.join(','), k2 = b.join(','); return k1 < k2 ? k1+'|'+k2 : k2+'|'+k1; }
+function addLine(a, b, now){
+  pieces(a, b).forEach(([p, q], i) => {
+    const key = segKey(p, q), hit = segs.find(s => segKey(s.a, s.b) === key);
+    if (!hit) segs.push({a:p, b:q, born: now + i*60});
+  });
+}
+function eraseLine(a, b){
+  const keys = new Set(pieces(a, b).map(([p, q]) => segKey(p, q)));
+  const n = segs.length; segs = segs.filter(s => !keys.has(segKey(s.a, s.b)));
+  return segs.length !== n;
+}
+function linePairs(a, b){
+  const out = [[a, b]];
+  if (mirror){ const ma = [mirX(a[0]), a[1]], mb = [mirX(b[0]), b[1]]; if (segKey(ma, mb) !== segKey(a, b)) out.push([ma, mb]); }
+  return out;
+}
+function commitTo(dot, now){
+  const a = drag.last;
+  if (a[0] === dot[0] && a[1] === dot[1]) return;
+  drag.last = dot;
+  if (mode === 'erase'){
+    let gone = false;
+    linePairs(a, dot).forEach(([p, q]) => { if (eraseLine(p, q)) gone = true; });
+    if (gone){
+      if (!drag.undone){ undoStack.push(drag.before); drag.undone = true; }
+      recompute(false); tone(220, .15, .025);
+    }
+    return;
+  }
+  if (!drag.undone){ undoStack.push(drag.before); drag.undone = true; }
+  linePairs(a, dot).forEach(([p, q]) => addLine(p, q, now));
+  tone(noteFor(dot[1]));
+  rings.push({x:(dot[0]+.5)*SP, y:(dot[1]+.5)*SP, born:now, color:'#b5b2bf'});
+  if (recompute(true).length){ tone(587.33, .6, .03, .05); tone(880, .8, .025, .14); }
+}
+function distSeg(px, py, a, b){
+  const vx = b[0]-a[0], vy = b[1]-a[1], l = vx*vx + vy*vy;
+  let t = l ? ((px-a[0])*vx + (py-a[1])*vy)/l : 0; t = Math.max(0, Math.min(1, t));
+  const dx = a[0] + vx*t - px, dy = a[1] + vy*t - py; return Math.sqrt(dx*dx + dy*dy);
+}
+function points(fx, fy){ const p = [[fx, fy]]; if (mirror && Math.abs(mirX(fx) - fx) > 0.2) p.push([mirX(fx), fy]); return p; }
+
+/* tap inside a shape: it takes the color */
+function tapColor(fx, fy, now){
+  let changed = false;
+  points(fx, fy).forEach(([x, y]) => {
+    const k = regionAt(x, y);
+    if (k > 0 && faces[k] && !same(faces[k].ink, ink)){ faces[k].ink = {...ink}; faces[k].born = now - 250; changed = true; }
+  });
+  if (changed){ fillDirty = true; tone(noteFor(Math.round(fy)), .3, .03); }
+  return changed;
+}
+
+/* ================= pointer on the drawing ================= */
+function fpos(e){ const r = cv.getBoundingClientRect(); return [(e.clientX - r.left)/r.width*GW - 0.5, (e.clientY - r.top)/r.height*GH - 0.5]; }
+const cx = q => Math.max(0, Math.min(GW-1, Math.round(q))), cy = q => Math.max(0, Math.min(GH-1, Math.round(q)));
+let active = false, lastF = null, downAt = null;
+function stickerHit(fx, fy){
+  for (let i=stickers.length-1;i>=0;i--){ const s = stickers[i]; if (Math.abs(s.x-fx) < s.s*0.5 && Math.abs(s.y-fy) < s.s*0.5) return i; }
+  return -1;
+}
+function sparkHit(fx, fy){ return sparks.findIndex(p => Math.hypot(p.x-fx, p.y-fy) < 0.35); }
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault(); ensureAudio(); closeDrawer();
+  try { cv.setPointerCapture(e.pointerId); } catch(_){}
+  const [fx, fy] = fpos(e), now = performance.now();
+  if (mode === 'sticker'){                       // pick a sticker, tap to place it
+    pushUndo();
+    points(fx, fy).forEach(([x, y]) => {
+      const r = (a, b) => a + Math.random()*(b - a);
+      const sz = stickerScale * (shuffle ? r(0.7, 1.35) : 1);
+      const px = x + (shuffle ? r(-0.6, 0.6) : 0), py = y + (shuffle ? r(-0.6, 0.6) : 0);
+      const rot = shuffle ? r(-0.5, 0.5) : r(-0.12, 0.12);
+      if (stickerPick === 'sparkle') sparks.push({x:px, y:py, s:sz});
+      else stickers.push({e:stickerPick, x:px, y:py, s:sz, rot, born:now});
+    });
+    tone(523.25, .25, .035); tone(784, .3, .025, .06); save();
+    return;
+  }
+  if (mode === 'erase'){                         // tapping a sticker or sparkle removes it
+    const si = stickerHit(fx, fy), pi = si < 0 ? sparkHit(fx, fy) : -1;
+    if (si >= 0 || pi >= 0){
+      pushUndo();
+      if (si >= 0) stickers.splice(si, 1); else sparks.splice(pi, 1);
+      tone(330, .2, .03); save();
+      return;
+    }
+  }
+  active = true; lastF = [fx, fy]; downAt = [fx, fy];
+  drag = {last:[cx(fx), cy(fy)], fx:fx+.5, fy:fy+.5, undone:false, moved:false, before:snapshot()};
+});
+cv.addEventListener('pointermove', e => {
+  if (!active) return;
+  const [fx, fy] = fpos(e), now = performance.now();
+  if (Math.hypot(fx-downAt[0], fy-downAt[1]) > 0.25) drag.moved = true;
+  const steps = Math.max(1, Math.ceil(Math.hypot(fx-lastF[0], fy-lastF[1]) / 0.15));
+  for (let s=1; s<=steps; s++){
+    const x = lastF[0] + (fx-lastF[0])*s/steps, y = lastF[1] + (fy-lastF[1])*s/steps;
+    const dot = [cx(x), cy(y)]; if (Math.hypot(dot[0]-x, dot[1]-y) < 0.36) commitTo(dot, now);
+  }
+  drag.fx = fx + .5; drag.fy = fy + .5;
+  lastF = [fx, fy];
+});
+function endStroke(){
+  if (!active) return; active = false;
+  if (drag && !drag.moved && !drag.undone && mode === 'draw'){
+    if (tapColor(downAt[0], downAt[1], performance.now())) undoStack.push(drag.before);
+  } else if (drag && !drag.moved && !drag.undone && mode === 'erase'){
+    const k = regionAt(downAt[0], downAt[1]);
+    if (k > 0 && faces[k] && faces[k].ink){ undoStack.push(drag.before); faces[k].ink = null; fillDirty = true; }
+  }
+  drag = null; save();
+}
+cv.addEventListener('pointerup', endStroke);
+cv.addEventListener('pointercancel', endStroke);
+
+/* ================= color rail ================= */
+const right = document.getElementById('right');
+const ICON_SPARK = '<svg viewBox="0 0 24 24"><path d="M12 4c.7 5 2.6 7 7.5 7.6-4.9.7-6.8 2.6-7.5 7.6-.7-5-2.6-6.9-7.5-7.6C9.4 11 11.3 9 12 4z"/></svg>';
+const ICON_ERASE = '<svg viewBox="0 0 24 24"><path d="M3.5 15.5l8-8 7 7-4.5 4.5H7.5z"/><path d="M8 11l7 7"/><path d="M15 19.5h5.5"/></svg>';
+function dotBtn(label, bg, pressed, onPick, opts={}){
+  const b = document.createElement('button');
+  b.className = 'dot' + (opts.drift ? ' drift' : '') + (opts.plain ? ' plain' : '');
+  if (bg) b.style.background = bg; if (opts.drift) b.style.backgroundSize = '200% 200%';
+  if (opts.icon) b.innerHTML = opts.icon;
+  b.setAttribute('aria-label', label); b.setAttribute('aria-pressed', pressed);
+  b.addEventListener('click', () => { ensureAudio(); onPick(); tone(659.25, .18, .025); renderRail(); });
+  return b;
+}
+function renderRail(){
+  right.innerHTML = '';
+  const base = document.createElement('div'); base.className = 'col'; right.append(base);
+  COLORS.forEach(([name, c]) => base.append(dotBtn(name, c, mode==='draw' && same(ink,{k:'c',v:c}), () => { mode = 'draw'; ink = {k:'c', v:c}; })));
+  const ex = document.createElement('div'); ex.className = 'col'; right.append(ex);
+  GRADS.forEach((g, i) => ex.append(dotBtn('Gradient '+(i+1), swatchCss({k:'g',v:i}), mode==='draw' && same(ink,{k:'g',v:i}), () => { mode = 'draw'; ink = {k:'g', v:i}; })));
+  Object.keys(MAGIC).forEach(id => ex.append(dotBtn(MAGIC[id].name, MAGIC[id].css, mode==='draw' && same(ink,{k:'m',v:id}), () => { mode = 'draw'; ink = {k:'m', v:id}; }, {drift:true})));
+  const sep = document.createElement('span'); sep.className = 'sep'; ex.append(sep);
+  ex.append(dotBtn('Eraser', '', mode==='erase', () => mode = 'erase', {plain:true, icon:ICON_ERASE}));
+  if (typeof renderStickers === 'function' && stickRail) renderStickers();
+}
+
+const $ = id => document.getElementById(id);
+/* ================= sticker palette ================= */
+const stickRail = document.getElementById('stickers');
+function closeDrawer(){}
+function iconCanvas(name){
+  const c = document.createElement('canvas'); c.width = c.height = 92;
+  const bmp = outlined(name, 76, 3);
+  if (bmp) c.getContext('2d').drawImage(bmp, (92 - bmp.width)/2, (92 - bmp.height)/2);
+  return c;
+}
+let sample = null;
+function renderStickers(){
+  stickRail.innerHTML = '';
+  const wrap = document.createElement('div'); wrap.className = 'stkcols'; stickRail.append(wrap);
+  const names = ['sparkle', ...Object.keys(STICKERS), ...customs.map(c => 'custom:' + c.id)];
+  const cols = [document.createElement('div'), document.createElement('div')];
+  cols.forEach(c => { c.className = 'col'; wrap.append(c); });
+  const items = names.map(name => {
+    const b = dotBtn(name === 'sparkle' ? 'Sparkle' : name.startsWith('custom:') ? 'Your sticker' : 'Sticker: ' + name, '', mode === 'sticker' && stickerPick === name, () => { mode = 'sticker'; stickerPick = name; }, {plain:true});
+    b.classList.add('stk'); b.append(iconCanvas(name));
+    return b;
+  });
+  {
+    const m = document.createElement('button');
+    m.className = 'dot magic'; m.setAttribute('aria-label', 'Make a new sticker');
+    m.innerHTML = '<svg viewBox="0 0 24 24" style="color:#fff"><path d="M5 19L15 9"/><path d="M15 4v3M15 11v3M11.5 7.5h-2M20.5 7.5h-2M17.5 5l-1.2 1.2M13.7 8.8l-1.2 1.2"/></svg>';
+    m.addEventListener('click', openMagic);
+    items.push(m);
+  }
+  const half = Math.ceil(items.length/2);
+  items.forEach((b, i) => cols[i < half ? 0 : 1].append(b));
+
+  // size slider (with a passing preview) and shuffle toggle
+  const tools = document.createElement('div'); tools.className = 'stktools';
+  const size = document.createElement('div'); size.className = 'size';
+  size.innerHTML = '<span class="tiny" aria-hidden="true"></span><input class="scale" id="stickerSize" type="range" min="0.6" max="3" step="0.05" aria-label="Sticker size"><span class="big" aria-hidden="true"></span>';
+  const slider = size.querySelector('input'); slider.value = stickerScale;
+  const ping = () => { sizePreview = {until:0}; };
+  slider.addEventListener('pointerdown', ping);
+  slider.addEventListener('input', () => { stickerScale = parseFloat(slider.value); ping(); });
+  ['change','pointerup','pointercancel','blur'].forEach(ev => slider.addEventListener(ev, () => { if (sizePreview) sizePreview.until = performance.now() + 250; }));
+  const dice = dotBtn('Shuffle size and spot', '', shuffle, () => { shuffle = !shuffle; }, {plain:true, icon:'<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><circle cx="9" cy="9" r="1.2" fill="currentColor"/><circle cx="15" cy="15" r="1.2" fill="currentColor"/><circle cx="15" cy="9" r="1.2" fill="currentColor"/><circle cx="9" cy="15" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>'});
+  tools.append(size, dice);
+  stickRail.append(tools);
+}
+customs.forEach(c => loadCustom(c, renderStickers));
+
+/* ================= magic sticker (asks Claude for a flat SVG) ================= */
+const PALETTE_HEX = ['#e5735c','#f0b545','#93bb8a','#4c9a96','#7fb2d6','#a497cf','#efa9a0','#44404f','#ffffff','#c9dbe8'];
+let magicBusy = false;
+function cleanSvg(svg){
+  if (typeof svg !== 'string') return null;
+  const doc = new DOMParser().parseFromString(svg.trim(), 'image/svg+xml');
+  const root = doc.documentElement;
+  if (!root || root.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) return null;
+  const allowed = new Set(['svg','g','path','circle','ellipse','rect','polygon','polyline','line']);
+  for (const el of [...root.querySelectorAll('*')]){
+    if (!allowed.has(el.nodeName.toLowerCase())){ el.remove(); continue; }
+    for (const at of [...el.attributes]){ const n = at.name.toLowerCase(); if (n.startsWith('on') || n.includes('href') || /url\(/i.test(at.value)) el.removeAttribute(at.name); }
+  }
+  for (const at of [...root.attributes]){ const n = at.name.toLowerCase(); if (n.startsWith('on') || n.includes('href')) root.removeAttribute(at.name); }
+  root.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  if (!root.getAttribute('viewBox')) root.setAttribute('viewBox', '0 0 100 100');
+  root.setAttribute('width', '200'); root.setAttribute('height', '200');
+  if (!root.querySelector('*')) return null;
+  return new XMLSerializer().serializeToString(root);
+}
+/* --- OpenAI key, kept only in this browser --- */
+const KEY_STORE = 'sparkle-dots-openai-key', MODEL_STORE = 'sparkle-dots-openai-model';
+const getKey = () => { try { return localStorage.getItem(KEY_STORE) || ''; } catch(e){ return ''; } };
+const getModel = () => { try { return localStorage.getItem(MODEL_STORE) || 'gpt-image-2.6-sunburst'; } catch(e){ return 'gpt-image-2.6-sunburst'; } };
+function showKeyBox(on){
+  $('keyBox').hidden = !on; $('makeBox').hidden = on;
+  if (on){ $('keyInput').value = ''; $('keyInput').placeholder = getKey() ? 'A key is saved. Paste a new one to replace it.' : 'sk-…'; $('modelInput').value = getModel(); $('keyForget').hidden = !getKey(); $('keyInput').focus(); }
+  else { $('magicHint').textContent = getKey() ? 'Describe it in a few words. ChatGPT draws it, then it is matched to the toy’s colors.' : 'Describe it in a few words. Claude draws it in the toy’s colors.'; $('magicText').focus(); }
+}
+function openMagic(){ $('magicSheet').hidden = false; showKeyBox(!getKey() && !sample); }
+$('keyOpen').addEventListener('click', () => showKeyBox(true));
+$('keyCancel').addEventListener('click', () => { if (!getKey() && !sample) $('magicSheet').hidden = true; else showKeyBox(false); });
+$('keySave').addEventListener('click', () => {
+  const k = $('keyInput').value.trim(), m = $('modelInput').value.trim() || 'gpt-image-2.6-sunburst';
+  try { if (k) localStorage.setItem(KEY_STORE, k); localStorage.setItem(MODEL_STORE, m); } catch(e){}
+  if (!getKey() && !sample) return;
+  showKeyBox(false);
+});
+$('keyForget').addEventListener('click', () => { try { localStorage.removeItem(KEY_STORE); } catch(e){} if (sample) showKeyBox(false); else showKeyBox(true); });
+
+function setStatus(t){ $('magicPreview').innerHTML = ''; const p = document.createElement('p'); p.id = 'magicStatus'; p.textContent = t; $('magicPreview').append(p); }
+function showPreview(src, kind){
+  const img = new Image();
+  img.onload = () => {
+    customImg['preview'] = img; outlineCache.clear();
+    const c = document.createElement('canvas'); c.width = c.height = 260;
+    const bmp = outlined('custom:preview', 220, 4);
+    c.getContext('2d').drawImage(bmp, (260 - bmp.width)/2, (260 - bmp.height)/2);
+    $('magicPreview').innerHTML = ''; $('magicPreview').append(c); $('magicAdd').disabled = false;
+  };
+  img.onerror = () => setStatus("That one didn't come out. Try again or describe it a little differently.");
+  img.src = src;
+}
+
+/* snap a generated picture to the toy's colors, trim it, and return a small PNG */
+const SNAP = [...PALETTE_HEX, '#26232d'].map(hex2rgb);
+function snapToPalette(img){
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+  const x = c.getContext('2d'); x.drawImage(img, 0, 0, N, N);
+  const d = x.getImageData(0, 0, N, N), a = d.data;
+  // no transparency? flood the background away from the edges
+  const corners = [0, N-1, N*(N-1), N*N-1];
+  if (corners.every(p => a[p*4+3] > 200)){
+    const seen = new Uint8Array(N*N), q = [];
+    const near = (p, r, g, b) => { const o = p*4; return Math.abs(a[o]-r) + Math.abs(a[o+1]-g) + Math.abs(a[o+2]-b) < 60; };
+    corners.forEach(c => {
+      const r = a[c*4], g = a[c*4+1], b = a[c*4+2];
+      q.push(c);
+      while (q.length){
+        const p = q.pop(); if (seen[p] || !near(p, r, g, b)) continue;
+        seen[p] = 1; a[p*4+3] = 0;
+        const px = p % N, py = (p / N) | 0;
+        if (px > 0) q.push(p-1); if (px < N-1) q.push(p+1); if (py > 0) q.push(p-N); if (py < N-1) q.push(p+N);
+      }
+    });
+  }
+  let x0 = N, y0 = N, x1 = -1, y1 = -1;
+  for (let p=0; p<N*N; p++){
+    const o = p*4;
+    if (a[o+3] < 128){ a[o+3] = 0; continue; }
+    let best = 0, bd = 1e9;
+    for (let i=0;i<SNAP.length;i++){ const q = SNAP[i], dr = a[o]-q[0], dg = a[o+1]-q[1], db = a[o+2]-q[2], dd = 2*dr*dr + 4*dg*dg + 3*db*db; if (dd < bd){ bd = dd; best = i; } }
+    a[o] = SNAP[best][0]; a[o+1] = SNAP[best][1]; a[o+2] = SNAP[best][2]; a[o+3] = 255;
+    const px = p % N, py = (p / N) | 0; if (px<x0) x0=px; if (px>x1) x1=px; if (py<y0) y0=py; if (py>y1) y1=py;
+  }
+  if (x1 < 0) return null;
+  x.putImageData(d, 0, 0);
+  const w = x1-x0+1, h = y1-y0+1, side = Math.max(w, h), out = document.createElement('canvas'); out.width = out.height = 200;
+  const oc = out.getContext('2d'); oc.imageSmoothingEnabled = false;
+  const k = 200/side; oc.drawImage(c, x0, y0, w, h, (200 - w*k)/2, (200 - h*k)/2, w*k, h*k);
+  return out.toDataURL('image/png');
+}
+
+async function drawWithOpenAI(subject){
+  const prompt = `A single cute sticker of ${subject}, for a calm drawing app for a young child. Flat illustration with simple bold shapes and only a few solid colors from this soft palette: coral, mustard yellow, sage green, teal, sky blue, lavender, blush pink, white. No outline, no text, no shading or gradients, no shadow. One subject, centered, filling most of the frame, on a transparent background. Keep it friendly and suitable for a small child.`;
+  const req = {model:getModel(), prompt, size:'1024x1024', quality:'medium', background:'transparent', output_format:'png', n:1};
+  let res, body;
+  for (let attempt = 0; attempt < 4; attempt++){
+    res = await fetch('https://api.openai.com/v1/images/generations', {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer ' + getKey()},
+      body: JSON.stringify(req)
+    });
+    body = await res.json().catch(() => ({}));
+    if (res.status !== 400) break;
+    // a model that doesn't accept one of the optional settings: drop it and ask again
+    const info = ((body.error && (body.error.param || '')) + ' ' + (body.error && body.error.message || '')).toLowerCase();
+    const drop = ['background','output_format','quality','size'].find(k => k in req && info.includes(k));
+    if (!drop) break;
+    delete req[drop];
+  }
+  if (!res.ok){
+    const msg = (body.error && (body.error.code || body.error.type || '')) + '';
+    if (res.status === 401) throw {user:"The OpenAI key didn't work. Check it under Key."};
+    if (res.status === 429 || /quota|billing/i.test(msg)) throw {user:'OpenAI says the account is out of credit or busy. Check its spending limit, or try again in a minute.'};
+    if (/moderation|safety|content_policy/i.test(msg)) throw {user:"That one can't be drawn. Try describing something else."};
+    if (res.status === 404 || /model/i.test(msg)) throw {user:'OpenAI did not recognize the image model. Check the model name under Key.'};
+    throw {user:"That one didn't come out. Try again or describe it a little differently."};
+  }
+  const b64 = body.data && body.data[0] && body.data[0].b64_json;
+  if (!b64) throw {user:"That one didn't come out. Try again."};
+  const raw = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = 'data:image/png;base64,' + b64; });
+  const png = snapToPalette(raw);
+  if (!png) throw {user:"That one came out blank. Try again."};
+  return png;
+}
+async function drawWithClaude(subject){
+  const prompt = `You design one sticker for a calm drawing toy for a young child.
+Subject: ${subject}
+Return JSON exactly like {"svg":"<svg ...>...</svg>"}.
+Rules for the SVG: viewBox="0 0 100 100"; flat shapes only (path, circle, ellipse, rect, polygon, line, g); no text, no gradients, no images, no filters, no masks; transparent background; one friendly, simple, instantly recognizable picture, centered and filling about 85% of the box; at most 25 shapes; strokes, if any, no wider than 3.
+Use only these fill and stroke colors: ${PALETTE_HEX.join(', ')}.
+If the subject is not suitable for a young child, draw a smiling star instead.`;
+  try {
+    const out = await sample.json(prompt, {modelTier:'default'});
+    const svg = cleanSvg(out && out.svg);
+    if (!svg) throw new Error('bad svg');
+    return svg;
+  } catch(e){
+    if (e && e.code === 'not_granted') throw {user:'Making stickers needs permission to ask Claude. Allow it when asked, then try again.'};
+    if (e && e.code === 'rate_limited') throw {user:'Claude is busy. Wait a minute, then try again.'};
+    throw {user:"That one didn't come out. Try again or describe it a little differently."};
+  }
+}
+let magicResult = null;   // {png} or {svg}
+async function drawMagic(){
+  const subject = $('magicText').value.trim();
+  if (!subject || magicBusy) return;
+  if (!getKey() && !sample){ showKeyBox(true); return; }
+  magicBusy = true; $('magicGo').disabled = true; $('magicAdd').disabled = true; magicResult = null; setStatus('Drawing… this can take a little while.');
+  try {
+    if (getKey()){
+      try { magicResult = {png: await drawWithOpenAI(subject)}; }
+      catch(e){ if (!e.user && sample) magicResult = {svg: await drawWithClaude(subject)}; else throw e; }   // network blocked (e.g. inside claude.ai) → Claude
+    } else magicResult = {svg: await drawWithClaude(subject)};
+    showPreview(magicResult.png || ('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(magicResult.svg)));
+  } catch(e){
+    setStatus(e && e.user ? e.user : "Couldn't reach OpenAI from here. Check the internet connection and try again.");
+  }
+  magicBusy = false; $('magicGo').disabled = false;
+}
+$('magicGo').addEventListener('click', drawMagic);
+$('magicText').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); drawMagic(); } });
+$('magicAdd').addEventListener('click', () => {
+  if (!magicResult) return;
+  const c = {id: Date.now().toString(36), ...magicResult};
+  customs.push(c); saveCustoms();
+  loadCustom(c, () => { mode = 'sticker'; stickerPick = 'custom:' + c.id; renderStickers(); renderRail(); });
+  $('magicSheet').hidden = true; $('magicText').value = ''; setStatus('Your sticker will appear here.'); $('magicAdd').disabled = true; magicResult = null;
+});
+$('magicClose').addEventListener('click', () => $('magicSheet').hidden = true);
+$('magicSheet').addEventListener('click', e => { if (e.target === $('magicSheet')) $('magicSheet').hidden = true; });
+(async () => { try { if (window.claude && claude.use) sample = await claude.use('sample'); } catch(e){ sample = null; } if (sample) renderStickers(); })();
+
+/* ================= pull-down shade to clear ================= */
+const shade = document.getElementById('shade'), pull = document.getElementById('pull');
+let pulling = null, pullDist = 0;
+function setPull(h){ pullDist = h; shade.style.height = h + 'px'; pull.style.transform = `translateY(${Math.min(h, stage.clientHeight*0.5)}px)`; }
+pull.addEventListener('pointerdown', e => {
+  e.preventDefault(); closeDrawer();
+  try { pull.setPointerCapture(e.pointerId); } catch(_){}
+  stage.classList.remove('anim-shade'); pull.classList.remove('anim-pull'); pulling = {y:e.clientY};
+});
+pull.addEventListener('pointermove', e => { if (pulling) setPull(Math.max(0, Math.min(stage.clientHeight, (e.clientY - pulling.y)*1.6))); });
+function release(){
+  if (!pulling) return; pulling = null;
+  const H = stage.clientHeight;
+  stage.classList.add('anim-shade'); pull.classList.add('anim-pull');
+  if (pullDist > H*0.45){
+    setPull(H);
+    setTimeout(() => { wipe(); setTimeout(() => setPull(0), 140); }, 320);
+  } else setPull(0);
+}
+pull.addEventListener('pointerup', release);
+pull.addEventListener('pointercancel', release);
+pull.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown'){ e.preventDefault(); wipe(); } });
+
+function wipe(newDensity){
+  pushUndo();
+  if (newDensity) density = newDensity;
+  gridForScreen(); segs = []; seeds = []; sparks = []; stickers = [];
+  allocRaster(); recompute(false); fit(); syncSettings(); save();
+}
+
+/* ================= buttons & grown-up sheet ================= */
+$('undo').addEventListener('click', () => { ensureAudio(); const s = undoStack.pop(); if (s){ restore(s); save(); tone(392, .2, .03); } });
+function syncSettings(){}
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') $('magicSheet').hidden = true;
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z'){ e.preventDefault(); $('undo').click(); }
+});
+
+/* ================= a quiet starting picture ================= */
+function demo(){
+  gridForScreen(); allocRaster();
+  const ox = Math.floor((GW - 9)/2), oy = Math.floor((GH - 9)/2);
+  const at = (i, j) => [Math.max(0, Math.min(GW-1, i+ox)), Math.max(0, Math.min(GH-1, j+oy))];
+  segs = [];
+  const L = (pts, close) => { for (let i=0;i<pts.length-1+(close?1:0);i++){ const a = at(...pts[i]), b = at(...pts[(i+1)%pts.length]); pieces(a, b).forEach(([p,q]) => segs.push({a:p, b:q, born:0})); } };
+  L([[2,4],[6,4],[6,7],[2,7]], true);
+  L([[2,4],[4,2],[6,4]]);
+  L([[3,7],[3,5],[4,5],[4,7]]);
+  const sd = (i, j, inkv) => { const [x, y] = at(i, j); return {x:Math.round(toR(x + (i%1))), y:Math.round(toR(y + (j%1))), ink:inkv, born:0}; };
+  seeds = [sd(5,5.5,{k:'c',v:C.coral}), sd(4,3.2,{k:'c',v:C.teal}), sd(3.5,6,{k:'c',v:C.mustard})];
+  const [sx, sy] = at(7, 1);
+  sparks = [{x:sx-1.4, y:sy+0.3}, {x:sx-0.8, y:sy-0.5}];
+  stickers = [{e:'sun', x:sx+0.5, y:sy+0.5, s:1.5, rot:0, born:0}, {e:'flower', x:sx+0.5, y:sy+6.1, s:1.1, rot:.2, born:0}];
+}
+
+let loaded = false;
+try { const s = localStorage.getItem('sparkle-dots-white-v4'); if (s){ restore(s); loaded = true; } } catch(e){}
+if (!loaded){ demo(); recompute(false); }
+fit(); syncSettings(); renderRail();
+requestAnimationFrame(frame);
+})();
+</script>
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});</script>
+</body>
+</html>
