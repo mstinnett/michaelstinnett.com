@@ -585,14 +585,16 @@ function tapColor(fx, fy, now){
 /* ================= pointer on the drawing ================= */
 function fpos(e){ const r = cv.getBoundingClientRect(); return [(e.clientX - r.left)/r.width*GW - 0.5, (e.clientY - r.top)/r.height*GH - 0.5]; }
 const cx = q => Math.max(0, Math.min(GW-1, Math.round(q))), cy = q => Math.max(0, Math.min(GH-1, Math.round(q)));
-let active = false, lastF = null, downAt = null;
+let active = false, lastF = null, downAt = null, strokeId = null;   // strokeId: the one finger this stroke follows
 function stickerHit(fx, fy){
   for (let i=stickers.length-1;i>=0;i--){ const s = stickers[i]; if (Math.abs(s.x-fx) < s.s*0.5 && Math.abs(s.y-fy) < s.s*0.5) return i; }
   return -1;
 }
 function sparkHit(fx, fy){ return sparks.findIndex(p => Math.hypot(p.x-fx, p.y-fy) < 0.35); }
 cv.addEventListener('pointerdown', e => {
-  e.preventDefault(); ensureAudio(); closeDrawer();
+  e.preventDefault();
+  if (active) return;                            // a second finger mid-stroke is ignored
+  ensureAudio(); closeDrawer();
   try { cv.setPointerCapture(e.pointerId); } catch(_){}
   const [fx, fy] = fpos(e), now = performance.now();
   if (mode === 'sticker'){                       // pick a sticker, tap to place it
@@ -617,11 +619,11 @@ cv.addEventListener('pointerdown', e => {
       return;
     }
   }
-  active = true; lastF = [fx, fy]; downAt = [fx, fy];
+  active = true; strokeId = e.pointerId; lastF = [fx, fy]; downAt = [fx, fy];
   drag = {last:[cx(fx), cy(fy)], fx:fx+.5, fy:fy+.5, undone:false, moved:false, before:snapshot()};
 });
 cv.addEventListener('pointermove', e => {
-  if (!active) return;
+  if (!active || e.pointerId !== strokeId) return;
   const [fx, fy] = fpos(e), now = performance.now();
   if (Math.hypot(fx-downAt[0], fy-downAt[1]) > 0.25) drag.moved = true;
   const steps = Math.max(1, Math.ceil(Math.hypot(fx-lastF[0], fy-lastF[1]) / 0.15));
@@ -632,8 +634,8 @@ cv.addEventListener('pointermove', e => {
   drag.fx = fx + .5; drag.fy = fy + .5;
   lastF = [fx, fy];
 });
-function endStroke(){
-  if (!active) return; active = false;
+function endStroke(e){
+  if (!active || (e && e.pointerId !== strokeId)) return; active = false; strokeId = null;
   if (drag && !drag.moved && !drag.undone && mode === 'draw'){
     if (tapColor(downAt[0], downAt[1], performance.now())) undoStack.push(drag.before);
   } else if (drag && !drag.moved && !drag.undone && mode === 'erase'){
@@ -926,7 +928,8 @@ $('undo').addEventListener('click', () => { ensureAudio(); const s = undoStack.p
 function syncSettings(){}
 addEventListener('keydown', e => {
   if (e.key === 'Escape') $('magicSheet').hidden = true;
-  if ((e.metaKey || e.ctrlKey) && e.key === 'z'){ e.preventDefault(); $('undo').click(); }
+  const t = e.target, typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+  if (!typing && (e.metaKey || e.ctrlKey) && e.key === 'z'){ e.preventDefault(); $('undo').click(); }
 });
 
 /* ================= a quiet starting picture ================= */
