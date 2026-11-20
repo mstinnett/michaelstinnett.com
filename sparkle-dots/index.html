@@ -36,7 +36,7 @@ body{
   grid-template-areas:"stickers stage controls";
 }
 .controls{grid-area:controls; display:flex; flex-direction:column; align-items:center; justify-content:space-between; gap:16px; min-height:0}
-.topbar{display:flex; gap:14px; align-items:flex-start}
+.topbar{display:grid; grid-template-columns:repeat(2, auto); gap:14px; align-items:start; justify-items:center}
 .palette{display:flex; flex-direction:row; gap:14px; align-items:flex-start; padding:6px; overflow:auto; scrollbar-width:none; min-height:0}
 .palette::-webkit-scrollbar{display:none}
 .col{display:flex; flex-direction:column; gap:12px; align-items:center}
@@ -83,7 +83,7 @@ canvas#cv{display:block; touch-action:none}
 /* sticker palette (left) */
 .stickers{grid-area:stickers; display:flex; flex-direction:column; gap:16px; align-items:center; justify-content:center; overflow:auto; scrollbar-width:none; padding:6px; min-height:0}
 .stkcols{display:flex; flex-direction:row; gap:12px}
-.stktools{display:flex; flex-direction:column; align-items:center; gap:12px}
+.stktools{display:flex; flex-direction:column; align-items:center; gap:12px; border:2px solid var(--soft); border-radius:24px; padding:12px 14px}
 .size{display:flex; align-items:center; gap:6px}
 .size .tiny,.size .big{width:14px; height:14px; border-radius:50%; background:var(--soft); flex:none}
 .size .big{width:26px; height:26px}
@@ -109,7 +109,17 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
 .scrim[hidden]{display:none}
 .sheet{background:var(--paper); border-radius:28px; box-shadow:0 20px 60px rgba(68,64,79,.2); padding:24px; width:min(440px,100%); max-height:calc(var(--vv-h, 100vh) - 32px); overflow:auto; display:flex; flex-direction:column; gap:14px; font-size:17px; touch-action:pan-y}
 .voice{display:flex; align-items:center; gap:12px}
-.voice input{flex:1; min-width:0}
+.voice input,.voice textarea{flex:1; min-width:0}
+.voice textarea{resize:none; line-height:1.3; min-height:72px; max-height:132px; overflow-y:auto}
+.flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:4; border-radius:18px}
+.flash.go{animation:flash .45s ease-out}
+@keyframes flash{0%{opacity:.85}100%{opacity:0}}
+.shots{display:grid; grid-template-columns:repeat(auto-fill, minmax(118px, 1fr)); gap:12px}
+.shots button{appearance:none; border:0; padding:0; border-radius:16px; overflow:hidden; background:var(--button); aspect-ratio:7/6; cursor:pointer; touch-action:manipulation; box-shadow:0 0 0 1.5px var(--soft)}
+.shots button:focus-visible{outline:3px dashed var(--ink); outline-offset:2px}
+.shots img{width:100%; height:100%; object-fit:contain; display:block; pointer-events:none}
+.shotview img{width:100%; max-height:calc(var(--vv-h, 100vh) - 220px); object-fit:contain; border-radius:16px; box-shadow:0 0 0 1.5px var(--soft); -webkit-touch-callout:default; -webkit-user-select:auto; user-select:auto}
+.textbtn.danger{background:#e5735c; color:#fff}
 .mic{appearance:none; border:0; flex:none; width:72px; height:72px; border-radius:50%; display:grid; place-items:center; cursor:pointer; touch-action:manipulation; color:#fff; position:relative;
   background:conic-gradient(from 200deg,#efa9a0,#f5cf8f,#bfdba7,#a6cfe6,#c4b5e6,#efa9a0);
   box-shadow:none}
@@ -124,7 +134,7 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
 @media (prefers-reduced-motion:reduce){ .mic[aria-pressed="true"]::after{animation:none} }
 .sheet h2{margin:0; font-size:20px; font-weight:700}
 .sheet p{margin:0; color:#6c6778; font-size:15px; line-height:1.4}
-.sheet input{font:inherit; font-size:18px; padding:12px 14px; border-radius:14px; border:2px solid var(--soft); background:var(--button); color:var(--ink); width:100%}
+.sheet input,.sheet textarea{font:inherit; font-size:18px; padding:12px 14px; border-radius:14px; border:2px solid var(--soft); background:var(--button); color:var(--ink); width:100%}
 .sheet input:focus-visible{outline:none; border-color:var(--ink)}
 .preview{height:150px; display:grid; place-items:center; background:var(--button); border-radius:18px}
 .preview canvas{width:130px; height:130px}
@@ -154,12 +164,15 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
   <main class="stage" id="stage">
     <canvas id="cv" aria-label="Dots to draw on"></canvas>
     <div class="shade" id="shade"></div>
+    <div class="flash" id="flash"></div>
   </main>
 
   <aside class="controls" aria-label="Controls">
     <div class="topbar">
       <button class="btn" id="undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 6L4 11l5 5"/><path d="M4 11h10a5 5 0 0 1 0 10h-3"/></svg></button>
       <button class="pull" id="pull" aria-label="Pull down to clear the picture"><svg viewBox="0 0 24 24"><path d="M7 8l5 5 5-5"/><path d="M7 13l5 5 5-5"/></svg></button>
+      <button class="btn" id="shotBtn" aria-label="Take a picture"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="3"/><circle cx="12" cy="13.5" r="3.5"/><path d="M8.5 7l1.5-2.5h4L15.5 7"/></svg></button>
+      <button class="btn" id="libBtn" aria-label="Pictures"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M4 18l5-5 4 4 3-3 4 4"/></svg></button>
     </div>
     <div class="palette" id="right" aria-label="Colors"></div>
   </aside>
@@ -182,7 +195,7 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
     <div id="makeBox">
       <div class="voice">
         <button class="mic" id="micBtn" aria-label="Say what the sticker should be" aria-pressed="false"><svg class="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg><svg class="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor"/></svg></button>
-        <input id="magicText" type="text" maxlength="60" placeholder="or type it: a sleepy cat in a teacup" autocomplete="off" enterkeyhint="go">
+        <textarea id="magicText" rows="2" maxlength="400" placeholder="or type it: a sleepy cat in a teacup, with a pink blanket" autocomplete="off" enterkeyhint="go"></textarea>
       </div>
       <p id="magicHint">Tap the microphone and say what the sticker should be, or type it.</p>
       <div class="preview" id="magicPreview"><p id="magicStatus">Your sticker will appear here.</p></div>
@@ -192,6 +205,26 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
         <button class="textbtn" id="magicGo">Draw it</button>
         <button class="textbtn primary" id="magicAdd" disabled>Add sticker</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="shotsSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="shotsTitle">
+    <h2 id="shotsTitle">Pictures</h2>
+    <div id="shotsList">
+      <p id="shotsEmpty">Tap the camera to keep a picture of the drawing. The last five stay here.</p>
+      <div class="shots" id="shotsGrid"></div>
+    </div>
+    <div class="shotview" id="shotView" hidden>
+      <img id="shotImg" alt="Picture of the drawing">
+      <p id="shotHint" style="margin-top:8px"></p>
+    </div>
+    <div class="row">
+      <button class="textbtn" id="shotBack" hidden>Back</button>
+      <button class="textbtn" id="shotDelete" hidden>Delete</button>
+      <button class="textbtn primary" id="shotSave" hidden>Save to Photos</button>
+      <button class="textbtn primary" id="shotsClose">Done</button>
     </div>
   </div>
 </div>
@@ -470,7 +503,7 @@ const hash = (a,b,k=0) => { const x = Math.sin(a*127.1 + b*311.7 + k*74.7)*43758
 const easeOut = k => 1 - Math.pow(1-k, 3);
 const LINE = '#26232d';
 
-let rings = [], drag = null;
+let rings = [], drag = null, shotPending = null;   // shotPending: callback for the next clean frame
 function frame(now){
   const T = now/1000*SPEED;
   const P = i => (i + 0.5)*SP;
@@ -493,7 +526,7 @@ function frame(now){
     ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
   });
 
-  if (drag && drag.moved){
+  if (drag && drag.moved && !shotPending){
     const x1 = P(drag.last[0]), y1 = P(drag.last[1]);
     if (mode === 'erase'){
       ctx.setLineDash([2, lw*1.4]); ctx.strokeStyle = 'rgba(68,64,79,.45)';
@@ -507,7 +540,7 @@ function frame(now){
   }
 
   rings = rings.filter(r => now - r.born < 500);
-  rings.forEach(r => { const k = (now - r.born)/500; ctx.globalAlpha = (1-k)*0.5; ctx.strokeStyle = r.color; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(r.x, r.y, lw*0.6 + k*SP*0.45, 0, 7); ctx.stroke(); ctx.globalAlpha = 1; });
+  if (!shotPending) rings.forEach(r => { const k = (now - r.born)/500; ctx.globalAlpha = (1-k)*0.5; ctx.strokeStyle = r.color; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(r.x, r.y, lw*0.6 + k*SP*0.45, 0, 7); ctx.stroke(); ctx.globalAlpha = 1; });
 
   sparks.forEach((p, n) => {
     const s = Math.sin(T*1.8 + hash(n, p.x*7 + p.y)*6.28);      // gentle twinkle; never disappears
@@ -521,7 +554,7 @@ function frame(now){
     ctx.save(); ctx.translate(P(s.x), P(s.y)); ctx.rotate(s.rot); ctx.drawImage(bmp, -w/2, -w/2, w, w); ctx.restore();
   });
 
-  if (sizePreview){
+  if (sizePreview && !shotPending){
     const k = sizePreview.until ? Math.max(0, 1 - (now - sizePreview.until)/350) : 1;
     if (k <= 0) sizePreview = null;
     else {
@@ -535,6 +568,7 @@ function frame(now){
     }
   }
 
+  if (shotPending){ const done = shotPending; shotPending = null; cv.toBlob(b => done(b), 'image/png'); }
   requestAnimationFrame(frame);
 }
 
@@ -734,7 +768,7 @@ let sample = null;
 function renderStickers(){
   stickRail.innerHTML = '';
   const wrap = document.createElement('div'); wrap.className = 'stkcols'; stickRail.append(wrap);
-  const names = ['sparkle', ...Object.keys(STICKERS), ...shown().slice(-3).map(c => 'custom:' + c.id)];   // the three newest AI stickers
+  const names = ['sparkle', ...Object.keys(STICKERS), ...shown().slice(-4).map(c => 'custom:' + c.id)];   // the four newest AI stickers; full panel is 8 × 2
   const cols = [document.createElement('div'), document.createElement('div')];
   cols.forEach(c => { c.className = 'col'; wrap.append(c); });
   const items = names.map(name => {
@@ -742,7 +776,7 @@ function renderStickers(){
     b.classList.add('stk'); b.append(iconCanvas(name));
     return b;
   });
-  if (shown().length > 3){
+  if (shown().length > 4){
     const h = dotBtn('All your stickers', '', false, () => {}, {plain:true, icon:'<svg viewBox="0 0 24 24"><path d="M4 9h16v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19z"/><path d="M3 5.5h18V9H3z"/><path d="M10 13h4"/></svg>'});
     h.addEventListener('click', openHistory);
     items.push(h);
@@ -771,6 +805,84 @@ function renderStickers(){
   stickRail.append(tools);
 }
 customs.forEach(c => loadCustom(c, renderStickers));
+
+/* ================= pictures: camera + library of the last five ================= */
+const SHOT_KEEP = 5;
+let shotMem = [];   // used only if IndexedDB is unavailable
+const shotDB = (() => { let p = null; return () => p || (p = new Promise((ok, bad) => {
+  try { const r = indexedDB.open('sparkle-dots', 1); r.onupgradeneeded = () => r.result.createObjectStore('shots', {keyPath:'id'}); r.onsuccess = () => ok(r.result); r.onerror = () => bad(r.error); } catch(e){ bad(e); }
+})); })();
+const idb = (mode, fn) => shotDB().then(db => new Promise((ok, bad) => {   // resolves only once the transaction has committed
+  const tx = db.transaction('shots', mode), r = fn(tx.objectStore('shots'));
+  tx.oncomplete = () => ok(r.result);
+  tx.onabort = tx.onerror = () => bad(tx.error || r.error || new Error('transaction failed'));
+}));
+async function shotsStored(){ try { return await idb('readonly', st => st.getAll()); } catch(e){ return []; } }
+async function shotsAll(){   // database pictures plus any kept in memory after a failed write (for example, storage full); newest five
+  const stored = await shotsStored();
+  const seen = new Set(stored.map(s => s.id));
+  return [...stored, ...shotMem.filter(s => !seen.has(s.id))].sort((a, b) => b.id - a.id).slice(0, SHOT_KEEP);
+}
+async function shotAdd(blob){
+  const shot = {id: Date.now(), blob};
+  try { await idb('readwrite', st => st.put(shot)); }
+  catch(e){ shotMem.push(shot); }
+  // keep only the newest five across storage and memory, deleting the rest from both
+  const stored = await shotsStored(), all = [...stored, ...shotMem].sort((a, b) => b.id - a.id), keep = new Set(all.slice(0, SHOT_KEEP).map(s => s.id));
+  for (const old of stored) if (!keep.has(old.id)) { try { await idb('readwrite', st => st.delete(old.id)); } catch(e){} }
+  shotMem = shotMem.filter(s => keep.has(s.id));
+}
+async function shotRemove(id){ shotMem = shotMem.filter(s => s.id !== id); try { await idb('readwrite', st => st.delete(id)); } catch(e){} }
+
+$('shotBtn').addEventListener('click', () => {
+  if (shotPending) return;
+  shotPending = async blob => {
+    const f = $('flash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
+    if (blob) await shotAdd(blob);
+  };
+});
+let shotUrls = [], viewing = null;
+function clearUrls(){ shotUrls.forEach(u => URL.revokeObjectURL(u)); shotUrls = []; }
+async function showShots(){
+  viewing = null; clearUrls();
+  $('shotsList').hidden = false; $('shotView').hidden = true;
+  ['shotBack','shotDelete','shotSave'].forEach(id => $(id).hidden = true); $('shotsClose').hidden = false;
+  const all = await shotsAll(), g = $('shotsGrid'); g.innerHTML = '';
+  $('shotsEmpty').textContent = all.length ? 'Tap a picture to save it to Photos.' : 'Tap the camera to keep a picture of the drawing. The last five stay here.';
+  all.forEach(shot => {
+    const u = URL.createObjectURL(shot.blob); shotUrls.push(u);
+    const b = document.createElement('button'); b.setAttribute('aria-label', 'Picture from ' + new Date(shot.id).toLocaleString());
+    const img = document.createElement('img'); img.src = u; img.alt = ''; b.append(img);
+    b.addEventListener('click', () => showShot(shot, u));
+    g.append(b);
+  });
+}
+function showShot(shot, url){
+  viewing = shot;
+  $('shotsList').hidden = true; $('shotView').hidden = false; $('shotImg').src = url;
+  $('shotHint').textContent = '';
+  ['shotBack','shotDelete','shotSave'].forEach(id => $(id).hidden = false); $('shotsClose').hidden = true;
+  $('shotDelete').textContent = 'Delete'; $('shotDelete').classList.remove('danger');
+}
+$('libBtn').addEventListener('click', () => { $('shotsSheet').hidden = false; showShots(); });
+$('shotsClose').addEventListener('click', () => { $('shotsSheet').hidden = true; clearUrls(); });
+$('shotBack').addEventListener('click', showShots);
+$('shotDelete').addEventListener('click', async () => {
+  const b = $('shotDelete');
+  if (!b.classList.contains('danger')){ b.classList.add('danger'); b.textContent = 'Tap again to delete'; return; }
+  if (viewing) await shotRemove(viewing.id);
+  showShots();
+});
+$('shotSave').addEventListener('click', () => {
+  if (!viewing) return;
+  const name = 'sparkle-dots-' + new Date(viewing.id).toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.png';
+  const file = new File([viewing.blob], name, {type: 'image/png'});
+  // the share sheet has Save Image; if sharing isn't available, press-and-hold on the picture works
+  if (navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({files:[file]}).catch(e => { if (e && e.name !== 'AbortError') $('shotHint').textContent = 'Press and hold the picture, then choose Save to Photos.'; });
+  } else $('shotHint').textContent = 'Press and hold the picture, then choose Save to Photos.';
+});
+$('shotsSheet').addEventListener('click', e => { if (e.target === $('shotsSheet')){ $('shotsSheet').hidden = true; clearUrls(); } });
 
 /* ================= sticker history ================= */
 function promote(id){   // move a sticker back into the three palette slots
@@ -859,7 +971,7 @@ let listening = null;   // the current voice session: {stop, cancel, cancelled}
 function cancelVoice(){ if (listening){ listening.cancelled = true; listening.cancel(); listening = null; setMic(false); } }
 function closeMagic(){ cancelVoice(); if (typeof stopDrawing === 'function') stopDrawing(); $('magicSheet').hidden = true; }
 function setMic(on){ $('micBtn').setAttribute('aria-pressed', on ? 'true' : 'false'); }
-function heardIt(text){ text = (text || '').trim().replace(/[.!?]+$/, ''); if (!text) return false; $('magicText').value = text.slice(0, 60); drawMagic(); return true; }
+function heardIt(text){ text = (text || '').trim().replace(/[.!?]+$/, ''); if (!text) return false; $('magicText').value = text.slice(0, 400); $('magicText').dispatchEvent(new Event('input')); drawMagic(); return true; }
 function startVoice(){
   if (magicBusy) stopDrawing();
   if (listening){ listening.stop(); return; }
@@ -876,7 +988,7 @@ function startVoice(){
 function listenOnDevice(){
   let r;
   try { r = new SR(); } catch(e){ return getKey() && window.MediaRecorder ? recordForOpenAI() : setStatus("Voice isn't available here. Type it instead."); }
-  r.lang = navigator.language || 'en-US'; r.interimResults = true; r.maxAlternatives = 1; r.continuous = false;
+  r.lang = navigator.language || 'en-US'; r.interimResults = true; r.maxAlternatives = 1; r.continuous = true;   // keeps listening until stop
   let text = '', fallback = false, gotError = false;
   const session = listening = {cancelled:false, stop: () => { try { r.stop(); } catch(e){} }, cancel: () => { try { r.abort(); } catch(e){} }};
   setMic(true); setStatus('Listening… say what the sticker should be.');
@@ -940,7 +1052,7 @@ async function recordForOpenAI(ac){
     setStatus("I couldn't hear that. Tap the microphone and try again.");
   };
   rec.start(); setMic(true); setStatus('Listening… say what the sticker should be, then tap stop.');
-  timer = setTimeout(session.stop, 15000);   // never record longer than 15 seconds
+  timer = setTimeout(session.stop, 60000);   // never record longer than a minute
   // stop on its own a moment after she stops talking
   if (ac){
     try {
@@ -956,7 +1068,7 @@ async function recordForOpenAI(ac){
         floor = Math.min(floor, rms);
         const loud = rms > Math.max(0.02, floor*3);
         if (loud){ heardSpeech = true; quietSince = 0; }
-        else if (heardSpeech){ if (!quietSince) quietSince = now; else if (now - quietSince > 2500) return session.stop(); }   // tap stop to finish sooner
+        else if (heardSpeech){ if (!quietSince) quietSince = now; else if (now - quietSince > 4000) return session.stop(); }   // pauses mid-sentence are fine; tap stop to finish sooner
         else if (now - t0 > 5000) return session.stop();                            // nothing said at all
         raf = requestAnimationFrame(tick);
       };
@@ -1108,7 +1220,8 @@ async function drawMagic(){
 }
 function stopDrawing(){ if (magicAbort){ magicAbort.abort(); } }
 $('magicGo').addEventListener('click', () => { if (magicBusy) stopDrawing(); else drawMagic(); });
-$('magicText').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); drawMagic(); } });
+$('magicText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); drawMagic(); } });
+$('magicText').addEventListener('input', () => { const t = $('magicText'); t.style.height = 'auto'; t.style.height = Math.min(132, t.scrollHeight + 4) + 'px'; });
 $('magicAdd').addEventListener('click', () => {
   if (!magicResult) return;
   const c = {id: Date.now().toString(36), ...magicResult};
