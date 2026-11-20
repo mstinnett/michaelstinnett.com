@@ -24,7 +24,7 @@
   color-scheme: light;
 }
 *{box-sizing:border-box}
-html,body{height:100%;margin:0}
+html,body{height:100%;margin:0;position:fixed;inset:0;overflow:hidden;overscroll-behavior:none}
 body{
   background:var(--paper); color:var(--ink); font-family:var(--display); overflow:hidden;
   -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
@@ -100,9 +100,19 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
 .dot.stk canvas{width:46px; height:46px; position:relative; z-index:1; pointer-events:none}
 .dot.magic{background:conic-gradient(from 200deg,#efa9a0,#f5cf8f,#bfdba7,#a6cfe6,#c4b5e6,#efa9a0)}
 
-.scrim{position:fixed; inset:0; background:rgba(68,64,79,.28); display:grid; place-items:center; padding:20px; z-index:10}
+.scrim{position:fixed; left:0; right:0; top:var(--vv-top, 0px); height:var(--vv-h, 100%); background:rgba(68,64,79,.28); display:grid; place-items:center; padding:16px; z-index:10; touch-action:none}
 .scrim[hidden]{display:none}
-.sheet{background:var(--paper); border-radius:28px; box-shadow:0 20px 60px rgba(68,64,79,.2); padding:24px; width:min(440px,100%); display:flex; flex-direction:column; gap:14px; font-size:17px}
+.sheet{background:var(--paper); border-radius:28px; box-shadow:0 20px 60px rgba(68,64,79,.2); padding:24px; width:min(440px,100%); max-height:calc(var(--vv-h, 100vh) - 32px); overflow:auto; display:flex; flex-direction:column; gap:14px; font-size:17px; touch-action:pan-y}
+.voice{display:flex; align-items:center; gap:12px}
+.voice input{flex:1; min-width:0}
+.mic{appearance:none; border:0; flex:none; width:72px; height:72px; border-radius:50%; display:grid; place-items:center; cursor:pointer; touch-action:manipulation; color:#fff; position:relative;
+  background:conic-gradient(from 200deg,#efa9a0,#f5cf8f,#bfdba7,#a6cfe6,#c4b5e6,#efa9a0);
+  box-shadow:inset 0 -5px 0 rgba(0,0,0,.14), inset 0 3px 5px rgba(255,255,255,.45), 0 4px 0 rgba(0,0,0,.10), 0 8px 14px rgba(68,64,79,.16)}
+.mic svg{width:32px; height:32px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))}
+.mic[aria-pressed="true"]::after{content:""; position:absolute; inset:-8px; border-radius:50%; border:4px solid #e5735c; animation:listen 1.1s ease-in-out infinite}
+@keyframes listen{0%,100%{transform:scale(1); opacity:.9} 50%{transform:scale(1.12); opacity:.35}}
+.mic:focus-visible{outline:3px dashed var(--ink); outline-offset:5px}
+@media (prefers-reduced-motion:reduce){ .mic[aria-pressed="true"]::after{animation:none} }
 .sheet h2{margin:0; font-size:20px; font-weight:700}
 .sheet p{margin:0; color:#6c6778; font-size:15px; line-height:1.4}
 .sheet input{font:inherit; font-size:18px; padding:12px 14px; border-radius:14px; border:2px solid var(--soft); background:var(--button); color:var(--ink); width:100%}
@@ -161,8 +171,11 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
       </div>
     </div>
     <div id="makeBox">
-      <p id="magicHint">Describe it in a few words.</p>
-      <input id="magicText" type="text" maxlength="60" placeholder="a sleepy cat in a teacup" autocomplete="off">
+      <p id="magicHint">Tap the microphone and say what the sticker should be, or type it.</p>
+      <div class="voice">
+        <button class="mic" id="micBtn" aria-label="Say what the sticker should be" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
+        <input id="magicText" type="text" maxlength="60" placeholder="or type it: a sleepy cat in a teacup" autocomplete="off" enterkeyhint="go">
+      </div>
       <div class="preview" id="magicPreview"><p id="magicStatus">Your sticker will appear here.</p></div>
       <div class="row">
         <button class="textbtn" id="keyOpen" style="margin-right:auto">Key</button>
@@ -743,14 +756,101 @@ function cleanSvg(svg){
 const KEY_STORE = 'sparkle-dots-openai-key', MODEL_STORE = 'sparkle-dots-openai-model';
 const getKey = () => { try { return localStorage.getItem(KEY_STORE) || ''; } catch(e){ return ''; } };
 const getModel = () => { try { return localStorage.getItem(MODEL_STORE) || 'gpt-image-2.6-sunburst'; } catch(e){ return 'gpt-image-2.6-sunburst'; } };
+const finePointer = matchMedia('(pointer: fine)').matches;
 function showKeyBox(on){
   $('keyBox').hidden = !on; $('makeBox').hidden = on;
-  if (on){ $('keyInput').value = ''; $('keyInput').placeholder = getKey() ? 'A key is saved. Paste a new one to replace it.' : 'sk-…'; $('modelInput').value = getModel(); $('keyForget').hidden = !getKey(); $('keyInput').focus(); }
-  else { $('magicHint').textContent = getKey() ? 'Describe it in a few words. ChatGPT draws it, then it is matched to the toy’s colors.' : 'Describe it in a few words. Claude draws it in the toy’s colors.'; $('magicText').focus(); }
+  if (on){ $('keyInput').value = ''; $('keyInput').placeholder = getKey() ? 'A key is saved. Paste a new one to replace it.' : 'sk-…'; $('modelInput').value = getModel(); $('keyForget').hidden = !getKey(); if (finePointer) $('keyInput').focus(); }
+  else { $('magicHint').textContent = getKey() ? 'Tap the microphone and say what the sticker should be, or type it. ChatGPT draws it in the toy’s colors.' : 'Tap the microphone and say what the sticker should be, or type it. Claude draws it in the toy’s colors.'; if (finePointer) $('magicText').focus(); }
 }
 function openMagic(){ $('magicSheet').hidden = false; showKeyBox(!getKey() && !sample); }
+
+/* keep the sheet inside the part of the screen the keyboard leaves visible, and put the page back afterwards */
+if (window.visualViewport){
+  const vv = window.visualViewport, root = document.documentElement;
+  const fitVV = () => { root.style.setProperty('--vv-top', vv.offsetTop + 'px'); root.style.setProperty('--vv-h', vv.height + 'px'); };
+  vv.addEventListener('resize', fitVV); vv.addEventListener('scroll', fitVV); fitVV();
+}
+document.addEventListener('focusout', () => setTimeout(() => { if (!document.activeElement || document.activeElement === document.body) window.scrollTo(0, 0); }, 60));
+
+/* --- voice: say the sticker --- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let listening = null;   // the current voice session: {stop, cancel, cancelled}
+function cancelVoice(){ if (listening){ listening.cancelled = true; listening.cancel(); listening = null; setMic(false); } }
+function closeMagic(){ cancelVoice(); $('magicSheet').hidden = true; }
+function setMic(on){ $('micBtn').setAttribute('aria-pressed', on ? 'true' : 'false'); }
+function heardIt(text){ text = (text || '').trim().replace(/[.!?]+$/, ''); if (!text) return false; $('magicText').value = text.slice(0, 60); drawMagic(); return true; }
+function startVoice(){
+  if (magicBusy) return;
+  if (listening){ listening.stop(); return; }
+  document.activeElement && document.activeElement.blur && document.activeElement.blur();
+  if (SR) return listenOnDevice();
+  if (getKey() && navigator.mediaDevices && window.MediaRecorder) return recordForOpenAI();
+  setStatus("Voice isn't available here. Type it instead.");
+}
+function listenOnDevice(){
+  let r;
+  try { r = new SR(); } catch(e){ return getKey() && window.MediaRecorder ? recordForOpenAI() : setStatus("Voice isn't available here. Type it instead."); }
+  r.lang = navigator.language || 'en-US'; r.interimResults = true; r.maxAlternatives = 1; r.continuous = false;
+  let text = '', fallback = false;
+  const session = listening = {cancelled:false, stop: () => { try { r.stop(); } catch(e){} }, cancel: () => { try { r.abort(); } catch(e){} }};
+  setMic(true); setStatus('Listening… say what the sticker should be.');
+  r.onresult = e => { text = [...e.results].map(x => x[0].transcript).join(' ').trim(); $('magicText').value = text; };
+  r.onerror = e => {
+    if ((e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'network') && getKey() && window.MediaRecorder){ fallback = true; return; }
+    if (e.error === 'no-speech') setStatus("I didn't hear anything. Tap the microphone and try again.");
+    else if (e.error === 'not-allowed') setStatus('The microphone is turned off for this page. Allow it in Settings, or type instead.');
+    else if (e.error !== 'aborted') setStatus("I couldn't hear that. Tap the microphone and try again.");
+  };
+  r.onend = () => {
+    if (session.cancelled) return;
+    if (listening === session){ listening = null; setMic(false); }
+    if (fallback) recordForOpenAI(); else heardIt(text);
+  };
+  try { r.start(); } catch(e){ listening = null; setMic(false); if (getKey() && window.MediaRecorder) recordForOpenAI(); }
+}
+async function recordForOpenAI(){
+  // claim the session before asking for the microphone, so a second tap or closing the box cancels it
+  let stream = null, rec = null, timer = null;
+  const session = listening = {cancelled:false,
+    stop: () => { if (rec){ clearTimeout(timer); if (rec.state !== 'inactive') rec.stop(); } else session.cancel(); },
+    cancel: () => { session.cancelled = true; clearTimeout(timer); if (rec && rec.state !== 'inactive') rec.stop(); if (stream) stream.getTracks().forEach(t => t.stop()); if (listening === session){ listening = null; setMic(false); } }};
+  setMic(true); setStatus('Getting the microphone ready…');
+  try { stream = await navigator.mediaDevices.getUserMedia({audio:true}); }
+  catch(e){ if (!session.cancelled){ session.cancel(); setStatus('The microphone is turned off for this page. Allow it in Settings, or type instead.'); } return; }
+  if (session.cancelled){ stream.getTracks().forEach(t => t.stop()); return; }
+  const type = ['audio/mp4','audio/webm','audio/ogg'].find(t => window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+  rec = new MediaRecorder(stream, type ? {mimeType:type} : undefined);
+  const chunks = [];
+  rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    if (session.cancelled) return;
+    if (listening === session){ listening = null; setMic(false); }
+    const blob = new Blob(chunks, {type: rec.mimeType || type || 'audio/mp4'});
+    if (blob.size < 2000){ setStatus("I didn't hear anything. Tap the microphone and try again."); return; }
+    setStatus('Got it, writing that down…');
+    const ext = /webm/.test(blob.type) ? 'webm' : /ogg/.test(blob.type) ? 'ogg' : 'm4a';
+    for (const model of ['gpt-4o-mini-transcribe', 'whisper-1']){
+      try {
+        const fd = new FormData(); fd.append('file', blob, 'speech.' + ext); fd.append('model', model);
+        const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {method:'POST', headers:{'Authorization':'Bearer ' + getKey()}, body:fd});
+        if (res.status === 400 || res.status === 404) continue;
+        if (!res.ok){ setStatus(res.status === 401 ? "The OpenAI key didn't work. Check it under Key." : "I couldn't hear that. Tap the microphone and try again."); return; }
+        const out = await res.json();
+        if (session.cancelled || $('magicSheet').hidden) return;
+        if (!heardIt(out.text)) setStatus("I didn't catch any words. Tap the microphone and try again.");
+        return;
+      } catch(e){ setStatus("Couldn't reach OpenAI. Check the internet connection and try again."); return; }
+    }
+    setStatus("I couldn't hear that. Tap the microphone and try again.");
+  };
+  rec.start(); setMic(true); setStatus('Listening… tap the microphone when you are done.');
+  timer = setTimeout(session.stop, 6000);
+}
+$('micBtn').addEventListener('click', startVoice);
+
 $('keyOpen').addEventListener('click', () => showKeyBox(true));
-$('keyCancel').addEventListener('click', () => { if (!getKey() && !sample) $('magicSheet').hidden = true; else showKeyBox(false); });
+$('keyCancel').addEventListener('click', () => { if (!getKey() && !sample) closeMagic(); else showKeyBox(false); });
 $('keySave').addEventListener('click', () => {
   const k = $('keyInput').value.trim(), m = $('modelInput').value.trim() || 'gpt-image-2.6-sunburst';
   try { if (k) localStorage.setItem(KEY_STORE, k); localStorage.setItem(MODEL_STORE, m); } catch(e){}
@@ -868,6 +968,7 @@ async function drawMagic(){
   const subject = $('magicText').value.trim();
   if (!subject || magicBusy) return;
   if (!getKey() && !sample){ showKeyBox(true); return; }
+  document.activeElement && document.activeElement.blur && document.activeElement.blur();   // drop the keyboard while drawing
   magicBusy = true; $('magicGo').disabled = true; $('magicAdd').disabled = true; magicResult = null; setStatus('Drawing… this can take a little while.');
   try {
     if (getKey()){
@@ -887,10 +988,10 @@ $('magicAdd').addEventListener('click', () => {
   const c = {id: Date.now().toString(36), ...magicResult};
   customs.push(c); saveCustoms();
   loadCustom(c, () => { mode = 'sticker'; stickerPick = 'custom:' + c.id; renderStickers(); renderRail(); });
-  $('magicSheet').hidden = true; $('magicText').value = ''; setStatus('Your sticker will appear here.'); $('magicAdd').disabled = true; magicResult = null;
+  closeMagic(); $('magicText').value = ''; setStatus('Your sticker will appear here.'); $('magicAdd').disabled = true; magicResult = null;
 });
-$('magicClose').addEventListener('click', () => $('magicSheet').hidden = true);
-$('magicSheet').addEventListener('click', e => { if (e.target === $('magicSheet')) $('magicSheet').hidden = true; });
+$('magicClose').addEventListener('click', closeMagic);
+$('magicSheet').addEventListener('click', e => { if (e.target === $('magicSheet')) closeMagic(); });
 (async () => { try { if (window.claude && claude.use) sample = await claude.use('sample'); } catch(e){ sample = null; } if (sample) renderStickers(); })();
 
 /* ================= pull-down shade to clear ================= */
@@ -927,7 +1028,7 @@ function wipe(newDensity){
 $('undo').addEventListener('click', () => { ensureAudio(); const s = undoStack.pop(); if (s){ restore(s); save(); tone(392, .2, .03); } });
 function syncSettings(){}
 addEventListener('keydown', e => {
-  if (e.key === 'Escape') $('magicSheet').hidden = true;
+  if (e.key === 'Escape') closeMagic();
   const t = e.target, typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
   if (!typing && (e.metaKey || e.ctrlKey) && e.key === 'z'){ e.preventDefault(); $('undo').click(); }
 });
