@@ -865,14 +865,14 @@ async function recordForOpenAI(ac){
       if (ac.state === 'suspended') ac.resume().catch(() => {});
       const src = ac.createMediaStreamSource(stream), an = ac.createAnalyser(); an.fftSize = 1024; src.connect(an);
       const buf = new Float32Array(an.fftSize), t0 = performance.now();
-      let floor = 0.01, quietSince = 0;
+      let floor = Infinity, quietSince = 0;   // floor: the quietest level heard so far, so speech at the start can't be mistaken for background
       const tick = () => {
         if (session.cancelled || rec.state === 'inactive') return;
         an.getFloatTimeDomainData(buf);
         let sum = 0; for (let i=0;i<buf.length;i++) sum += buf[i]*buf[i];
         const rms = Math.sqrt(sum/buf.length), now = performance.now();
-        if (now - t0 < 300) floor = Math.max(floor, rms);                         // learn the room's background level
-        const loud = rms > Math.max(0.02, floor*2.5);
+        floor = Math.min(floor, rms);
+        const loud = rms > Math.max(0.02, floor*3);
         if (loud){ heardSpeech = true; quietSince = 0; }
         else if (heardSpeech){ if (!quietSince) quietSince = now; else if (now - quietSince > 1200) return session.stop(); }
         else if (now - t0 > 5000) return session.stop();                            // nothing said at all
