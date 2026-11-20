@@ -774,7 +774,9 @@ document.addEventListener('focusout', () => setTimeout(() => { if (!document.act
 
 /* --- voice: say the sticker --- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let listening = null;
+let listening = null;   // the current voice session: {stop, cancel, cancelled}
+function cancelVoice(){ if (listening){ listening.cancelled = true; listening.cancel(); listening = null; setMic(false); } }
+function closeMagic(){ cancelVoice(); $('magicSheet').hidden = true; }
 function setMic(on){ $('micBtn').setAttribute('aria-pressed', on ? 'true' : 'false'); }
 function heardIt(text){ text = (text || '').trim().replace(/[.!?]+$/, ''); if (!text) return false; $('magicText').value = text.slice(0, 60); drawMagic(); return true; }
 function startVoice(){
@@ -790,7 +792,7 @@ function listenOnDevice(){
   try { r = new SR(); } catch(e){ return getKey() && window.MediaRecorder ? recordForOpenAI() : setStatus("Voice isn't available here. Type it instead."); }
   r.lang = navigator.language || 'en-US'; r.interimResults = true; r.maxAlternatives = 1; r.continuous = false;
   let text = '', fallback = false;
-  listening = {stop: () => { try { r.stop(); } catch(e){} }};
+  const session = listening = {cancelled:false, stop: () => { try { r.stop(); } catch(e){} }, cancel: () => { try { r.abort(); } catch(e){} }};
   setMic(true); setStatus('Listening… say what the sticker should be.');
   r.onresult = e => { text = [...e.results].map(x => x[0].transcript).join(' ').trim(); $('magicText').value = text; };
   r.onerror = e => {
@@ -799,21 +801,31 @@ function listenOnDevice(){
     else if (e.error === 'not-allowed') setStatus('The microphone is turned off for this page. Allow it in Settings, or type instead.');
     else if (e.error !== 'aborted') setStatus("I couldn't hear that. Tap the microphone and try again.");
   };
-  r.onend = () => { listening = null; setMic(false); if (fallback) recordForOpenAI(); else heardIt(text); };
+  r.onend = () => {
+    if (session.cancelled) return;
+    if (listening === session){ listening = null; setMic(false); }
+    if (fallback) recordForOpenAI(); else heardIt(text);
+  };
   try { r.start(); } catch(e){ listening = null; setMic(false); if (getKey() && window.MediaRecorder) recordForOpenAI(); }
 }
 async function recordForOpenAI(){
-  let stream;
+  // claim the session before asking for the microphone, so a second tap or closing the box cancels it
+  let stream = null, rec = null, timer = null;
+  const session = listening = {cancelled:false,
+    stop: () => { if (rec){ clearTimeout(timer); if (rec.state !== 'inactive') rec.stop(); } else session.cancel(); },
+    cancel: () => { session.cancelled = true; clearTimeout(timer); if (rec && rec.state !== 'inactive') rec.stop(); if (stream) stream.getTracks().forEach(t => t.stop()); if (listening === session){ listening = null; setMic(false); } }};
+  setMic(true); setStatus('Getting the microphone ready…');
   try { stream = await navigator.mediaDevices.getUserMedia({audio:true}); }
-  catch(e){ setStatus('The microphone is turned off for this page. Allow it in Settings, or type instead.'); return; }
+  catch(e){ if (!session.cancelled){ session.cancel(); setStatus('The microphone is turned off for this page. Allow it in Settings, or type instead.'); } return; }
+  if (session.cancelled){ stream.getTracks().forEach(t => t.stop()); return; }
   const type = ['audio/mp4','audio/webm','audio/ogg'].find(t => window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
-  const rec = new MediaRecorder(stream, type ? {mimeType:type} : undefined), chunks = [];
-  let timer = null;
-  const stop = () => { clearTimeout(timer); if (rec.state !== 'inactive') rec.stop(); };
-  listening = {stop};
+  rec = new MediaRecorder(stream, type ? {mimeType:type} : undefined);
+  const chunks = [];
   rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   rec.onstop = async () => {
-    listening = null; setMic(false); stream.getTracks().forEach(t => t.stop());
+    stream.getTracks().forEach(t => t.stop());
+    if (session.cancelled) return;
+    if (listening === session){ listening = null; setMic(false); }
     const blob = new Blob(chunks, {type: rec.mimeType || type || 'audio/mp4'});
     if (blob.size < 2000){ setStatus("I didn't hear anything. Tap the microphone and try again."); return; }
     setStatus('Got it, writing that down…');
@@ -825,6 +837,7 @@ async function recordForOpenAI(){
         if (res.status === 400 || res.status === 404) continue;
         if (!res.ok){ setStatus(res.status === 401 ? "The OpenAI key didn't work. Check it under Key." : "I couldn't hear that. Tap the microphone and try again."); return; }
         const out = await res.json();
+        if (session.cancelled || $('magicSheet').hidden) return;
         if (!heardIt(out.text)) setStatus("I didn't catch any words. Tap the microphone and try again.");
         return;
       } catch(e){ setStatus("Couldn't reach OpenAI. Check the internet connection and try again."); return; }
@@ -832,12 +845,12 @@ async function recordForOpenAI(){
     setStatus("I couldn't hear that. Tap the microphone and try again.");
   };
   rec.start(); setMic(true); setStatus('Listening… tap the microphone when you are done.');
-  timer = setTimeout(stop, 6000);
+  timer = setTimeout(session.stop, 6000);
 }
 $('micBtn').addEventListener('click', startVoice);
-$('magicClose').addEventListener('click', () => { if (listening) listening.stop(); });
+
 $('keyOpen').addEventListener('click', () => showKeyBox(true));
-$('keyCancel').addEventListener('click', () => { if (!getKey() && !sample) $('magicSheet').hidden = true; else showKeyBox(false); });
+$('keyCancel').addEventListener('click', () => { if (!getKey() && !sample) closeMagic(); else showKeyBox(false); });
 $('keySave').addEventListener('click', () => {
   const k = $('keyInput').value.trim(), m = $('modelInput').value.trim() || 'gpt-image-2.6-sunburst';
   try { if (k) localStorage.setItem(KEY_STORE, k); localStorage.setItem(MODEL_STORE, m); } catch(e){}
@@ -975,10 +988,10 @@ $('magicAdd').addEventListener('click', () => {
   const c = {id: Date.now().toString(36), ...magicResult};
   customs.push(c); saveCustoms();
   loadCustom(c, () => { mode = 'sticker'; stickerPick = 'custom:' + c.id; renderStickers(); renderRail(); });
-  $('magicSheet').hidden = true; $('magicText').value = ''; setStatus('Your sticker will appear here.'); $('magicAdd').disabled = true; magicResult = null;
+  closeMagic(); $('magicText').value = ''; setStatus('Your sticker will appear here.'); $('magicAdd').disabled = true; magicResult = null;
 });
-$('magicClose').addEventListener('click', () => $('magicSheet').hidden = true);
-$('magicSheet').addEventListener('click', e => { if (e.target === $('magicSheet')) $('magicSheet').hidden = true; });
+$('magicClose').addEventListener('click', closeMagic);
+$('magicSheet').addEventListener('click', e => { if (e.target === $('magicSheet')) closeMagic(); });
 (async () => { try { if (window.claude && claude.use) sample = await claude.use('sample'); } catch(e){ sample = null; } if (sample) renderStickers(); })();
 
 /* ================= pull-down shade to clear ================= */
@@ -1015,7 +1028,7 @@ function wipe(newDensity){
 $('undo').addEventListener('click', () => { ensureAudio(); const s = undoStack.pop(); if (s){ restore(s); save(); tone(392, .2, .03); } });
 function syncSettings(){}
 addEventListener('keydown', e => {
-  if (e.key === 'Escape') $('magicSheet').hidden = true;
+  if (e.key === 'Escape') closeMagic();
   const t = e.target, typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
   if (!typing && (e.metaKey || e.ctrlKey) && e.key === 'z'){ e.preventDefault(); $('undo').click(); }
 });
