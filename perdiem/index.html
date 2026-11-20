@@ -366,16 +366,19 @@ function aggregate(state,sIdx,viewYM){
   const hrs={worked:0,scheduled:0,requested:0,marked:0};
   const m$={worked:0,scheduled:0,requested:0,marked:0};
   const mN={worked:0,scheduled:0,requested:0,marked:0};   // shift counts for the month
-  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;const b=bucketOf(sh);hrs[b]+=missedOf(sh,state,sIdx);m$[b]+=pay(sh);mN[b]++;});
+  const wH={worked:0,scheduled:0,requested:0,marked:0};   // hours on shift for the month
+  const shHrs=sh=>{const site=sIdx[sh.siteId];return site?entryHours(entryFor(site,sh)):0;};
+  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;const b=bucketOf(sh);hrs[b]+=missedOf(sh,state,sIdx);m$[b]+=pay(sh);mN[b]++;wH[b]+=shHrs(sh);});
   if(Number.isFinite((state.monthOverrides||{})[viewYM]))m$.worked=state.monthOverrides[viewYM];   // a catch-up month's worked $ = its override
   // a held window is marked, not asked for: money is pinned (X×rate); hours contribute their low end (a floor)
   (state.windows||[]).forEach(w=>{if(!w.from.startsWith(yr))return;const b=windowBand(w,state,sIdx);
-    marked$+=b.money;if(mk(w.from)===viewYM){hrs.marked+=b.min;m$.marked+=b.money;mN.marked+=b.X;}});
+    marked$+=b.money;if(mk(w.from)===viewYM){hrs.marked+=b.min;m$.marked+=b.money;mN.marked+=b.X;
+      const ws=sIdx[w.siteId];if(ws)wH.marked+=b.X*entryHours(resolveEntry(ws,w.type));}});
   // travel days add their hours to the bucket their date falls in (worked before today, scheduled after)
   const tb=travelBand(state);
   Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;const info=tb[dt],miss=travelMissed(dt,info,state);
     hrs[dt<TODAY_S?"worked":"scheduled"]+=miss;});
-  return {worked$,scheduled$,requested$,marked$,hrs,month:m$,monthN:mN};
+  return {worked$,scheduled$,requested$,marked$,hrs,month:m$,monthN:mN,monthH:wH};
 }
 
 /* ─── earnings summary: what each site should pay for a month, and what it did ───
@@ -1154,26 +1157,26 @@ function Banner({agg,goal,mobile,year}){
     </div>
   </div>;
 }
-/* ════════ MONTH BAR — the focused month's $ + hours missed ════════ */
+/* ════════ MONTH BAR — the focused month's $, shifts + hours on shift ════════ */
 function MonthBar({agg,viewYM,mobile}){
   const my=`${MON[+viewYM.slice(5,7)-1]} ${viewYM.slice(0,4)}`,m=agg.month,h=agg.hrs;
   const n=agg.monthN||{worked:0,scheduled:0,requested:0,marked:0};
   const sum=o=>o.worked+o.scheduled+o.requested+o.marked;
-  const totMiss=Math.round(sum(h)*10)/10,tot$=sum(m),totN=sum(n);
+  const wh=agg.monthH||{worked:0,scheduled:0,requested:0,marked:0};
+  const tot$=sum(m),totN=sum(n),totH=Math.round(sum(wh)*10)/10;
   if(mobile)return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"5px 12px",flexShrink:0,
     display:"flex",alignItems:"baseline",gap:8,fontSize:11,fontVariantNumeric:"tabular-nums",flexWrap:"wrap"}}>
     <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color:C.mute}}>{my}</span>
     <span><b style={{fontSize:13.5}}>{fmtK(tot$)}</b> <span style={{color:C.mute}}>total $</span></span>
     <span><b style={{fontSize:12.5}}>{totN}</b> <span style={{color:C.mute}}>shifts</span></span>
-    <span style={{marginLeft:"auto",color:C.gray}}>miss <b style={{color:C.ink,fontSize:12.5}}>{Math.round(totMiss)}</b>h</span>
+    <span><b style={{fontSize:12.5}}>{Math.round(totH)}</b> <span style={{color:C.mute}}>hrs</span></span>
   </div>;
   return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"7px 14px",flexShrink:0}}>
     <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-end"}}>
       <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>{my}</span>
       <Stat label="Shifts" value={totN} sub={`${n.worked}w · ${n.scheduled}s · ${n.requested}r · ${n.marked}m`}/>
       <Stat label="Total $" value={fmtK(tot$)} sub="every phase"/>
-      <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
-      <Stat label="Missed" value={fmtH(totMiss)} sub="total this month"/>
+      <Stat label="Hours" value={fmtH(totH)} sub="on shift this month"/>
     </div>
   </div>;
 }
