@@ -105,12 +105,9 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
 .hitem.armed .del{background:#e5735c; color:#fff; box-shadow:none}
 .dot.magic{background:conic-gradient(from 200deg,#efa9a0,#f5cf8f,#bfdba7,#a6cfe6,#c4b5e6,#efa9a0)}
 
-.scrim{position:fixed; left:0; right:0; top:var(--vv-top, 0px); height:var(--vv-h, 100%); background:rgba(68,64,79,.28); display:grid; place-items:center; padding:16px; z-index:10; touch-action:none}
+.scrim{position:fixed; left:0; right:0; top:var(--vv-top, 0px); height:var(--vv-h, 100%); background:rgba(68,64,79,.28); display:grid; place-items:start center; padding:max(16px, env(safe-area-inset-top)) 16px 16px; z-index:10}
 .scrim[hidden]{display:none}
 .sheet{background:var(--paper); border-radius:28px; box-shadow:0 20px 60px rgba(68,64,79,.2); padding:24px; width:min(440px,100%); max-height:calc(var(--vv-h, 100vh) - 32px); overflow:auto; display:flex; flex-direction:column; gap:14px; font-size:17px; touch-action:pan-y}
-.scrim.typing{place-items:start center}
-.scrim.typing .sheet{gap:10px; padding:16px 20px}
-.scrim.typing #magicHint,.scrim.typing .preview,.scrim.typing #magicTitle{display:none}
 .voice{display:flex; align-items:center; gap:12px}
 .voice input{flex:1; min-width:0}
 .mic{appearance:none; border:0; flex:none; width:72px; height:72px; border-radius:50%; display:grid; place-items:center; cursor:pointer; touch-action:manipulation; color:#fff; position:relative;
@@ -183,11 +180,11 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
       </div>
     </div>
     <div id="makeBox">
-      <p id="magicHint">Tap the microphone and say what the sticker should be, or type it.</p>
       <div class="voice">
         <button class="mic" id="micBtn" aria-label="Say what the sticker should be" aria-pressed="false"><svg class="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg><svg class="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor"/></svg></button>
         <input id="magicText" type="text" maxlength="60" placeholder="or type it: a sleepy cat in a teacup" autocomplete="off" enterkeyhint="go">
       </div>
+      <p id="magicHint">Tap the microphone and say what the sticker should be, or type it.</p>
       <div class="preview" id="magicPreview"><p id="magicStatus">Your sticker will appear here.</p></div>
       <div class="row">
         <button class="textbtn" id="keyOpen" style="margin-right:auto">Key</button>
@@ -848,11 +845,6 @@ function openMagic(){ $('magicSheet').hidden = false; showKeyBox(!getKey() && !s
   });
   addEventListener('orientationchange', () => setTimeout(() => { w = innerWidth; h = innerHeight; hold(); }, 300));
 })();
-/* while typing, the sheet moves to the top and gets compact so it sits above the keyboard */
-['magicText','keyInput','modelInput'].forEach(id => {
-  $(id).addEventListener('focus', () => { $('magicSheet').classList.add('typing'); setTimeout(() => window.scrollTo(0, 0), 50); });
-  $(id).addEventListener('blur', () => setTimeout(() => { if (!/^(magicText|keyInput|modelInput)$/.test((document.activeElement || {}).id)) $('magicSheet').classList.remove('typing'); }, 80));
-});
 /* keep the sheet inside the part of the screen the keyboard leaves visible, and put the page back afterwards */
 if (window.visualViewport){
   const vv = window.visualViewport, root = document.documentElement;
