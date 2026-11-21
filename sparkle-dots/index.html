@@ -105,7 +105,7 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
 .hitem.armed .del{background:#e5735c; color:#fff; box-shadow:none}
 .dot.magic{background:conic-gradient(from 200deg,#efa9a0,#f5cf8f,#bfdba7,#a6cfe6,#c4b5e6,#efa9a0)}
 
-.scrim{position:fixed; left:0; right:0; top:var(--vv-top, 0px); height:var(--vv-h, 100%); background:rgba(68,64,79,.28); display:grid; place-items:start center; padding:max(16px, env(safe-area-inset-top)) 16px 16px; z-index:10}
+.scrim{position:fixed; inset:0; background:rgba(68,64,79,.28); display:grid; place-items:start center; padding:calc(var(--vv-top, 0px) + max(16px, env(safe-area-inset-top))) 16px 16px; z-index:10}
 .scrim[hidden]{display:none}
 .sheet{background:var(--paper); border-radius:28px; box-shadow:0 20px 60px rgba(68,64,79,.2); padding:24px; width:min(440px,100%); max-height:calc(var(--vv-h, 100vh) - 32px); overflow:auto; display:flex; flex-direction:column; gap:14px; font-size:17px; touch-action:pan-y}
 .voice{display:flex; align-items:center; gap:12px}
@@ -460,9 +460,15 @@ try {
 } catch(e){}
 const shown = () => customs.filter(c => !c.hidden);
 function saveCustoms(){ try { localStorage.setItem('sparkle-dots-custom-v1', JSON.stringify(customs)); } catch(e){} }
-function loadCustom(c, done){
+const customLoading = {};
+function forgetOutlines(name){ for (const k of [...outlineCache.keys()]) if (k.startsWith(name + '@')) outlineCache.delete(k); }
+function loadCustom(c, done){   // decode a sticker picture once; later calls just wait for it
+  if (customImg[c.id]){ if (done) done(); return; }
+  if (customLoading[c.id]){ if (done) customLoading[c.id].push(done); return; }
+  customLoading[c.id] = done ? [done] : [];
   const img = new Image();
-  img.onload = () => { customImg[c.id] = img; outlineCache.clear(); if (done) done(); };
+  img.onload = () => { customImg[c.id] = img; forgetOutlines('custom:' + c.id); const cbs = customLoading[c.id]; delete customLoading[c.id]; cbs.forEach(f => f()); };
+  img.onerror = () => { delete customLoading[c.id]; };
   img.src = c.png || ('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(c.svg));
 }
 function sparkShape(c, x, y, r){
@@ -549,7 +555,8 @@ function frame(now){
 
   stickers.forEach(s => {
     const k = s.born ? Math.min(1, (now - s.born)/260) : 1, sc = 0.85 + 0.15*easeOut(k);
-    const bmp = outlined(s.e, s.s*SP*dpr, 2*dpr); if (!bmp) return;
+    const bmp = outlined(s.e, s.s*SP*dpr, 2*dpr);
+    if (!bmp){ if (s.e.startsWith('custom:')){ const c = customs.find(x => x.id === s.e.slice(7)); if (c) loadCustom(c); } return; }   // decode on first use
     const w = bmp.width/dpr*sc;
     ctx.save(); ctx.translate(P(s.x), P(s.y)); ctx.rotate(s.rot); ctx.drawImage(bmp, -w/2, -w/2, w, w); ctx.restore();
   });
@@ -804,7 +811,14 @@ function renderStickers(){
   tools.append(size, dice);
   stickRail.append(tools);
 }
-customs.forEach(c => loadCustom(c, renderStickers));
+// at startup, decode only what's on screen: the four palette slots and stickers placed in the drawing
+let stickerRenderQueued = false;
+function queueStickerRender(){ if (stickerRenderQueued) return; stickerRenderQueued = true; requestAnimationFrame(() => { stickerRenderQueued = false; renderStickers(); }); }
+(() => {
+  const needed = new Set(shown().slice(-4).map(c => c.id));
+  stickers.forEach(st => { if (st.e.startsWith('custom:')) needed.add(st.e.slice(7)); });
+  customs.filter(c => needed.has(c.id)).forEach(c => loadCustom(c, queueStickerRender));
+})();
 
 /* ================= pictures: camera + library of the last five ================= */
 const SHOT_KEEP = 5;
@@ -895,8 +909,9 @@ function renderHistory(){
   [...shown()].reverse().forEach(c => {
     const wrap = document.createElement('div'); wrap.className = 'hitem';
     const pick = document.createElement('button'); pick.className = 'pick'; pick.setAttribute('aria-label', 'Use this sticker');
-    pick.append(iconCanvas('custom:' + c.id));
-    pick.addEventListener('click', () => { promote(c.id); mode = 'sticker'; stickerPick = 'custom:' + c.id; $('historySheet').hidden = true; renderStickers(); renderRail(); });
+    if (customImg[c.id]) pick.append(iconCanvas('custom:' + c.id));
+    else loadCustom(c, () => { pick.innerHTML = ''; pick.append(iconCanvas('custom:' + c.id)); });
+    pick.addEventListener('click', () => { promote(c.id); mode = 'sticker'; stickerPick = 'custom:' + c.id; $('historySheet').hidden = true; loadCustom(c, queueStickerRender); renderStickers(); renderRail(); });
     const del = document.createElement('button'); del.className = 'del'; del.setAttribute('aria-label', 'Throw this sticker away'); del.textContent = '×';
     del.addEventListener('click', () => {
       if (!wrap.classList.contains('armed')){ g.querySelectorAll('.armed').forEach(x => x.classList.remove('armed')); wrap.classList.add('armed'); return; }
@@ -1092,7 +1107,7 @@ function setStatus(t){ $('magicPreview').innerHTML = ''; const p = document.crea
 function showPreview(src, kind){
   const img = new Image();
   img.onload = () => {
-    customImg['preview'] = img; outlineCache.clear();
+    customImg['preview'] = img; forgetOutlines('custom:preview');
     const c = document.createElement('canvas'); c.width = c.height = 260;
     const bmp = outlined('custom:preview', 220, 4);
     c.getContext('2d').drawImage(bmp, (260 - bmp.width)/2, (260 - bmp.height)/2);
