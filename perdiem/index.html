@@ -1442,7 +1442,7 @@ function PhaseBtns({status,past,onSet,small}){
   return <>{items.map(([ph,lab])=><Btn key={ph} small={small} on={status===ph} onClick={()=>onSet(ph)}
     title={PHASE_HINT[ph]}>{small?PHASE_SHORT[ph]:lab}</Btn>)}</>;
 }
-function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow,onOpenDoc}){
+function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow,onOpenDoc,onOpenWindow}){
   if(!selected)return <div style={{padding:"16px 14px",color:C.mute,fontSize:12.5}}>
     Tap a day to read or edit it. <b>Mark</b> holds a day; <b>Request</b> asks for it; <b>Schedule</b> commits it.
     A linked calendar promotes requested days to scheduled on its own.</div>;
@@ -1459,6 +1459,7 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow,onOp
   const addDay=kind=>mutate(s=>addAway(s,selected,kind));   // travel / away
   const del=()=>mutate(s=>ignoreShift({...s,shifts:s.shifts.filter(x=>x.id!==shift.id)},shift));
   const tinfo=travelBand(state)[selected];
+  const inWin=(state.windows||[]).find(w=>selected>=w.from&&selected<=w.to);   // a held window over this day
   const onDel=shift?del:(tinfo?(()=>mutate(s=>rmAwayAt(s,selected))):null);   // delete the day's shift or away/travel item
 
   const head=<div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:10}}>
@@ -1470,6 +1471,9 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow,onOp
       <span style={{width:6,height:6,borderRadius:6,background:c.color}}/>{c.name}{c.out?` (out ${c.out.start}–${c.out.end})`:""}
       <DocPip cal={c} onOpen={onOpenDoc} size={11}/></span>)}
     {trip&&<span style={{fontSize:10.5,color:C.ocean}}>✈ {trip.name} ({trip.workFactor})</span>}
+    {inWin&&onOpenWindow&&<button onClick={()=>onOpenWindow(inWin.id)} title="open the window this day sits in"
+      style={{fontFamily:MONO,fontSize:10.5,fontWeight:700,color:C.ocean,border:`1px solid ${C.ocean}`,background:"transparent",borderRadius:12,padding:"1px 8px",cursor:"pointer"}}>
+      ▭ {sIdx[inWin.siteId]?sIdx[inWin.siteId].name+" ":""}window ›</button>}
     {onDel&&<DelX onClick={onDel}/>}
   </div>;
 
@@ -2700,7 +2704,7 @@ function App(){
     setSelected(str);
     const w=winBy[str];
     if(travelBy[str]){setSelWid(null);setSelTid(null);}             // travel day wins (even over a trip it sits on) → its own readout
-    else if(w){setSelWid(w.w.id);setSelTid(null);}                  // window day → select window
+    else if(w&&!ex){setSelWid(w.w.id);setSelTid(null);}             // empty window day → select window (a shift on it opens the shift; its readout links back to the window)
     else{setSelWid(null);                                           // trip day (select mode, no shift) → select trip
       const tp=(tool==="select"&&!ex)?(state.trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to):null;
       setSelTid(tp?tp.id:null);}
@@ -3009,7 +3013,7 @@ function App(){
                 : selTid&&(state.trips||[]).find(t=>t.id===selTid)
                 ? <TripReadout state={state} tid={selTid} mutate={mutate} onClose={()=>setSelTid(null)}/>
                 : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate} mobile={mobile} setSelected={setSelected}
-                    onAddWindow={addWindowAt} onOpenDoc={openDoc}/>}
+                    onAddWindow={addWindowAt} onOpenDoc={openDoc} onOpenWindow={id=>{setSelWid(id);setSelTid(null);}}/>}
             </div>}
         </div>
       </>}
