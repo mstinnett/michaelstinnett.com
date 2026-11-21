@@ -366,16 +366,19 @@ function aggregate(state,sIdx,viewYM){
   const hrs={worked:0,scheduled:0,requested:0,marked:0};
   const m$={worked:0,scheduled:0,requested:0,marked:0};
   const mN={worked:0,scheduled:0,requested:0,marked:0};   // shift counts for the month
-  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;const b=bucketOf(sh);hrs[b]+=missedOf(sh,state,sIdx);m$[b]+=pay(sh);mN[b]++;});
+  const wH={worked:0,scheduled:0,requested:0,marked:0};   // hours on shift for the month
+  const shHrs=sh=>{const site=sIdx[sh.siteId];return site?entryHours(entryFor(site,sh)):0;};
+  state.shifts.forEach(sh=>{if(mk(sh.date)!==viewYM)return;const b=bucketOf(sh);hrs[b]+=missedOf(sh,state,sIdx);m$[b]+=pay(sh);mN[b]++;wH[b]+=shHrs(sh);});
   if(Number.isFinite((state.monthOverrides||{})[viewYM]))m$.worked=state.monthOverrides[viewYM];   // a catch-up month's worked $ = its override
   // a held window is marked, not asked for: money is pinned (X×rate); hours contribute their low end (a floor)
   (state.windows||[]).forEach(w=>{if(!w.from.startsWith(yr))return;const b=windowBand(w,state,sIdx);
-    marked$+=b.money;if(mk(w.from)===viewYM){hrs.marked+=b.min;m$.marked+=b.money;mN.marked+=b.X;}});
+    marked$+=b.money;if(mk(w.from)===viewYM){hrs.marked+=b.min;m$.marked+=b.money;mN.marked+=b.X;
+      const ws=sIdx[w.siteId];if(ws)wH.marked+=b.X*entryHours(resolveEntry(ws,w.type));}});
   // travel days add their hours to the bucket their date falls in (worked before today, scheduled after)
   const tb=travelBand(state);
   Object.keys(tb).forEach(dt=>{if(mk(dt)!==viewYM)return;const info=tb[dt],miss=travelMissed(dt,info,state);
     hrs[dt<TODAY_S?"worked":"scheduled"]+=miss;});
-  return {worked$,scheduled$,requested$,marked$,hrs,month:m$,monthN:mN};
+  return {worked$,scheduled$,requested$,marked$,hrs,month:m$,monthN:mN,monthH:wH};
 }
 
 /* ─── earnings summary: what each site should pay for a month, and what it did ───
@@ -1154,26 +1157,26 @@ function Banner({agg,goal,mobile,year}){
     </div>
   </div>;
 }
-/* ════════ MONTH BAR — the focused month's $ + hours missed ════════ */
+/* ════════ MONTH BAR — the focused month's $, shifts + hours on shift ════════ */
 function MonthBar({agg,viewYM,mobile}){
   const my=`${MON[+viewYM.slice(5,7)-1]} ${viewYM.slice(0,4)}`,m=agg.month,h=agg.hrs;
   const n=agg.monthN||{worked:0,scheduled:0,requested:0,marked:0};
   const sum=o=>o.worked+o.scheduled+o.requested+o.marked;
-  const totMiss=Math.round(sum(h)*10)/10,tot$=sum(m),totN=sum(n);
+  const wh=agg.monthH||{worked:0,scheduled:0,requested:0,marked:0};
+  const tot$=sum(m),totN=sum(n),totH=Math.round(sum(wh)*10)/10;
   if(mobile)return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"5px 12px",flexShrink:0,
     display:"flex",alignItems:"baseline",gap:8,fontSize:11,fontVariantNumeric:"tabular-nums",flexWrap:"wrap"}}>
     <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color:C.mute}}>{my}</span>
     <span><b style={{fontSize:13.5}}>{fmtK(tot$)}</b> <span style={{color:C.mute}}>total $</span></span>
     <span><b style={{fontSize:12.5}}>{totN}</b> <span style={{color:C.mute}}>shifts</span></span>
-    <span style={{marginLeft:"auto",color:C.gray}}>miss <b style={{color:C.ink,fontSize:12.5}}>{Math.round(totMiss)}</b>h</span>
+    <span><b style={{fontSize:12.5}}>{Math.round(totH)}</b> <span style={{color:C.mute}}>hrs</span></span>
   </div>;
   return <div style={{borderBottom:`1px solid ${C.line2}`,background:C.panel2,padding:"7px 14px",flexShrink:0}}>
     <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-end"}}>
       <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",textTransform:"uppercase",color:C.mute,alignSelf:"center"}}>{my}</span>
       <Stat label="Shifts" value={totN} sub={`${n.worked}w · ${n.scheduled}s · ${n.requested}r · ${n.marked}m`}/>
       <Stat label="Total $" value={fmtK(tot$)} sub="every phase"/>
-      <div style={{width:1,alignSelf:"stretch",background:C.line2}}/>
-      <Stat label="Missed" value={fmtH(totMiss)} sub="total this month"/>
+      <Stat label="Hours" value={fmtH(totH)} sub="on shift this month"/>
     </div>
   </div>;
 }
@@ -1190,7 +1193,7 @@ function tripOn(str,trips){return (trips||[]).find(t=>t.visible!==false&&str>=t.
 
 const DEF_DAY="#7A8C5E",DEF_NIGHT="#3B4A6B";   // default day/night hexes for the per-site pickers
 const siteShiftCol=(site,cat)=>cat==="night"?((site&&site.nightColor)||C.shiftNight):((site&&site.dayColor)||C.shiftDay);
-function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,placing,box,selTrip,selWin,onEdge,onGrabTravel,onTap,onDown,onEnter}){
+function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,dim,preview,placing,box,selTrip,selWin,onEdge,onGrabTravel,onTap,onDown,onEnter}){
   if(!str)return <div style={box}/>;
   const allDay=homeAllDay(str,state),trip=tripOn(str,state.trips),showTravel=travel&&!shift,awayDay=showTravel&&travel.kind==="away";
   const cals=visCals(state).filter(c=>calCovers(c,str)).slice(0,3);
@@ -1212,7 +1215,7 @@ function DayCell({str,shift,state,sIdx,selected,today,win,travel,locked,preview,
     onPointerDown={onDown?(e=>onDown(str,e)):(grabTravel?(e=>onGrabTravel(travel,e)):undefined)} onPointerEnter={onEnter?()=>onEnter(str):undefined}
     style={{...box,border:`${selected||warn||win||showTravel?2:1}px ${(win&&win.kind==="travel")?"dashed":"solid"} ${ringCol}`,
     borderRadius:8,background:bg,backgroundImage:hatch?`repeating-linear-gradient(45deg,${C.line2} 0,${C.line2} 1px,transparent 1px,transparent 6px)`:undefined,
-    padding:"4px 5px",cursor:grabTravel?"grab":"pointer",position:"relative",opacity:locked?0.5:1,
+    padding:"4px 5px",cursor:grabTravel?"grab":"pointer",position:"relative",opacity:(locked?0.5:1)*(dim&&!selected?0.38:1),
     display:"flex",flexDirection:"column",overflow:"hidden",touchAction:(onDown||grabTravel)?"none":"auto"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
       <span style={{fontSize:11,fontWeight:today?900:600,color:today?C.ink:C.gray}}>{day}</span>
@@ -1270,6 +1273,68 @@ function MonthGrid({y,m,state,sIdx,selected,onTap,label,mobile,winBy,travelBy,pr
           preview={!!(str&&previewSet&&previewSet.has(str))} placing={!!(str&&placing&&placing.has(str))}
           selTrip={selTrip} selWin={selWin} onEdge={onEdge} onGrabTravel={onGrabTravel} onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
     </div>
+  </div>;
+}
+/* ─── phone: one continuous up/down scroll of weeks that snaps to a month ───
+   Same squares as the month grid, but the weeks run on without gaps, so the end of one month
+   and the start of the next are always in reach. When the finger lets go it clicks into place
+   on a single month: its first week at the top (a sliver of the month before peeking above),
+   that month in full colour, the neighbours dimmed. The month in focus is viewY/viewM, so the
+   banner and top bar follow it; changing it from elsewhere (arrows, a tap) scrolls to it. */
+const MS_GUT=24;                                             // left gutter for the month labels
+const PHONE_MONTHS=(()=>{const out=[];for(let i=-3;i<CAL_MONTHS.length;i++){const m=TODAY.getMonth()+i;out.push([TODAY.getFullYear()+Math.floor(m/12),((m%12)+12)%12]);}return out;})();
+function phoneWeeks(){
+  const [y0,m0]=PHONE_MONTHS[0],[y1,m1]=PHONE_MONTHS[PHONE_MONTHS.length-1];
+  const first=new Date(y0,m0,1);first.setDate(1-first.getDay());   // back to that week's Sunday
+  const last=new Date(y1,m1+1,0),weeks=[];
+  for(let d=first;d<=last;){const wk=[];for(let i=0;i<7;i++){wk.push(ds(d));d=ad(d,1);}weeks.push(wk);}
+  return weeks;
+}
+function PhoneScroll({state,sIdx,selected,onTap,viewY,viewM,setView,padTop,winBy,travelBy,previewSet,placing,selTrip,selWin,onEdge,onGrabTravel,onDown,onEnter}){
+  const weeks=useMemo(phoneWeeks,[]);
+  const rootRef=useRef(null),focusRef=useRef(null),rowH=useRef(56);
+  const startRows=useRef({});                                 // "y-m" → the row element holding the 1st
+  const keyOf=(y,m)=>y+"-"+m;
+  const scrollerOf=()=>rootRef.current&&rootRef.current.closest("[data-cal-scroll]");
+  const geom=()=>{const sc=scrollerOf();if(!sc)return null;
+    const any=Object.values(startRows.current)[0];if(any)rowH.current=any.getBoundingClientRect().height+4;
+    return {sc,top:sc.getBoundingClientRect().top,line:padTop+Math.round(rowH.current*0.45)};};
+  // the snap line sits just under the sticky header, leaving ~half a row of the month before visible
+  useEffect(()=>{const g=geom();if(!g)return;const {sc,line}=g;
+    sc.style.scrollSnapType="y mandatory";sc.style.scrollPaddingTop=line+"px";
+    return ()=>{sc.style.scrollSnapType="";sc.style.scrollPaddingTop="";};},[padTop]);
+  const goTo=(y,m,smooth)=>{const g=geom(),row=startRows.current[keyOf(y,m)];if(!g||!row)return;
+    focusRef.current=keyOf(y,m);
+    g.sc.scrollTo({top:g.sc.scrollTop+row.getBoundingClientRect().top-g.top-g.line,behavior:smooth?"smooth":"auto"});};
+  // focus follows the scroll: the last month whose first week has reached the snap line (+ half a row)
+  useEffect(()=>{const sc=scrollerOf();if(!sc)return;let raf=0;
+    const on=()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{const g=geom();if(!g)return;
+      let best=null;for(const [y,m] of PHONE_MONTHS){const row=startRows.current[keyOf(y,m)];if(!row)continue;
+        if(row.getBoundingClientRect().top-g.top<=g.line+rowH.current/2)best=[y,m];else break;}
+      if(best&&keyOf(best[0],best[1])!==focusRef.current){focusRef.current=keyOf(best[0],best[1]);setView(best[0],best[1]);}});};
+    sc.addEventListener("scroll",on,{passive:true});return ()=>{sc.removeEventListener("scroll",on);cancelAnimationFrame(raf);};},[padTop]);
+  // focus changed from outside the scroll (arrows, today, a tap on a dimmed day) → glide there; first paint → jump
+  const mounted=useRef(false),lastPad=useRef(padTop);
+  useEffect(()=>{const k=keyOf(viewY,viewM);
+    if(mounted.current&&padTop!==lastPad.current){lastPad.current=padTop;if(startRows.current[k]){goTo(viewY,viewM,false);return;}}
+    if(!startRows.current[k]){const [y,m]=viewY*12+viewM<PHONE_MONTHS[0][0]*12+PHONE_MONTHS[0][1]?PHONE_MONTHS[0]:PHONE_MONTHS[PHONE_MONTHS.length-1];
+      if(mounted.current){setView(y,m);return;}goTo(y,m,false);mounted.current=true;return;}
+    if(k!==focusRef.current||!mounted.current){goTo(viewY,viewM,mounted.current);mounted.current=true;}},[viewY,viewM,padTop]);
+  const box={aspectRatio:"1"};
+  return <div ref={rootRef} style={{paddingBottom:"70vh"}}>
+    {weeks.map(wk=>{const firstOf=wk.find(str=>str.endsWith("-01")),fy=firstOf&&+firstOf.slice(0,4),fm=firstOf&&+firstOf.slice(5,7)-1;
+      const inRange=firstOf&&PHONE_MONTHS.some(([y,m])=>y===fy&&m===fm);
+      return <div key={wk[0]} ref={inRange?(el=>{if(el)startRows.current[keyOf(fy,fm)]=el;}):undefined}
+        style={{display:"grid",gridTemplateColumns:`${MS_GUT}px repeat(7,minmax(0,1fr))`,gap:4,marginBottom:4,scrollSnapAlign:inRange?"start":undefined}}>
+        <div style={{fontSize:10,fontWeight:900,color:(fy===viewY&&fm===viewM)?C.ink:C.mute,paddingTop:5,lineHeight:1.15,overflow:"hidden"}}>
+          {firstOf&&<>{MON[fm]}{fm===0&&<div style={{fontSize:8.5,fontWeight:700}}>’{String(fy).slice(2)}</div>}</>}</div>
+        {wk.map(str=>{const shift=state.shifts.find(s=>s.date===str);const y=+str.slice(0,4),m=+str.slice(5,7)-1;
+          return <DayCell key={str} str={str} shift={shift} state={state} sIdx={sIdx} box={box}
+            selected={str===selected} today={str===TODAY_S} dim={!(y===viewY&&m===viewM)}
+            win={winBy?winBy[str]:null} travel={travelBy?travelBy[str]:null} locked={monthLocked(state,str)}
+            preview={!!(previewSet&&previewSet.has(str))} placing={!!(placing&&placing.has(str))}
+            selTrip={selTrip} selWin={selWin} onEdge={onEdge} onGrabTravel={onGrabTravel} onTap={onTap} onDown={onDown} onEnter={onEnter}/>;})}
+      </div>;})}
   </div>;
 }
 /* ─── desktop strip view: each month is one weekday-aligned row of squares (Lydia's view), zoomable ─── */
@@ -1380,18 +1445,24 @@ function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setT
   const onDown=tool==="window"?(str)=>setDrag({anchor:str,over:str}):undefined;
   const onEnter=tool==="window"?(str)=>setDrag(d=>d?{...d,over:str}:d):undefined;
   const gridProps={mobile,winBy,travelBy,previewSet,placing,onDown,onEnter,selTrip,selWin,onEdge,onGrabTravel:tool==="select"?onGrabTravel:undefined};
+  const headRef=useRef(null),[headH,setHeadH]=useState(0);   // the sticky header's height = where the phone scroll snaps to
+  useEffect(()=>{const el=headRef.current;if(!el||!window.ResizeObserver)return;
+    const ro=new ResizeObserver(()=>setHeadH(Math.round(el.getBoundingClientRect().height)));ro.observe(el);return ()=>ro.disconnect();},[]);
+  const inPhoneRange=n=>{let m=viewM+n,y=viewY;if(m<0){m=11;y--;}if(m>11){m=0;y++;}
+    const v=y*12+m,a=PHONE_MONTHS[0],b=PHONE_MONTHS[PHONE_MONTHS.length-1];return v>=a[0]*12+a[1]&&v<=b[0]*12+b[1];};
   // the parent pane is the scroll container; the tools header sticks to its top
   return <div>
-    <div style={{position:"sticky",top:0,zIndex:3,background:C.panel2,borderBottom:`1px solid ${C.line2}`}}>
+    <div ref={headRef} style={{position:"sticky",top:0,zIndex:3,background:C.panel2,borderBottom:`1px solid ${C.line2}`}}>
       <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",flexWrap:"wrap"}}>
         {tools.map(([id,ic,lab])=><Btn key={id} small on={tool===id} onClick={()=>setTool(id)}>{ic} {lab}</Btn>)}
         <span style={{width:1,height:18,background:C.line}}/>
         <Btn small disabled={!canUndo} onClick={onUndo}>↶ Undo</Btn>
         {mobile
           ? <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
-              <Btn small onClick={()=>step(-1)}>‹</Btn>
-              <span style={{fontSize:13,fontWeight:800,minWidth:108,textAlign:"center"}}>{MONL[viewM]} {viewY}</span>
-              <Btn small onClick={()=>step(1)}>›</Btn>
+              <Btn small disabled={!inPhoneRange(-1)} onClick={()=>step(-1)}>‹</Btn>
+              <span onClick={()=>setView(TODAY.getFullYear(),TODAY.getMonth())} title="back to this month"
+                style={{fontSize:13,fontWeight:800,minWidth:108,textAlign:"center",cursor:"pointer"}}>{MONL[viewM]} {viewY}</span>
+              <Btn small disabled={!inPhoneRange(1)} onClick={()=>step(1)}>›</Btn>
             </div>
           : <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:4}}>
               <span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",color:C.mute,marginRight:2}}>zoom</span>
@@ -1404,11 +1475,13 @@ function CalendarSurface({state,sIdx,mobile,mutate,viewY,viewM,setView,tool,setT
       {tool==="erase"&&<div style={{fontSize:10.5,color:C.gray,padding:"0 12px 5px"}}>
         Erase clears the sketch layer — marked and requested days, held windows, travel days. Scheduled and worked days are deleted from the readout.</div>}
       {!mobile&&<CalFilter state={state} mutate={mutate} onOpenDoc={onOpenDoc}/>}
+      {mobile&&<div style={{display:"grid",gridTemplateColumns:`${MS_GUT}px repeat(7,minmax(0,1fr))`,gap:4,padding:"0 12px 4px"}}>
+        <div/>{DOW.map(d=><div key={d} style={{fontSize:9,fontWeight:800,color:C.mute,textAlign:"center",letterSpacing:"0.04em"}}>{d.toUpperCase()}</div>)}</div>}
     </div>
-    {/* desktop: each month a one-row strip (Lydia's dense view); phone: one month grid + arrows */}
-    <div style={{padding:"8px 12px 40px"}}>
+    {/* desktop: each month a one-row strip (Lydia's dense view); phone: continuous weeks that snap to a month */}
+    <div style={{padding:mobile?"6px 12px 0":"8px 12px 40px"}}>
       {mobile
-        ? <MonthGrid y={viewY} m={viewM} state={state} sIdx={sIdx} selected={selected} onTap={onTap} {...gridProps}/>
+        ? <PhoneScroll state={state} sIdx={sIdx} selected={selected} onTap={onTap} viewY={viewY} viewM={viewM} setView={setView} padTop={headH} {...gridProps}/>
         : <><StripHeader cell={cell} cg={cg} wg={wg}/>{CAL_MONTHS.map(([y,m])=><MonthStrip key={y+"-"+m} y={y} m={m} state={state} sIdx={sIdx} selected={selected} onTap={onTap} cell={cell} cg={cg} wg={wg} {...gridProps}/>)}</>}
     </div>
   </div>;
@@ -1439,7 +1512,7 @@ function PhaseBtns({status,past,onSet,small}){
   return <>{items.map(([ph,lab])=><Btn key={ph} small={small} on={status===ph} onClick={()=>onSet(ph)}
     title={PHASE_HINT[ph]}>{small?PHASE_SHORT[ph]:lab}</Btn>)}</>;
 }
-function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow,onOpenDoc}){
+function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow,onOpenDoc,onOpenWindow}){
   if(!selected)return <div style={{padding:"16px 14px",color:C.mute,fontSize:12.5}}>
     Tap a day to read or edit it. <b>Mark</b> holds a day; <b>Request</b> asks for it; <b>Schedule</b> commits it.
     A linked calendar promotes requested days to scheduled on its own.</div>;
@@ -1456,6 +1529,7 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow,onOp
   const addDay=kind=>mutate(s=>addAway(s,selected,kind));   // travel / away
   const del=()=>mutate(s=>ignoreShift({...s,shifts:s.shifts.filter(x=>x.id!==shift.id)},shift));
   const tinfo=travelBand(state)[selected];
+  const inWin=(state.windows||[]).find(w=>selected>=w.from&&selected<=w.to);   // a held window over this day
   const onDel=shift?del:(tinfo?(()=>mutate(s=>rmAwayAt(s,selected))):null);   // delete the day's shift or away/travel item
 
   const head=<div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:10}}>
@@ -1467,6 +1541,9 @@ function Readout({state,sIdx,selected,mutate,mobile,setSelected,onAddWindow,onOp
       <span style={{width:6,height:6,borderRadius:6,background:c.color}}/>{c.name}{c.out?` (out ${c.out.start}–${c.out.end})`:""}
       <DocPip cal={c} onOpen={onOpenDoc} size={11}/></span>)}
     {trip&&<span style={{fontSize:10.5,color:C.ocean}}>✈ {trip.name} ({trip.workFactor})</span>}
+    {inWin&&onOpenWindow&&<button onClick={()=>onOpenWindow(inWin.id)} title="open the window this day sits in"
+      style={{fontFamily:MONO,fontSize:10.5,fontWeight:700,color:C.ocean,border:`1px solid ${C.ocean}`,background:"transparent",borderRadius:12,padding:"1px 8px",cursor:"pointer"}}>
+      ▭ {sIdx[inWin.siteId]?sIdx[inWin.siteId].name+" ":""}window ›</button>}
     {onDel&&<DelX onClick={onDel}/>}
   </div>;
 
@@ -2697,7 +2774,7 @@ function App(){
     setSelected(str);
     const w=winBy[str];
     if(travelBy[str]){setSelWid(null);setSelTid(null);}             // travel day wins (even over a trip it sits on) → its own readout
-    else if(w){setSelWid(w.w.id);setSelTid(null);}                  // window day → select window
+    else if(w&&!ex){setSelWid(w.w.id);setSelTid(null);}             // empty window day → select window (a shift on it opens the shift; its readout links back to the window)
     else{setSelWid(null);                                           // trip day (select mode, no shift) → select trip
       const tp=(tool==="select"&&!ex)?(state.trips||[]).find(t=>t.visible!==false&&str>=t.from&&str<=t.to):null;
       setSelTid(tp?tp.id:null);}
@@ -2982,7 +3059,7 @@ function App(){
         <Banner agg={agg} goal={state.settings.goal} mobile={mobile} year={viewYM.slice(0,4)}/>
         <MonthBar agg={agg} viewYM={viewYM} mobile={mobile}/>
         <div style={{flex:1,minHeight:0,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden"}}>
-          <div style={{flex:mobile?(collapsed?"1 1 auto":"1 1 60%"):"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
+          <div data-cal-scroll style={{flex:mobile?(collapsed?"1 1 auto":"1 1 60%"):"1 1 0",minWidth:0,minHeight:0,overflow:"auto"}}>
             <CalendarSurface state={state} sIdx={sIdx} mobile={mobile} mutate={mutate} viewY={viewY} viewM={viewM} setView={setView}
               tool={tool} setTool={setTool} selected={selected} onTap={onTap} onUndo={undo} canUndo={canUndo}
               winBy={winBy} travelBy={travelBy} placing={placingSet} onCreateWindow={onCreateWindow}
@@ -3006,7 +3083,7 @@ function App(){
                 : selTid&&(state.trips||[]).find(t=>t.id===selTid)
                 ? <TripReadout state={state} tid={selTid} mutate={mutate} onClose={()=>setSelTid(null)}/>
                 : <Readout state={state} sIdx={sIdx} selected={selected} mutate={mutate} mobile={mobile} setSelected={setSelected}
-                    onAddWindow={addWindowAt} onOpenDoc={openDoc}/>}
+                    onAddWindow={addWindowAt} onOpenDoc={openDoc} onOpenWindow={id=>{setSelWid(id);setSelTid(null);}}/>}
             </div>}
         </div>
       </>}
