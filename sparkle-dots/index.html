@@ -105,7 +105,7 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
 .hitem.armed .del{background:#e5735c; color:#fff; box-shadow:none}
 .dot.magic{background:conic-gradient(from 200deg,#efa9a0,#f5cf8f,#bfdba7,#a6cfe6,#c4b5e6,#efa9a0)}
 
-.scrim{position:fixed; left:0; right:0; top:var(--vv-top, 0px); height:var(--vv-h, 100%); background:rgba(68,64,79,.28); display:grid; place-items:start center; padding:max(16px, env(safe-area-inset-top)) 16px 16px; z-index:10}
+.scrim{position:fixed; inset:0; background:rgba(68,64,79,.28); display:grid; place-items:start center; padding:calc(var(--vv-top, 0px) + max(16px, env(safe-area-inset-top))) 16px 16px; z-index:10}
 .scrim[hidden]{display:none}
 .sheet{background:var(--paper); border-radius:28px; box-shadow:0 20px 60px rgba(68,64,79,.2); padding:24px; width:min(440px,100%); max-height:calc(var(--vv-h, 100vh) - 32px); overflow:auto; display:flex; flex-direction:column; gap:14px; font-size:17px; touch-action:pan-y}
 .voice{display:flex; align-items:center; gap:12px}
@@ -113,6 +113,12 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
 .voice textarea{resize:none; line-height:1.3; min-height:72px; max-height:132px; overflow-y:auto}
 .flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:4; border-radius:18px}
 .flash.go{animation:flash .45s ease-out}
+.polaroid{position:fixed; z-index:30; pointer-events:none; background:#fff; padding:8px 8px 22px; border-radius:6px; box-shadow:0 10px 30px rgba(68,64,79,.28); transform-origin:center}
+.polaroid img{display:block; width:100%; height:auto; border-radius:2px}
+#libBtn{overflow:hidden}
+#libBtn img{width:100%; height:100%; object-fit:cover; border-radius:50%; display:block}
+#libBtn.bump{animation:bump .45s ease-out}
+@keyframes bump{0%{transform:scale(1)}40%{transform:scale(1.18)}100%{transform:scale(1)}}
 @keyframes flash{0%{opacity:.85}100%{opacity:0}}
 .shots{display:grid; grid-template-columns:repeat(auto-fill, minmax(118px, 1fr)); gap:12px}
 .shots button{appearance:none; border:0; padding:0; border-radius:16px; overflow:hidden; background:var(--button); aspect-ratio:7/6; cursor:pointer; touch-action:manipulation; box-shadow:0 0 0 1.5px var(--soft)}
@@ -460,9 +466,15 @@ try {
 } catch(e){}
 const shown = () => customs.filter(c => !c.hidden);
 function saveCustoms(){ try { localStorage.setItem('sparkle-dots-custom-v1', JSON.stringify(customs)); } catch(e){} }
-function loadCustom(c, done){
+const customLoading = {};
+function forgetOutlines(name){ for (const k of [...outlineCache.keys()]) if (k.startsWith(name + '@')) outlineCache.delete(k); }
+function loadCustom(c, done){   // decode a sticker picture once; later calls just wait for it
+  if (customImg[c.id]){ if (done) done(); return; }
+  if (customLoading[c.id]){ if (done) customLoading[c.id].push(done); return; }
+  customLoading[c.id] = done ? [done] : [];
   const img = new Image();
-  img.onload = () => { customImg[c.id] = img; outlineCache.clear(); if (done) done(); };
+  img.onload = () => { customImg[c.id] = img; forgetOutlines('custom:' + c.id); const cbs = customLoading[c.id]; delete customLoading[c.id]; cbs.forEach(f => f()); };
+  img.onerror = () => { delete customLoading[c.id]; };
   img.src = c.png || ('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(c.svg));
 }
 function sparkShape(c, x, y, r){
@@ -549,7 +561,8 @@ function frame(now){
 
   stickers.forEach(s => {
     const k = s.born ? Math.min(1, (now - s.born)/260) : 1, sc = 0.85 + 0.15*easeOut(k);
-    const bmp = outlined(s.e, s.s*SP*dpr, 2*dpr); if (!bmp) return;
+    const bmp = outlined(s.e, s.s*SP*dpr, 2*dpr);
+    if (!bmp){ if (s.e.startsWith('custom:')){ const c = customs.find(x => x.id === s.e.slice(7)); if (c) loadCustom(c); } return; }   // decode on first use
     const w = bmp.width/dpr*sc;
     ctx.save(); ctx.translate(P(s.x), P(s.y)); ctx.rotate(s.rot); ctx.drawImage(bmp, -w/2, -w/2, w, w); ctx.restore();
   });
@@ -774,6 +787,7 @@ function renderStickers(){
   const items = names.map(name => {
     const b = dotBtn(name === 'sparkle' ? 'Sparkle' : name.startsWith('custom:') ? 'Your sticker' : 'Sticker: ' + name, '', mode === 'sticker' && stickerPick === name, () => { mode = 'sticker'; stickerPick = name; }, {plain:true});
     b.classList.add('stk'); b.append(iconCanvas(name));
+    if (name.startsWith('custom:') && !customImg[name.slice(7)]){ const c = customs.find(x => x.id === name.slice(7)); if (c) loadCustom(c, queueStickerRender); }
     return b;
   });
   if (shown().length > 4){
@@ -804,7 +818,14 @@ function renderStickers(){
   tools.append(size, dice);
   stickRail.append(tools);
 }
-customs.forEach(c => loadCustom(c, renderStickers));
+// at startup, decode only what's on screen: the four palette slots and stickers placed in the drawing
+let stickerRenderQueued = false;
+function queueStickerRender(){ if (stickerRenderQueued) return; stickerRenderQueued = true; requestAnimationFrame(() => { stickerRenderQueued = false; renderStickers(); }); }
+(() => {
+  const needed = new Set(shown().slice(-4).map(c => c.id));
+  stickers.forEach(st => { if (st.e.startsWith('custom:')) needed.add(st.e.slice(7)); });
+  customs.filter(c => needed.has(c.id)).forEach(c => loadCustom(c, queueStickerRender));
+})();
 
 /* ================= pictures: camera + library of the last five ================= */
 const SHOT_KEEP = 5;
@@ -823,8 +844,16 @@ async function shotsAll(){   // database pictures plus any kept in memory after 
   const seen = new Set(stored.map(s => s.id));
   return [...stored, ...shotMem.filter(s => !seen.has(s.id))].sort((a, b) => b.id - a.id).slice(0, SHOT_KEEP);
 }
+async function makeThumb(blob){   // ~320 px wide JPEG for the library grid and the pictures button
+  try {
+    const bmp = await createImageBitmap(blob), w = 320, h = Math.round(bmp.height * w / bmp.width);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(bmp, 0, 0, w, h);
+    return await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.85));
+  } catch(e){ return null; }
+}
 async function shotAdd(blob){
-  const shot = {id: Date.now(), blob};
+  const shot = {id: Date.now(), blob, thumb: await makeThumb(blob)};
   try { await idb('readwrite', st => st.put(shot)); }
   catch(e){ shotMem.push(shot); }
   // keep only the newest five across storage and memory, deleting the rest from both
@@ -834,13 +863,43 @@ async function shotAdd(blob){
 }
 async function shotRemove(id){ shotMem = shotMem.filter(s => s.id !== id); try { await idb('readwrite', st => st.delete(id)); } catch(e){} }
 
+const libIcon = $('libBtn').innerHTML;
+let libThumbUrl = null;
+async function refreshLibButton(){   // the pictures button shows the newest picture
+  const all = await shotsAll();
+  if (libThumbUrl){ URL.revokeObjectURL(libThumbUrl); libThumbUrl = null; }
+  if (!all.length){ $('libBtn').innerHTML = libIcon; return; }
+  libThumbUrl = URL.createObjectURL(all[0].thumb || all[0].blob);
+  $('libBtn').innerHTML = ''; const im = document.createElement('img'); im.src = libThumbUrl; im.alt = ''; $('libBtn').append(im);
+}
+function flyToLibrary(blob){   // a little instant photo of the drawing flies into the pictures button
+  const from = cv.getBoundingClientRect(), to = $('libBtn').getBoundingClientRect();
+  const w = Math.min(260, from.width * 0.4), url = URL.createObjectURL(blob);
+  const card = document.createElement('div'); card.className = 'polaroid';
+  const im = document.createElement('img'); im.src = url; im.alt = ''; card.append(im);
+  card.style.width = w + 'px'; card.style.left = (from.left + from.width/2 - w/2) + 'px'; card.style.top = (from.top + from.height/2 - w*0.55) + 'px';
+  document.body.append(card);
+  const dx = to.left + to.width/2 - (from.left + from.width/2), dy = to.top + to.height/2 - (from.top + from.height/2 - w*0.05);
+  const done = () => { card.remove(); URL.revokeObjectURL(url); const lb = $('libBtn'); lb.classList.remove('bump'); void lb.offsetWidth; lb.classList.add('bump'); };
+  if (reduce || !card.animate){ done(); return; }
+  card.animate([
+    {transform:'scale(.6) rotate(0deg)', opacity:0},
+    {transform:'scale(1) rotate(-4deg)', opacity:1, offset:.25},
+    {transform:'scale(1) rotate(-4deg)', opacity:1, offset:.55},
+    {transform:`translate(${dx}px, ${dy}px) scale(.12) rotate(8deg)`, opacity:.9}
+  ], {duration:1100, easing:'ease-in-out'}).onfinish = done;
+}
 $('shotBtn').addEventListener('click', () => {
   if (shotPending) return;
   shotPending = async blob => {
     const f = $('flash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
-    if (blob) await shotAdd(blob);
+    if (!blob) return;
+    flyToLibrary(blob);
+    await shotAdd(blob);
+    setTimeout(refreshLibButton, 900);
   };
 });
+refreshLibButton();
 let shotUrls = [], viewing = null;
 function clearUrls(){ shotUrls.forEach(u => URL.revokeObjectURL(u)); shotUrls = []; }
 async function showShots(){
@@ -850,10 +909,10 @@ async function showShots(){
   const all = await shotsAll(), g = $('shotsGrid'); g.innerHTML = '';
   $('shotsEmpty').textContent = all.length ? 'Tap a picture to save it to Photos.' : 'Tap the camera to keep a picture of the drawing. The last five stay here.';
   all.forEach(shot => {
-    const u = URL.createObjectURL(shot.blob); shotUrls.push(u);
+    const u = URL.createObjectURL(shot.thumb || shot.blob); shotUrls.push(u);
     const b = document.createElement('button'); b.setAttribute('aria-label', 'Picture from ' + new Date(shot.id).toLocaleString());
     const img = document.createElement('img'); img.src = u; img.alt = ''; b.append(img);
-    b.addEventListener('click', () => showShot(shot, u));
+    b.addEventListener('click', () => { const full = URL.createObjectURL(shot.blob); shotUrls.push(full); showShot(shot, full); });
     g.append(b);
   });
 }
@@ -871,7 +930,7 @@ $('shotDelete').addEventListener('click', async () => {
   const b = $('shotDelete');
   if (!b.classList.contains('danger')){ b.classList.add('danger'); b.textContent = 'Tap again to delete'; return; }
   if (viewing) await shotRemove(viewing.id);
-  showShots();
+  showShots(); refreshLibButton();
 });
 $('shotSave').addEventListener('click', () => {
   if (!viewing) return;
@@ -895,8 +954,9 @@ function renderHistory(){
   [...shown()].reverse().forEach(c => {
     const wrap = document.createElement('div'); wrap.className = 'hitem';
     const pick = document.createElement('button'); pick.className = 'pick'; pick.setAttribute('aria-label', 'Use this sticker');
-    pick.append(iconCanvas('custom:' + c.id));
-    pick.addEventListener('click', () => { promote(c.id); mode = 'sticker'; stickerPick = 'custom:' + c.id; $('historySheet').hidden = true; renderStickers(); renderRail(); });
+    if (customImg[c.id]) pick.append(iconCanvas('custom:' + c.id));
+    else loadCustom(c, () => { pick.innerHTML = ''; pick.append(iconCanvas('custom:' + c.id)); });
+    pick.addEventListener('click', () => { promote(c.id); mode = 'sticker'; stickerPick = 'custom:' + c.id; $('historySheet').hidden = true; loadCustom(c, queueStickerRender); renderStickers(); renderRail(); });
     const del = document.createElement('button'); del.className = 'del'; del.setAttribute('aria-label', 'Throw this sticker away'); del.textContent = '×';
     del.addEventListener('click', () => {
       if (!wrap.classList.contains('armed')){ g.querySelectorAll('.armed').forEach(x => x.classList.remove('armed')); wrap.classList.add('armed'); return; }
@@ -1092,7 +1152,7 @@ function setStatus(t){ $('magicPreview').innerHTML = ''; const p = document.crea
 function showPreview(src, kind){
   const img = new Image();
   img.onload = () => {
-    customImg['preview'] = img; outlineCache.clear();
+    customImg['preview'] = img; forgetOutlines('custom:preview');
     const c = document.createElement('canvas'); c.width = c.height = 260;
     const bmp = outlined('custom:preview', 220, 4);
     c.getContext('2d').drawImage(bmp, (260 - bmp.width)/2, (260 - bmp.height)/2);
