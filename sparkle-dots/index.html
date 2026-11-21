@@ -35,9 +35,14 @@ body{
   grid-template-columns:auto minmax(0,1fr) auto;
   grid-template-areas:"stickers stage controls";
 }
-.controls{grid-area:controls; display:flex; flex-direction:column; align-items:center; justify-content:space-between; gap:16px; min-height:0}
+.controls{grid-area:controls; display:flex; flex-direction:column; align-items:center; gap:14px; min-height:0; min-width:0}
 .topbar{display:grid; grid-template-columns:repeat(2, auto); gap:14px; align-items:start; justify-items:center}
-.palette{display:flex; flex-direction:row; gap:14px; align-items:flex-start; padding:6px; overflow:auto; scrollbar-width:none; min-height:0}
+.palette{display:flex; flex-direction:column; gap:14px; align-items:center; padding:10px; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; min-height:0; flex:1 1 auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain}
+.palette.more-end{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent); mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent)}
+.palette.more-start{-webkit-mask-image:linear-gradient(to top,#000 calc(100% - 36px),transparent); mask-image:linear-gradient(to top,#000 calc(100% - 36px),transparent)}
+.palette.more-start.more-end{-webkit-mask-image:linear-gradient(to bottom,transparent,#000 36px,#000 calc(100% - 36px),transparent); mask-image:linear-gradient(to bottom,transparent,#000 36px,#000 calc(100% - 36px),transparent)}
+.sect{display:flex; flex-direction:row; gap:14px; flex:none}
+.pinned{flex:none; display:flex; gap:14px; padding:0 10px 4px}
 .palette::-webkit-scrollbar{display:none}
 .col{display:flex; flex-direction:column; gap:12px; align-items:center}
 
@@ -65,6 +70,7 @@ body{
 .drift{animation:drift 9s ease-in-out infinite}
 @keyframes drift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
 .sep{width:28px;height:2px;border-radius:2px;background:var(--soft);flex:none}
+.sect-sep{width:120px;height:2px;border-radius:2px;background:var(--soft);flex:none}
 
 .stage{grid-area:stage; position:relative; display:grid; place-items:center; min-width:0; min-height:0; overflow:hidden; border-radius:18px}
 canvas#cv{display:block; touch-action:none}
@@ -156,8 +162,14 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
   .stkcols{flex-direction:column}
   .stktools{flex-direction:column}
   .controls{flex-direction:row; align-items:center; justify-content:space-between}
+  .palette{flex-direction:row; overflow-x:auto; overflow-y:hidden; align-items:center}
+  .palette.more-end{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 36px),transparent); mask-image:linear-gradient(to right,#000 calc(100% - 36px),transparent)}
+  .palette.more-start{-webkit-mask-image:linear-gradient(to left,#000 calc(100% - 36px),transparent); mask-image:linear-gradient(to left,#000 calc(100% - 36px),transparent)}
+  .palette.more-start.more-end{-webkit-mask-image:linear-gradient(to right,transparent,#000 36px,#000 calc(100% - 36px),transparent); mask-image:linear-gradient(to right,transparent,#000 36px,#000 calc(100% - 36px),transparent)}
+  .sect{flex-direction:column}
+  .sect-sep{width:2px;height:120px}
+  .pinned{padding:0 4px}
   .topbar{order:2}
-  .palette{flex-direction:column; overflow-x:auto}
   .col{flex-direction:row}
   .sep{width:2px;height:28px}
 }
@@ -181,6 +193,7 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
       <button class="btn" id="libBtn" aria-label="Pictures"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M4 18l5-5 4 4 3-3 4 4"/></svg></button>
     </div>
     <div class="palette" id="right" aria-label="Colors"></div>
+    <div class="pinned" id="pinned"></div>
   </aside>
 </div>
 
@@ -761,17 +774,32 @@ function dotBtn(label, bg, pressed, onPick, opts={}){
 }
 function renderRail(){
   right.innerHTML = '';
+  const colorSect = document.createElement('div'); colorSect.className = 'sect'; right.append(colorSect);
   COLOR_COLS.forEach(names => {
-    const col = document.createElement('div'); col.className = 'col'; right.append(col);
+    const col = document.createElement('div'); col.className = 'col'; colorSect.append(col);
     names.forEach(name => { const c = PAL[name]; col.append(dotBtn(name, c, mode==='draw' && same(ink,{k:'c',v:c}), () => { mode = 'draw'; ink = {k:'c', v:c}; })); });
   });
-  const ex = document.createElement('div'); ex.className = 'col'; right.append(ex);
-  GRADS.forEach((g, i) => ex.append(dotBtn(g.name + ' gradient', swatchCss({k:'g',v:i}), mode==='draw' && same(ink,{k:'g',v:i}), () => { mode = 'draw'; ink = {k:'g', v:i}; })));
-  Object.keys(MAGIC).forEach(id => ex.append(dotBtn(MAGIC[id].name, MAGIC[id].css, mode==='draw' && same(ink,{k:'m',v:id}), () => { mode = 'draw'; ink = {k:'m', v:id}; }, {drift:true})));
-  const sep = document.createElement('span'); sep.className = 'sep'; ex.append(sep);
-  ex.append(dotBtn('Eraser', '', mode==='erase', () => mode = 'erase', {plain:true, icon:ICON_ERASE}));
+  const div = document.createElement('span'); div.className = 'sect-sep'; div.setAttribute('aria-hidden', 'true'); right.append(div);
+  // gradient section: still gradients in one column, moving ones in the other
+  const gradSect = document.createElement('div'); gradSect.className = 'sect'; gradSect.setAttribute('aria-label', 'Gradients'); right.append(gradSect);
+  const gStill = document.createElement('div'), gMove = document.createElement('div'); gStill.className = gMove.className = 'col'; gradSect.append(gStill, gMove);
+  GRADS.forEach((g, i) => gStill.append(dotBtn(g.name + ' gradient', swatchCss({k:'g',v:i}), mode==='draw' && same(ink,{k:'g',v:i}), () => { mode = 'draw'; ink = {k:'g', v:i}; })));
+  Object.keys(MAGIC).forEach(id => gMove.append(dotBtn(MAGIC[id].name, MAGIC[id].css, mode==='draw' && same(ink,{k:'m',v:id}), () => { mode = 'draw'; ink = {k:'m', v:id}; }, {drift:true})));
+  const pinned = document.getElementById('pinned'); pinned.innerHTML = '';
+  pinned.append(dotBtn('Eraser', '', mode==='erase', () => mode = 'erase', {plain:true, icon:ICON_ERASE}));
+  requestAnimationFrame(updateScrollHints);
   if (typeof renderStickers === 'function' && stickRail) renderStickers();
 }
+
+/* fade the palette's edge when there's more to scroll */
+function updateScrollHints(){
+  const r = right, horiz = innerHeight > innerWidth;
+  const pos = horiz ? r.scrollLeft : r.scrollTop, max = horiz ? r.scrollWidth - r.clientWidth : r.scrollHeight - r.clientHeight;
+  r.classList.toggle('more-start', pos > 4); r.classList.toggle('more-end', pos < max - 4);
+}
+right.addEventListener('scroll', updateScrollHints, {passive:true});
+addEventListener('resize', () => requestAnimationFrame(updateScrollHints));
+new ResizeObserver(updateScrollHints).observe(right);
 
 const $ = id => document.getElementById(id);
 /* ================= sticker palette ================= */
