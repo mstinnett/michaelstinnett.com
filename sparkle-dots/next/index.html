@@ -887,8 +887,15 @@ cv.addEventListener('pointermove', e => {
     return;
   }
   if (mode === 'erase'){   // a watercolor stroke goes all at once when the eraser crosses it
-    const hit = paint.findIndex(st => { const c = smoothSamples(st.pts); return c.some((q, i) => i && distSeg(fx, fy, c[i-1], q) < 0.45); });
-    if (hit >= 0){ if (!drag.undone){ undoStack.push(drag.before); drag.undone = true; } paint.splice(hit, 1); }
+    const n = Math.max(1, Math.ceil(Math.hypot(fx-lastF[0], fy-lastF[1]) / 0.15));   // test the whole swept path, not just where the finger landed
+    const swept = Array.from({length:n+1}, (_, k) => [lastF[0] + (fx-lastF[0])*k/n, lastF[1] + (fy-lastF[1])*k/n]);
+    for (let i=paint.length-1; i>=0; i--){
+      const c = smoothSamples(paint[i].pts);
+      if (swept.some(([x, y]) => c.some((q, j) => j && distSeg(x, y, c[j-1], q) < 0.45))){
+        if (!drag.undone){ undoStack.push(drag.before); drag.undone = true; }
+        paint.splice(i, 1);
+      }
+    }
   }
   const steps = Math.max(1, Math.ceil(Math.hypot(fx-lastF[0], fy-lastF[1]) / 0.15));
   for (let s=1; s<=steps; s++){
