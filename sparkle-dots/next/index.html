@@ -1662,7 +1662,11 @@ function drawRoads(P){
     racing.nodes.forEach(n => {
       const N = [P(n.x), P(n.y)], m = a => [P((n.x+a.x)/2), P((n.y+a.y)/2)];
       if (n.adj.length === 2){ const a = m(n.adj[0]), b = m(n.adj[1]); ctx.moveTo(a[0], a[1]); ctx.quadraticCurveTo(N[0], N[1], b[0], b[1]); }   // corners become curves
-      else n.adj.forEach(a => { const q = m(a); ctx.moveTo(q[0], q[1]); ctx.lineTo(N[0], N[1]); });
+      else {
+        n.adj.forEach(a => { const q = m(a); ctx.moveTo(q[0], q[1]); ctx.lineTo(N[0], N[1]); });
+        // at a junction, draw every turn a car can take, so cars never leave the road
+        for (let i=0; i<n.adj.length; i++) for (let j=i+1; j<n.adj.length; j++){ const a = m(n.adj[i]), b = m(n.adj[j]); ctx.moveTo(a[0], a[1]); ctx.quadraticCurveTo(N[0], N[1], b[0], b[1]); }
+      }
     });
   };
   const w = SP*0.46;
