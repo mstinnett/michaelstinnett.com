@@ -477,7 +477,8 @@ const customImg = {};
 try { customs = JSON.parse(localStorage.getItem('sparkle-dots-custom-v1') || '[]'); } catch(e){ customs = []; }
 // stickers thrown away from history are kept hidden while the saved drawing still uses them, then dropped
 try {
-  const saved = JSON.parse(localStorage.getItem('sparkle-dots-white-v4') || '{}'), used = new Set((saved.stickers || []).map(s => s.e));
+  const used = new Set();   // the Next demo shares this sticker list, so its saved page counts too
+  ['sparkle-dots-white-v4', 'sparkle-next-page-v1'].forEach(k => { const saved = JSON.parse(localStorage.getItem(k) || '{}'); (saved.stickers || []).forEach(st => used.add(st.e)); });
   const before = customs.length; customs = customs.filter(c => !c.hidden || used.has('custom:' + c.id));
   if (customs.length !== before) localStorage.setItem('sparkle-dots-custom-v1', JSON.stringify(customs));
 } catch(e){}

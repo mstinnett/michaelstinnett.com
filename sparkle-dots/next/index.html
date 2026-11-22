@@ -409,7 +409,7 @@ function allocRaster(){
 }
 const toR = i => (i + 0.5)*K;
 
-function recompute(autoFill){
+function recompute(autoFill, touching){   // touching: the lines just drawn; only shapes they close get filled
   const N = RW*RH;
   wctx.clearRect(0,0,RW,RH);
   wctx.strokeStyle = '#000'; wctx.lineWidth = 2.6; wctx.lineCap = 'round';
@@ -466,8 +466,19 @@ function recompute(autoFill){
   const created = [];
   if (autoFill){
     const now = performance.now();
+    let allow = null;
+    if (touching){   // a shape counts as newly closed only if it borders one of the new lines
+      allow = new Set();
+      touching.forEach(([a, b]) => {
+        const ax = toR(a[0]), ay = toR(a[1]), bx = toR(b[0]), by = toR(b[1]), L = Math.hypot(bx-ax, by-ay) || 1, nx = -(by-ay)/L, ny = (bx-ax)/L;
+        for (let t=0.1; t<0.95; t+=0.1) for (const sg of [-1, 1]){
+          const x = Math.round(ax + (bx-ax)*t + nx*sg*4), y = Math.round(ay + (by-ay)*t + ny*sg*4);
+          if (x >= 0 && y >= 0 && x < RW && y < RH && lab[y*RW + x] > 0) allow.add(lab[y*RW + x]);
+        }
+      });
+    }
     for (let k=1;k<info.length;k++){
-      if (faces[k] || info[k].area < 6) continue;
+      if (faces[k] || info[k].area < 6 || (allow && !allow.has(k))) continue;
       const c = info[k].center, s = {x:c%RW, y:(c/RW)|0, ink:{...ink}, born:now};
       seeds.push(s); faces[k] = s; created.push(s);
     }
@@ -780,7 +791,7 @@ function commitTo(dot, now){
   linePairs(a, dot).forEach(([p, q]) => addLine(p, q, now));
   tone(noteFor(dot[1]));
   rings.push({x:(dot[0]+.5)*SP, y:(dot[1]+.5)*SP, born:now, color:'#b5b2bf'});
-  if (recompute(true).length){ tone(587.33, .6, .03, .05); tone(880, .8, .025, .14); }
+  if (recompute(true, linePairs(a, dot)).length){ tone(587.33, .6, .03, .05); tone(880, .8, .025, .14); }
 }
 function distSeg(px, py, a, b){
   const vx = b[0]-a[0], vy = b[1]-a[1], l = vx*vx + vy*vy;
