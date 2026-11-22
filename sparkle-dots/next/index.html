@@ -915,6 +915,8 @@ function endStroke(e){
   if (drag && !drag.moved && !drag.undone && mode === 'draw'){
     if (tapColor(downAt[0], downAt[1], performance.now())) undoStack.push(drag.before);
   } else if (drag && !drag.moved && !drag.undone && mode === 'erase'){
+    const pi = paint.findIndex(st => { const c = smoothSamples(st.pts); return c.some((q, j) => j && distSeg(downAt[0], downAt[1], c[j-1], q) < 0.45); });
+    if (pi >= 0){ undoStack.push(drag.before); paint.splice(pi, 1); drag = null; save(); return; }   // a tap on watercolor erases it, like a tap on a sticker
     const k = regionAt(downAt[0], downAt[1]);
     if (k > 0 && faces[k] && faces[k].ink){ undoStack.push(drag.before); faces[k].ink = null; fillDirty = true; }
   }
