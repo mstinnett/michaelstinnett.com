@@ -175,6 +175,16 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
 .st-older .tin{width:38px; height:38px; border-radius:12px}
 .st-older .topbar{gap:10px}
 .topbar .btn.small{width:56px; height:56px}
+@media (orientation:landscape) and (max-height:560px){
+  .app[class] .topbar{grid-template-columns:repeat(3, auto); gap:8px}
+  .app[class] .btn{width:48px; height:48px}
+  .app[class] .btn svg{width:24px; height:24px}
+  .app[class] .dot{width:44px; height:44px}
+  .app[class] .tin{width:36px; height:36px}
+  .app[class] .controls{gap:8px}
+  .app[class] .palette{padding:6px}
+  .app[class] .col,.app[class] .sect,.app[class] .stkcols{gap:8px}
+}
 /* racing: the page takes the whole screen */
 .app.racing{grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr); grid-template-areas:"stage"}
 .app.racing .stickers,.app.racing .controls{display:none}
@@ -710,6 +720,16 @@ function smoothPath(pts, P){   // a smooth line through the points
   for (let i=1; i<pts.length-1; i++){ const [x, y] = pts[i], [nx, ny] = pts[i+1]; ctx.quadraticCurveTo(P(x), P(y), P((x+nx)/2), P((y+ny)/2)); }
   const [lx, ly] = pts[pts.length-1]; ctx.lineTo(P(lx), P(ly));
 }
+function smoothSamples(pts){   // the same curve smoothPath draws, as points
+  if (pts.length < 3) return pts.slice();
+  const out = [pts[0]]; let s0 = pts[0];
+  for (let i=1; i<pts.length-1; i++){
+    const c = pts[i], e = [(pts[i][0]+pts[i+1][0])/2, (pts[i][1]+pts[i+1][1])/2];
+    for (let k=1; k<=6; k++){ const t = k/6, u = 1-t; out.push([u*u*s0[0] + 2*u*t*c[0] + t*t*e[0], u*u*s0[1] + 2*u*t*c[1] + t*t*e[1]]); }
+    s0 = e;
+  }
+  out.push(pts[pts.length-1]); return out;
+}
 function washPath(pts, color, P){   // a soft, see-through watercolor stroke: two passes, darker where they overlap
   if (pts.length < 2) return;
   ctx.save(); ctx.lineCap = ctx.lineJoin = 'round'; ctx.strokeStyle = color; ctx.globalCompositeOperation = 'multiply';
@@ -867,7 +887,7 @@ cv.addEventListener('pointermove', e => {
     return;
   }
   if (mode === 'erase'){   // a watercolor stroke goes all at once when the eraser crosses it
-    const hit = paint.findIndex(st => st.pts.some((q, i) => i && distSeg(fx, fy, st.pts[i-1], q) < 0.4));
+    const hit = paint.findIndex(st => { const c = smoothSamples(st.pts); return c.some((q, i) => i && distSeg(fx, fy, c[i-1], q) < 0.45); });
     if (hit >= 0){ if (!drag.undone){ undoStack.push(drag.before); drag.undone = true; } paint.splice(hit, 1); }
   }
   const steps = Math.max(1, Math.ceil(Math.hypot(fx-lastF[0], fy-lastF[1]) / 0.15));
@@ -1584,9 +1604,17 @@ function chooseNext(cur, prev){
   return opts[opts.length-1];
 }
 const midOf = (a, b) => [(a.x+b.x)/2, (a.y+b.y)/2];
-function shape(car){ car.p0 = midOf(car.prev, car.cur); car.p1 = [car.cur.x, car.cur.y]; car.p2 = midOf(car.cur, car.next);
+function straight(car, a, b){ car.p0 = a; car.p2 = b; car.p1 = [(a[0]+b[0])/2, (a[1]+b[1])/2]; car.len = Math.max(0.05, Math.hypot(b[0]-a[0], b[1]-a[1])); }
+function shape(car){
+  if (car.next === car.prev){ car.phase = 'in'; straight(car, midOf(car.prev, car.cur), [car.cur.x, car.cur.y]); return; }   // a dead end: drive to the very end first
+  car.p0 = midOf(car.prev, car.cur); car.p1 = [car.cur.x, car.cur.y]; car.p2 = midOf(car.cur, car.next);
   let L = 0, q = car.p0; for (let i=1;i<=6;i++){ const r = bez(car, i/6); L += Math.hypot(r[0]-q[0], r[1]-q[1]); q = r; } car.len = Math.max(0.05, L); }
 function bez(car, t){ const u = 1 - t; return [u*u*car.p0[0] + 2*u*t*car.p1[0] + t*t*car.p2[0], u*u*car.p0[1] + 2*u*t*car.p1[1] + t*t*car.p2[1]]; }
+function advance(car){
+  if (car.phase === 'in'){ car.phase = 'out'; straight(car, [car.cur.x, car.cur.y], midOf(car.cur, car.prev)); return; }   // turn around at the end
+  if (car.phase === 'out'){ car.phase = null; const back = car.prev; car.prev = car.cur; car.cur = back; car.next = chooseNext(car.cur, car.prev); shape(car); return; }
+  car.prev = car.cur; car.cur = car.next; car.next = chooseNext(car.cur, car.prev); shape(car);
+}
 function startRace(){
   const nodes = buildRoads(), cars = [];
   const pool = [...nodes].sort(() => Math.random() - .5);
@@ -1607,7 +1635,7 @@ function raceStep(now){
   racing.cars.forEach(car => {
     car.boost = Math.max(0, car.boost - dt);
     car.t += car.base*(car.boost > 0 ? 1.9 : 1)*dt*SPEED/car.len;
-    while (car.t >= 1){ car.t -= 1; car.prev = car.cur; car.cur = car.next; car.next = chooseNext(car.cur, car.prev); shape(car); }
+    while (car.t >= 1){ car.t -= 1; advance(car); }
     const t = car.t, u = 1 - t;
     const dx = 2*u*(car.p1[0]-car.p0[0]) + 2*t*(car.p2[0]-car.p1[0]), dy = 2*u*(car.p1[1]-car.p0[1]) + 2*t*(car.p2[1]-car.p1[1]);
     if (Math.hypot(dx, dy) > 1e-3){ let da = Math.atan2(dy, dx) - car.ang; while (da > Math.PI) da -= Math.PI*2; while (da < -Math.PI) da += Math.PI*2; car.ang += da*Math.min(1, dt*14); }
