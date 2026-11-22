@@ -72,7 +72,33 @@ body{
 .sep{width:28px;height:2px;border-radius:2px;background:var(--soft);flex:none}
 .sect-sep{width:120px;height:2px;border-radius:2px;background:var(--soft);flex:none}
 
-.stage{grid-area:stage; position:relative; display:grid; place-items:center; min-width:0; min-height:0; overflow:hidden; border-radius:18px}
+.work{grid-area:stage; display:flex; flex-direction:column; gap:10px; min-width:0; min-height:0}
+.stage{position:relative; display:grid; place-items:center; min-width:0; min-height:0; overflow:hidden; border-radius:18px; flex:1 1 0; align-self:stretch}
+
+/* the mode switch at the top of the workspace: pencil (draw) on the left, play (activities) on the right; drag the circle across */
+.modebar{flex:none; display:flex; justify-content:center}
+.mode{appearance:none; border:0; padding:0; position:relative; width:148px; height:64px; border-radius:32px; flex:none; cursor:grab; touch-action:none; color:#8a90a6;
+  background:var(--shade); box-shadow:inset 0 3px 0 rgba(0,0,0,.05), 0 3px 0 var(--soft); transition:background .25s ease}
+.mode[aria-checked="true"]{background:linear-gradient(90deg,#a6cfe6,#bfdba7,#f5cf8f)}
+.mode .end{position:absolute; top:0; width:64px; height:64px; display:grid; place-items:center; pointer-events:none}
+.mode .end.l{left:0} .mode .end.r{right:0}
+.mode svg{width:26px; height:26px; fill:none; stroke:currentColor; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round}
+.mode .fill{fill:currentColor}
+.mode .knob{position:absolute; top:4px; left:4px; width:56px; height:56px; border-radius:50%; background:#fff; color:var(--ink); display:grid; place-items:center; pointer-events:none;
+  box-shadow:inset 0 -4px 0 rgba(0,0,0,.07), 0 3px 8px rgba(68,64,79,.22)}
+.mode.snap .knob{transition:transform .22s ease}
+.mode:focus-visible{outline:3px dashed var(--ink); outline-offset:5px}
+
+/* activity mode: the drawing tools step aside and the page takes the whole workspace */
+.app.playing{grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr); grid-template-areas:"stage"}
+.app.playing .stickers,.app.playing .controls{display:none}
+.acts{position:absolute; inset:0; z-index:5; display:flex; flex-wrap:wrap; gap:24px; align-items:center; justify-content:center; padding:24px; background:rgba(255,255,255,.6); border-radius:18px}
+.acts[hidden]{display:none}
+.act{appearance:none; border:0; width:144px; height:144px; border-radius:40px; background:var(--button); display:grid; place-items:center; padding:0; cursor:pointer; touch-action:manipulation;
+  box-shadow:inset 0 -5px 0 rgba(0,0,0,.07), 0 4px 0 var(--soft), 0 10px 22px rgba(68,64,79,.14); transition:transform .12s ease}
+.act:active{transform:translateY(2px) scale(.97)}
+.act svg{width:104px; height:104px}
+.act:focus-visible{outline:3px dashed var(--ink); outline-offset:5px}
 canvas#cv{display:block; touch-action:none}
 
 /* pull-down shade for clearing: the tab lives top right; pulling it lowers a shade over the picture */
@@ -173,17 +199,36 @@ input[type=range].scale:focus-visible{outline:3px dashed var(--ink); outline-off
   .col{flex-direction:row}
   .sep{width:2px;height:28px}
 }
-@media (prefers-reduced-motion:reduce){ .drift{animation:none} .anim-shade .shade,.anim-pull{transition:none} }
+@media (prefers-reduced-motion:reduce){ .drift{animation:none} .anim-shade .shade,.anim-pull{transition:none} .mode.snap .knob,.mode{transition:none} }
 </style>
 </head>
 <body>
 <div class="app">
   <aside class="stickers" id="stickers" aria-label="Stickers"></aside>
-  <main class="stage" id="stage">
-    <canvas id="cv" aria-label="Dots to draw on"></canvas>
-    <div class="shade" id="shade"></div>
-    <div class="flash" id="flash"></div>
-  </main>
+  <div class="work">
+    <div class="modebar">
+      <button class="mode" id="modeSw" role="switch" aria-checked="false" aria-label="Play: drag the circle from the pencil to the play side">
+        <span class="end l" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4.5 19.5l1-4.2L15.8 5a2 2 0 0 1 2.9 0l.3.3a2 2 0 0 1 0 2.9L8.7 18.5z"/><path d="M14 7l3 3"/></svg></span>
+        <span class="end r" aria-hidden="true"><svg viewBox="0 0 24 24"><path class="fill" d="M8.5 5.8v12.4a.8.8 0 0 0 1.2.7l9.6-6.2a.8.8 0 0 0 0-1.4L9.7 5.1a.8.8 0 0 0-1.2.7z"/></svg></span>
+        <span class="knob" id="knob" aria-hidden="true"></span>
+      </button>
+    </div>
+    <main class="stage" id="stage">
+      <canvas id="cv" aria-label="Dots to draw on"></canvas>
+      <div class="shade" id="shade"></div>
+      <div class="flash" id="flash"></div>
+      <div class="acts" id="acts" role="group" aria-label="Activities" hidden>
+        <button class="act" id="actRace" aria-label="Car racing"><svg viewBox="0 0 64 64" aria-hidden="true">
+          <path d="M8 31l-.5 4" stroke="#56ade8" stroke-width="3" stroke-linecap="round"/><path d="M3 38h6M5 44h5" stroke="#56ade8" stroke-width="3" stroke-linecap="round"/>
+          <path d="M12 44v-8.5l6.5-11h21l8.5 11h6.5a2.5 2.5 0 0 1 2.5 2.5v6z" fill="#e8634a" stroke="#262940" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M21 28h7.5v7.5H16.8zM32 28h6.2l5.6 7.5H32z" fill="#fff" stroke="#262940" stroke-width="2.4" stroke-linejoin="round"/>
+          <circle cx="21" cy="44.5" r="5.5" fill="#262940"/><circle cx="21" cy="44.5" r="2" fill="#d6e7f3"/>
+          <circle cx="46" cy="44.5" r="5.5" fill="#262940"/><circle cx="46" cy="44.5" r="2" fill="#d6e7f3"/>
+          <path d="M51 8c.5 3.6 1.9 5 5.5 5.5-3.6.5-5 1.9-5.5 5.5-.5-3.6-1.9-5-5.5-5.5 3.6-.5 5-1.9 5.5-5.5z" fill="#f2c55c" stroke="#262940" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg></button>
+      </div>
+    </main>
+  </div>
 
   <aside class="controls" aria-label="Controls">
     <div class="topbar">
@@ -316,6 +361,7 @@ let stickerScale = 1.3, shuffle = false, sizePreview = null;   // sizePreview: {
 let ink = {k:'c', v:C.coral};
 let mirror = false, soundOn = true;
 let undoStack = [];
+let playing = false, racing = null;   // activity mode (the switch on the play side), and the car race when it is running
 
 /* ================= shape detection (raster) ================= */
 const K = 36;                    // raster pixels per dot spacing
@@ -542,18 +588,21 @@ function frame(now){
   renderFills(T, now);
   ctx.imageSmoothingEnabled = true; ctx.drawImage(fillCv, 0, 0, CW, CH);
 
-  ctx.fillStyle = 'rgba(42,70,112,.22)';   // pale blue on white, a darker tint on fills
-  const dr = Math.max(3, SP*0.055);
-  for (let j=0;j<GH;j++) for (let i=0;i<GW;i++){ ctx.beginPath(); ctx.arc(P(i), P(j), dr, 0, 7); ctx.fill(); }
+  if (!racing){
+    ctx.fillStyle = 'rgba(42,70,112,.22)';   // pale blue on white, a darker tint on fills
+    const dr = Math.max(3, SP*0.055);
+    for (let j=0;j<GH;j++) for (let i=0;i<GW;i++){ ctx.beginPath(); ctx.arc(P(i), P(j), dr, 0, 7); ctx.fill(); }
+  }
 
   const lw = Math.max(5, Math.min(10, SP*0.1));
   ctx.lineCap = 'round'; ctx.lineWidth = lw; ctx.strokeStyle = LINE;
-  segs.forEach(s => {
+  if (!racing) segs.forEach(s => {
     const f = s.born ? easeOut(Math.max(0, Math.min(1, (now - s.born)/200))) : 1;
     if (f <= 0) return;
     const x1 = P(s.a[0]), y1 = P(s.a[1]), x2 = x1 + (P(s.b[0])-x1)*f, y2 = y1 + (P(s.b[1])-y1)*f;
     ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
   });
+  if (racing){ raceStep(now); drawRoads(P); }   // her lines become roads
 
   if (drag && drag.moved && !shotPending){
     const x1 = P(drag.last[0]), y1 = P(drag.last[1]);
@@ -584,7 +633,9 @@ function frame(now){
     ctx.save(); ctx.translate(P(s.x), P(s.y)); ctx.rotate(s.rot); ctx.drawImage(bmp, -w/2, -w/2, w, w); ctx.restore();
   });
 
-  if (sizePreview && !shotPending){
+  if (racing) drawRacers(now, P);
+
+  if (sizePreview && !shotPending && !racing){
     const k = sizePreview.until ? Math.max(0, 1 - (now - sizePreview.until)/350) : 1;
     if (k <= 0) sizePreview = null;
     else {
@@ -705,6 +756,7 @@ function stickerHit(fx, fy){
 function sparkHit(fx, fy){ return sparks.findIndex(p => Math.hypot(p.x-fx, p.y-fy) < 0.35); }
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
+  if (playing){ if (racing){ ensureAudio(); racePointerDown(e); } return; }   // in activity mode the page belongs to the activity
   if (active) return;                            // a second finger mid-stroke is ignored
   ensureAudio(); closeDrawer();
   try { cv.setPointerCapture(e.pointerId); } catch(_){}
@@ -735,6 +787,7 @@ cv.addEventListener('pointerdown', e => {
   drag = {last:[cx(fx), cy(fy)], fx:fx+.5, fy:fy+.5, undone:false, moved:false, before:snapshot()};
 });
 cv.addEventListener('pointermove', e => {
+  if (racing){ racePointerMove(e); return; }
   if (!active || e.pointerId !== strokeId) return;
   const [fx, fy] = fpos(e), now = performance.now();
   if (Math.hypot(fx-downAt[0], fy-downAt[1]) > 0.25) drag.moved = true;
@@ -746,7 +799,9 @@ cv.addEventListener('pointermove', e => {
   drag.fx = fx + .5; drag.fy = fy + .5;
   lastF = [fx, fy];
 });
+function cancelStroke(){ if (!active) return; active = false; strokeId = null; drag = null; save(); }   // keep what was drawn, skip the tap
 function endStroke(e){
+  if (racing && e){ racePointerUp(e); return; }
   if (!active || (e && e.pointerId !== strokeId)) return; active = false; strokeId = null;
   if (drag && !drag.moved && !drag.undone && mode === 'draw'){
     if (tapColor(downAt[0], downAt[1], performance.now())) undoStack.push(drag.before);
@@ -1357,11 +1412,280 @@ function wipe(newDensity){
   allocRaster(); recompute(false); fit(); syncSettings(); save();
 }
 
+
+/* ================= activity mode: drag the circle from the pencil to play ================= */
+const app = document.querySelector('.app'), modeSw = $('modeSw'), knob = $('knob');
+const ICON_PENCIL = modeSw.querySelector('.end.l').innerHTML, ICON_PLAY = modeSw.querySelector('.end.r').innerHTML;
+const KNOB_MAX = 148 - 56 - 8;   // track width − knob − padding
+let knobX = 0, swDrag = null;
+function placeKnob(x){
+  knobX = x; knob.style.transform = `translateX(${x}px)`;
+  const icon = x > KNOB_MAX/2 ? ICON_PLAY : ICON_PENCIL;
+  if (knob.dataset.icon !== icon){ knob.innerHTML = icon; knob.dataset.icon = icon; }
+}
+function setPlaying(on){
+  modeSw.classList.add('snap'); placeKnob(on ? KNOB_MAX : 0); modeSw.setAttribute('aria-checked', on ? 'true' : 'false');
+  if (on === playing) return;
+  playing = on;
+  if (on){ cancelStroke(); app.classList.add('playing'); $('acts').hidden = false; }
+  else { stopActivity(); app.classList.remove('playing'); $('acts').hidden = true; }
+}
+modeSw.addEventListener('pointerdown', e => {
+  e.preventDefault(); ensureAudio();
+  try { modeSw.setPointerCapture(e.pointerId); } catch(_){}
+  modeSw.classList.remove('snap');
+  swDrag = {id:e.pointerId, x0:e.clientX, k0:knobX, moved:false};
+});
+modeSw.addEventListener('pointermove', e => {
+  if (!swDrag || e.pointerId !== swDrag.id) return;
+  const dx = e.clientX - swDrag.x0; if (Math.abs(dx) > 6) swDrag.moved = true;
+  if (swDrag.moved) placeKnob(Math.max(0, Math.min(KNOB_MAX, swDrag.k0 + dx)));
+});
+function swRelease(e){
+  if (!swDrag || e.pointerId !== swDrag.id) return;
+  const d = swDrag; swDrag = null;
+  if (d.moved){ setPlaying(knobX > KNOB_MAX/2); return; }
+  // a tap doesn't switch: the circle nudges toward the other side to show it wants a drag
+  modeSw.classList.add('snap');
+  if (reduce || !knob.animate) return;
+  const to = d.k0 + (playing ? -16 : 16);
+  knob.animate([{transform:`translateX(${d.k0}px)`}, {transform:`translateX(${to}px)`, offset:.4}, {transform:`translateX(${d.k0}px)`}], {duration:420, easing:'ease-in-out'});
+}
+modeSw.addEventListener('pointerup', swRelease);
+modeSw.addEventListener('pointercancel', swRelease);
+modeSw.addEventListener('click', e => e.preventDefault());
+modeSw.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); setPlaying(!playing); }
+  else if (e.key === 'ArrowRight'){ e.preventDefault(); setPlaying(true); }
+  else if (e.key === 'ArrowLeft'){ e.preventDefault(); setPlaying(false); }
+});
+placeKnob(0);
+
+/* the activities on the play side; car racing is the first */
+const ACTIVITIES = {race:{start:startRace, stop:endRace}};
+let activity = null;
+function startActivity(id){ $('acts').hidden = true; activity = id; ACTIVITIES[id].start(); }
+function stopActivity(){ if (activity){ ACTIVITIES[activity].stop(); activity = null; } }
+$('actRace').addEventListener('click', () => { ensureAudio(); startActivity('race'); });
+
+/* ================= race: her lines become the track ================= */
+/* Cars drive on their own. Touch and hold (or drag) and the nearest car drives to your finger along the roads;
+   let go and it carries on by itself. A quick tap gives the nearest car a sparkle boost, and so do the stars,
+   suns, rainbows and sparkles on the page when a car drives over them. */
+const RACE_COLORS = [PAL.Coral, PAL.Ocean, PAL.Sun];
+const BOOSTERS = new Set(['star', 'rainbow', 'sun', 'sparkle']);
+const DRIVE = 3.1;   // dots per second while a finger is driving
+function buildRoads(){
+  const map = new Map(), key = (x, y) => Math.round(x*100) + ',' + Math.round(y*100);
+  const node = (x, y) => { const k = key(x, y); let n = map.get(k); if (!n){ n = {x, y, adj:new Set()}; map.set(k, n); } return n; };
+  const edge = (a, b) => { const na = node(a[0], a[1]), nb = node(b[0], b[1]); if (na !== nb){ na.adj.add(nb); nb.adj.add(na); } };
+  segs.forEach(sg => edge(sg.a, sg.b));
+  let nodes = [...map.values()].filter(n => n.adj.size);
+  if (!nodes.length){   // nothing to drive on yet: a gentle oval around the page
+    const N = 28, cxo = (GW-1)/2, cyo = (GH-1)/2;
+    const ov = Array.from({length:N}, (_, i) => [cxo + Math.cos(i/N*Math.PI*2)*GW*0.38, cyo + Math.sin(i/N*Math.PI*2)*GH*0.36]);
+    ov.forEach((q, i) => edge(q, ov[(i+1)%N]));
+    nodes = [...map.values()];
+  }
+  nodes.forEach((n, i) => { n.adj = [...n.adj]; n.i = i; });
+  return nodes;
+}
+const elen = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+/* steering: the nearest point on the roads to the finger, and how far every crossing is from it */
+function nearestOnRoads(fx, fy){
+  let best = null, bd = Infinity;
+  racing.nodes.forEach(a => a.adj.forEach(b => {
+    if (b.i < a.i) return;
+    const vx = b.x - a.x, vy = b.y - a.y, l2 = vx*vx + vy*vy;
+    const s = l2 ? Math.max(0, Math.min(1, ((fx - a.x)*vx + (fy - a.y)*vy)/l2)) : 0;
+    const x = a.x + vx*s, y = a.y + vy*s, d = Math.hypot(x - fx, y - fy);
+    if (d < bd){ bd = d; best = {a, b, s, x, y}; }
+  }));
+  return best;
+}
+function routeTo(tg){   // road distance from each crossing to the target (a small graph, so plain Dijkstra)
+  const n = racing.nodes.length, D = new Float64Array(n).fill(Infinity), done = new Uint8Array(n), e = elen(tg.a, tg.b);
+  D[tg.a.i] = tg.s*e; D[tg.b.i] = Math.min(D[tg.b.i], (1 - tg.s)*e);
+  for (;;){
+    let u = -1, du = Infinity;
+    for (let i=0;i<n;i++) if (!done[i] && D[i] < du){ du = D[i]; u = i; }
+    if (u < 0) break; done[u] = 1;
+    const nu = racing.nodes[u];
+    nu.adj.forEach(v => { const d = du + elen(nu, v); if (d < D[v.i]) D[v.i] = d; });
+  }
+  return D;
+}
+function ptCost(X, Y, u, h){   // road distance to the target for a car u of the way from X to Y, heading to Y
+  const e = elen(X, Y), tg = h.tg;
+  if (tg.a === X && tg.b === Y && tg.s >= u - 1e-6) return (tg.s - u)*e;
+  if (tg.a === Y && tg.b === X && 1 - tg.s >= u - 1e-6) return (1 - tg.s - u)*e;
+  return (1 - u)*e + h.D[Y.i];
+}
+function chooseNext(cur, prev, car){
+  const h = car && car.hold;
+  if (h && h.on){   // a finger is driving: take the road that gets there soonest
+    let best = null, bc = Infinity;
+    cur.adj.forEach(n => { const c = ptCost(cur, n, 0, h) + (n === prev ? 0.2 : 0); if (c < bc){ bc = c; best = n; } });
+    if (best) return best;
+  }
+  const opts = cur.adj.filter(n => n !== prev);
+  if (!opts.length) return prev;                       // a dead end: turn around
+  const ix = cur.x - prev.x, iy = cur.y - prev.y, il = Math.hypot(ix, iy) || 1;
+  const w = opts.map(n => { const ox = n.x - cur.x, oy = n.y - cur.y, ol = Math.hypot(ox, oy) || 1; return Math.exp(2.5*(ix*ox + iy*oy)/(il*ol)); });
+  let r = Math.random()*w.reduce((a, b) => a + b, 0);
+  for (let i=0;i<opts.length;i++){ r -= w[i]; if (r <= 0) return opts[i]; }
+  return opts[opts.length-1];
+}
+const midOf = (a, b) => [(a.x+b.x)/2, (a.y+b.y)/2];
+function straight(car, a, b){ car.p0 = a; car.p2 = b; car.p1 = [(a[0]+b[0])/2, (a[1]+b[1])/2]; car.len = Math.max(0.05, Math.hypot(b[0]-a[0], b[1]-a[1])); }
+function shape(car){
+  if (car.next === car.prev){ car.phase = 'in'; straight(car, midOf(car.prev, car.cur), [car.cur.x, car.cur.y]); return; }   // a dead end or a U-turn: drive to the crossing first
+  car.phase = null;
+  car.p0 = midOf(car.prev, car.cur); car.p1 = [car.cur.x, car.cur.y]; car.p2 = midOf(car.cur, car.next);
+  let L = 0, q = car.p0; for (let i=1;i<=6;i++){ const r = bez(car, i/6); L += Math.hypot(r[0]-q[0], r[1]-q[1]); q = r; } car.len = Math.max(0.05, L);
+}
+function bez(car, t){ const u = 1 - t; return [u*u*car.p0[0] + 2*u*t*car.p1[0] + t*t*car.p2[0], u*u*car.p0[1] + 2*u*t*car.p1[1] + t*t*car.p2[1]]; }
+function advance(car){
+  if (car.phase === 'in'){ car.phase = 'out'; straight(car, [car.cur.x, car.cur.y], midOf(car.cur, car.prev)); return; }   // turn around at the end
+  if (car.phase === 'out'){ car.phase = null; const back = car.prev; car.prev = car.cur; car.cur = back; car.next = chooseNext(car.cur, car.prev, car); shape(car); return; }
+  car.prev = car.cur; car.cur = car.next; car.next = chooseNext(car.cur, car.prev, car); shape(car);
+}
+function reverse(car){   // turn around on the spot: the same curve, driven the other way
+  [car.prev, car.next] = [car.next, car.prev]; [car.p0, car.p2] = [car.p2, car.p0]; car.t = 1 - car.t;
+}
+function startRace(){
+  const nodes = buildRoads(), cars = [];
+  const pool = [...nodes].sort(() => Math.random() - .5);
+  racing = {nodes, cars, bursts:[], last:performance.now()};
+  for (let i=0;i<RACE_COLORS.length;i++){
+    const prev = pool[i % pool.length], cur = prev.adj[(Math.random()*prev.adj.length)|0];
+    const car = {prev, cur, next:null, t:Math.random()*0.5, base:2.1 + i*0.3, v:0, boost:0, color:RACE_COLORS[i], cool:{}, ang:0, hold:null, turned:0};
+    car.next = chooseNext(cur, prev, car); shape(car);
+    const d = [car.p2[0]-car.p0[0], car.p2[1]-car.p0[1]]; car.ang = Math.atan2(d[1], d[0]);
+    car.pos = bez(car, car.t);
+    cars.push(car);
+  }
+}
+function endRace(){ racing = null; holds.clear(); }
+function burst(x, y, now, color){ for (let i=0;i<7;i++){ const a = Math.random()*Math.PI*2, v = 0.8 + Math.random()*1.4; racing.bursts.push({x, y, vx:Math.cos(a)*v, vy:Math.sin(a)*v, born:now, color}); } }
+function steer(car, now){   // returns the road distance left to the finger
+  const h = car.hold;
+  if (car.phase){   // driving into a crossing to turn around: the distance runs through that crossing
+    const u = Math.min(1, Math.hypot(car.pos[0] - car.cur.x, car.pos[1] - car.cur.y)/elen(car.cur, car.prev));
+    return car.phase === 'in' ? ptCost(car.prev, car.cur, 1 - u, h) : ptCost(car.cur, car.prev, u, h);
+  }
+  const t = car.t;
+  // before the crossing, switch to a better road if the finger has moved
+  if (t < 0.35){ const want = chooseNext(car.cur, car.prev, car); if (want !== car.next && want !== car.prev){ car.next = want; shape(car); } }
+  const fwd = t < .5 ? ptCost(car.prev, car.cur, .5 + t, h) : ptCost(car.cur, car.next, t - .5, h);
+  const back = t < .5 ? ptCost(car.cur, car.prev, .5 - t, h) : ptCost(car.next, car.cur, 1.5 - t, h);
+  if (back + 0.35 < fwd && now - car.turned > 450){ reverse(car); car.turned = now; return back; }
+  return fwd;
+}
+function raceStep(now){
+  const dt = Math.min(0.05, (now - racing.last)/1000); racing.last = now;
+  holds.forEach(h => { if (!h.on && now - h.t0 > 180) engage(h); });   // touch and hold: take the wheel
+  racing.cars.forEach(car => {
+    car.boost = Math.max(0, car.boost - dt);
+    const boost = car.boost > 0 ? 1.9 : 1;
+    let want = car.base, cap = Infinity;
+    if (car.hold && car.hold.on){
+      const left = steer(car, now);
+      want = DRIVE;
+      cap = Math.max(0, (left - 0.08)*4);   // slow down and park right at the finger
+    }
+    car.v += (want*boost - car.v)*Math.min(1, dt*5);
+    car.v = Math.min(car.v, cap);
+    car.t += car.v*dt*SPEED/car.len;
+    while (car.t >= 1){ car.t -= 1; advance(car); }
+    const t = car.t, u = 1 - t;
+    const dx = 2*u*(car.p1[0]-car.p0[0]) + 2*t*(car.p2[0]-car.p1[0]), dy = 2*u*(car.p1[1]-car.p0[1]) + 2*t*(car.p2[1]-car.p1[1]);
+    if (Math.hypot(dx, dy) > 1e-3){ let da = Math.atan2(dy, dx) - car.ang; while (da > Math.PI) da -= Math.PI*2; while (da < -Math.PI) da += Math.PI*2; car.ang += da*Math.min(1, dt*14); }
+    car.pos = bez(car, t);
+    // stars, rainbows, suns and sparkles on the page are speed boosts
+    const hits = [...stickers.map((st, i) => ['st' + i, st.e, st.x, st.y, st.s]), ...sparks.map((sp, i) => ['sp' + i, 'sparkle', sp.x, sp.y, 1])];
+    hits.forEach(([id, e, x, y, sz]) => {
+      if (!BOOSTERS.has(e) || (car.cool[id] || 0) > now) return;
+      if (Math.hypot(car.pos[0]-x, car.pos[1]-y) < 0.45*Math.max(1, sz)){ car.boost = 1.4; car.cool[id] = now + 1500; burst(x, y, now, '#f2c55c'); }
+    });
+  });
+  racing.bursts = racing.bursts.filter(b => now - b.born < 600);
+}
+function drawRoads(P){
+  const path = () => {
+    ctx.beginPath();
+    racing.nodes.forEach(n => {
+      const N = [P(n.x), P(n.y)], m = a => [P((n.x+a.x)/2), P((n.y+a.y)/2)];
+      if (n.adj.length === 2){ const a = m(n.adj[0]), b = m(n.adj[1]); ctx.moveTo(a[0], a[1]); ctx.quadraticCurveTo(N[0], N[1], b[0], b[1]); }   // corners become curves
+      else {
+        n.adj.forEach(a => { const q = m(a); ctx.moveTo(q[0], q[1]); ctx.lineTo(N[0], N[1]); });
+        // at a junction, draw every turn a car can take, so cars never leave the road
+        for (let i=0; i<n.adj.length; i++) for (let j=i+1; j<n.adj.length; j++){ const a = m(n.adj[i]), b = m(n.adj[j]); ctx.moveTo(a[0], a[1]); ctx.quadraticCurveTo(N[0], N[1], b[0], b[1]); }
+      }
+    });
+  };
+  const w = SP*0.46;
+  ctx.lineCap = ctx.lineJoin = 'round';
+  path(); ctx.strokeStyle = LINE; ctx.lineWidth = w + 5; ctx.stroke();
+  path(); ctx.strokeStyle = '#6b7088'; ctx.lineWidth = w; ctx.stroke();
+  path(); ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = Math.max(2, SP*0.035); ctx.setLineDash([SP*0.14, SP*0.16]); ctx.stroke(); ctx.setLineDash([]);
+}
+function rrect(c, x, y, w, h, r){ c.beginPath(); c.moveTo(x+r, y); c.arcTo(x+w, y, x+w, y+h, r); c.arcTo(x+w, y+h, x, y+h, r); c.arcTo(x, y+h, x, y, r); c.arcTo(x, y, x+w, y, r); c.closePath(); }
+function drawRacers(now, P){
+  // where each driven car is heading: a soft ring on the road under the finger
+  racing.cars.forEach(car => {
+    const h = car.hold; if (!h || !h.on) return;
+    const pulse = reduce ? 0 : Math.sin(now/180)*0.06;
+    ctx.globalAlpha = 0.9; ctx.strokeStyle = car.color; ctx.lineWidth = Math.max(3, SP*0.07);
+    ctx.beginPath(); ctx.arc(P(h.tg.x), P(h.tg.y), SP*(0.3 + pulse), 0, 7); ctx.stroke();
+    ctx.globalAlpha = 1;
+  });
+  racing.cars.forEach(car => {
+    if (!car.pos) return;
+    const L = SP*0.62, W = SP*0.36;
+    ctx.save(); ctx.translate(P(car.pos[0]), P(car.pos[1]));
+    if (car.hold && car.hold.on){ ctx.globalAlpha = 0.35; ctx.fillStyle = car.color; ctx.beginPath(); ctx.arc(0, 0, L*0.78, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }   // this car is being driven
+    ctx.rotate(car.ang);
+    if (car.boost > 0){ ctx.globalAlpha = 0.35; ctx.fillStyle = '#f2c55c'; rrect(ctx, -L*0.95, -W*0.3, L*0.45, W*0.6, W*0.3); ctx.fill(); ctx.globalAlpha = 1; }
+    ctx.fillStyle = LINE; [[-0.28, -0.5], [-0.28, 0.5], [0.26, -0.5], [0.26, 0.5]].forEach(([u, v]) => { rrect(ctx, u*L - L*0.1, v*W - W*0.13, L*0.2, W*0.26, 2); ctx.fill(); });
+    rrect(ctx, -L/2, -W/2, L, W, W*0.38); ctx.fillStyle = car.color; ctx.fill(); ctx.strokeStyle = LINE; ctx.lineWidth = 2; ctx.stroke();
+    rrect(ctx, -L*0.04, -W*0.3, L*0.26, W*0.6, W*0.2); ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fill(); ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = LINE; ctx.fillRect(-L/2 - 2, -W*0.44, L*0.09, W*0.88);
+    ctx.restore();
+  });
+  racing.bursts.forEach(b => { const k = (now - b.born)/600; ctx.globalAlpha = 1 - k; ctx.fillStyle = b.color; sparkShape(ctx, P(b.x + b.vx*k*0.6), P(b.y + b.vy*k*0.6), SP*0.12*(1 - k*0.5)); ctx.fill(); ctx.globalAlpha = 1; });
+}
+/* fingers on the race: one finger per car, so two children can each drive one */
+const holds = new Map();   // pointerId → {car, t0, fx, fy, x0, y0, on, tg, D}
+function aim(h){ h.tg = nearestOnRoads(h.fx, h.fy); h.D = routeTo(h.tg); }
+function engage(h){ if (h.on || !racing) return; h.on = true; h.car.hold = h; aim(h); }
+function racePointerDown(e){
+  try { cv.setPointerCapture(e.pointerId); } catch(_){}
+  const [fx, fy] = fpos(e);
+  let best = null, bd = Infinity;
+  racing.cars.forEach(c => { if (c.hold || [...holds.values()].some(h => h.car === c) || !c.pos) return; const d = Math.hypot(c.pos[0]-fx, c.pos[1]-fy); if (d < bd){ bd = d; best = c; } });
+  if (!best) return;
+  holds.set(e.pointerId, {car:best, t0:performance.now(), fx, fy, x0:fx, y0:fy, on:false});
+}
+function racePointerMove(e){
+  const h = holds.get(e.pointerId); if (!h) return;
+  [h.fx, h.fy] = fpos(e);
+  if (!h.on && Math.hypot(h.fx - h.x0, h.fy - h.y0) > 0.3) engage(h);
+  else if (h.on) aim(h);
+}
+function racePointerUp(e){
+  const h = holds.get(e.pointerId); if (!h) return;
+  holds.delete(e.pointerId);
+  if (h.on){ if (h.car.hold === h) h.car.hold = null; return; }   // let go: the car drives on by itself
+  if (!racing) return;
+  h.car.boost = 1.2; burst(h.car.pos[0], h.car.pos[1], performance.now(), h.car.color);   // a quick tap: sparkle boost
+}
+
 /* ================= buttons & grown-up sheet ================= */
 $('undo').addEventListener('click', () => { ensureAudio(); const s = undoStack.pop(); if (s){ restore(s); save(); tone(392, .2, .03); } });
 function syncSettings(){}
 addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeMagic();
+  if (e.key === 'Escape'){ closeMagic(); if (playing && $('magicSheet').hidden) setPlaying(false); }
   const t = e.target, typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
   if (!typing && (e.metaKey || e.ctrlKey) && e.key === 'z'){ e.preventDefault(); $('undo').click(); }
 });
