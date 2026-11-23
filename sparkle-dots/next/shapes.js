@@ -111,9 +111,7 @@ export function recompute(R, {raster, segs, lines, seeds, autoFill, touching, in
     }
     if (border){ for (let i=0;i<qt;i++) lab[queue[i]] = 0; }
     else {
-      const cx = sx/qt, cy = sy/qt; let best = queue[0], bd = 1e9;
-      for (let i=0;i<qt;i++){ const p = queue[i], dx = p%RW - cx, dy = ((p/RW)|0) - cy, d = dx*dx+dy*dy; if (d < bd){ bd = d; best = p; } }
-      info.push({area:qt, center:best, box:[x0-3, y0-3, x1+3, y1+3]}); next++;
+      info.push({area:qt, center:centreOf(queue, qt, RW, sx, sy), box:[x0-3, y0-3, x1+3, y1+3]}); next++;
     }
   }
   const boxes = info.map(i => i.box);
@@ -140,13 +138,9 @@ export function recompute(R, {raster, segs, lines, seeds, autoFill, touching, in
     let allow = null;
     if (touching){   // a shape counts as newly closed only if it borders one of the new lines
       allow = new Set();
-      touching.forEach(([a, b]) => {
-        const ax = toR(a[0]), ay = toR(a[1]), bx = toR(b[0]), by = toR(b[1]), L = Math.hypot(bx-ax, by-ay) || 1, nx = -(by-ay)/L, ny = (bx-ax)/L;
-        for (let t=0.1; t<0.95; t+=0.1) for (const sg of [-1, 1]){
-          const x = Math.round(ax + (bx-ax)*t + nx*sg*4), y = Math.round(ay + (by-ay)*t + ny*sg*4);
-          if (x >= 0 && y >= 0 && x < RW && y < RH && lab[y*RW + x] > 0) allow.add(lab[y*RW + x]);
-        }
-      });
+      touching.forEach(([a, b]) => probes(a, b).forEach(([x, y]) => {
+        if (x >= 0 && y >= 0 && x < RW && y < RH && lab[y*RW + x] > 0) allow.add(lab[y*RW + x]);
+      }));
     }
     for (let k=1;k<info.length;k++){
       if (faces[k] || info[k].area < 6 || (allow && !allow.has(k))) continue;
@@ -167,6 +161,43 @@ export function recompute(R, {raster, segs, lines, seeds, autoFill, touching, in
     for (let p=0;p<N;p++) if (labD[p] <= -10) labD[p] = -labD[p]-10;
   }
   return {seeds: keep, faces, boxes, created};
+}
+
+// A shape's centre: the first cell in queue order whose distance to the centroid is least, compared exactly in
+// integers as (n*x - sx)^2 + (n*y - sy)^2 (n cells, sx and sy the sums of their x and y), with strict <.
+export function centreOf(queue, n, RW, sx, sy){
+  let best = queue[0], bx = n*(best % RW) - sx, by = n*((best / RW) | 0) - sy;
+  for (let i=1;i<n;i++){
+    const p = queue[i], ux = n*(p % RW) - sx, uy = n*((p / RW) | 0) - sy;
+    if (lessSq(ux, uy, bx, by)){ best = p; bx = ux; by = uy; }
+  }
+  return best;
+}
+// a^2 + b^2 < c^2 + d^2 for integers, exactly. The squares can pass 2^53, so a near-tie is settled in BigInt.
+export function lessSq(a, b, c, d){
+  const l = a*a + b*b, r = c*c + d*d;
+  if (Math.abs(l - r) > 1e-13*(l + r)) return l < r;
+  const A = BigInt(a), B = BigInt(b), C = BigInt(c), D = BigInt(d);
+  return A*A + B*B < C*C + D*D;
+}
+// floor(k / sqrt(D)) for integers k and D > 0, exactly: the largest t with t|t|D <= k|k|.
+export function floorDivSqrt(k, D){
+  const kk = k*Math.abs(k);
+  let t = Math.floor(k / Math.sqrt(D));
+  while (t*Math.abs(t)*D > kk) t--;
+  while ((t+1)*Math.abs(t+1)*D <= kk) t++;
+  return t;
+}
+// The 18 auto-fill probes of the line from dot a to dot b, in raster cells: at each tenth i = 1..9 along it, 4 cells
+// either side (s = -1, 1), rounded half up. In integers, with d = B - A in cells and D = |d|^2:
+//   x = floor((10*Ax + i*dx + 5 + floor(-40*s*dy / sqrt(D))) / 10), y likewise with +40*s*dx. D = 0 gives offset 0.
+export function probes(a, b){
+  const ax = toR(a[0]), ay = toR(a[1]), dx = toR(b[0]) - ax, dy = toR(b[1]) - ay, D = dx*dx + dy*dy, out = [];
+  for (let i=1;i<=9;i++) for (const s of [-1, 1]){
+    const ox = D ? floorDivSqrt(-40*s*dy, D) : 0, oy = D ? floorDivSqrt(40*s*dx, D) : 0;
+    out.push([Math.floor((10*ax + i*dx + 5 + ox) / 10), Math.floor((10*ay + i*dy + 5 + oy) / 10)]);
+  }
+  return out;
 }
 
 // The shape under a point in dot coordinates (0 or less: not a shape).

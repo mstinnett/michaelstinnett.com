@@ -79,3 +79,40 @@ export function integerRecord(c, sheets){
   run(c, (paper, clock) => newEngine(Shapes.integerRaster, sheets, paper, clock), (step, e, created) => { steps.push({step, ...summary(e, created)}); last = e.get(); });
   return {name: c.name, paper: c.paper || 'dots', RW: last.RW, RH: last.RH, steps, lab: rle(last.lab), labD: rle(last.labD)};
 }
+
+// The lab's float rules before the integer centre and probes, verbatim, for comparison with shapes.js.
+export function floatCentre(queue, qt, RW, sx, sy){
+  const cx = sx/qt, cy = sy/qt; let best = queue[0], bd = 1e9;
+  for (let i=0;i<qt;i++){ const p = queue[i], dx = p%RW - cx, dy = ((p/RW)|0) - cy, d = dx*dx+dy*dy; if (d < bd){ bd = d; best = p; } }
+  return best;
+}
+export function floatProbes(a, b){
+  const toR = Shapes.toR, out = [];
+  const ax = toR(a[0]), ay = toR(a[1]), bx = toR(b[0]), by = toR(b[1]), L = Math.hypot(bx-ax, by-ay) || 1, nx = -(by-ay)/L, ny = (bx-ax)/L;
+  for (let t=0.1; t<0.95; t+=0.1) for (const sg of [-1, 1]) out.push([Math.round(ax + (bx-ax)*t + nx*sg*4), Math.round(ay + (by-ay)*t + ny*sg*4)]);
+  return out;
+}
+
+// Float centre vs integer centre for every shape in a label array. Each shape's cells are re-flooded in the order
+// recompute's queue visits them (its first cell in scan order, then L, R, U, D), so ties resolve the same way.
+// ties: shapes whose least distance is shared by more than one cell.
+export function centreCheck(lab, RW, RH){
+  const N = RW*RH, seen = new Uint8Array(N), q = new Int32Array(N);
+  let shapes = 0, ties = 0, diffs = 0;
+  for (let p0=0;p0<N;p0++){
+    const k = lab[p0]; if (k <= 0 || seen[p0]) continue;
+    let qh = 0, qt = 0, sx = 0, sy = 0;
+    q[qt++] = p0; seen[p0] = 1;
+    while (qh < qt){
+      const p = q[qh++], x = p % RW, y = (p / RW) | 0; sx += x; sy += y;
+      for (const [ok, r] of [[x>0, p-1], [x<RW-1, p+1], [y>0, p-RW], [y<RH-1, p+RW]]) if (ok && lab[r] === k && !seen[r]){ seen[r] = 1; q[qt++] = r; }
+    }
+    shapes++;
+    const c = Shapes.centreOf(q, qt, RW, sx, sy);
+    if (c !== floatCentre(q, qt, RW, sx, sy)) diffs++;
+    const u = p => [qt*(p % RW) - sx, qt*((p / RW) | 0) - sy], [bx, by] = u(c);
+    let n = 0; for (let i=0;i<qt;i++){ const [ux, uy] = u(q[i]); if (!Shapes.lessSq(bx, by, ux, uy)) n++; }
+    if (n > 1) ties++;
+  }
+  return {shapes, ties, diffs};
+}
